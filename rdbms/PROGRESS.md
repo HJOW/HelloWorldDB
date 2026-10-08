@@ -7,9 +7,9 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-08
-- 진행 단계 : 착수 전 (코드 없음)
+- 진행 단계 : 1단계 진행 중. 프로젝트 구성과 모듈 뼈대까지 끝났다. 기능 코드는 아직 없다.
 - 착수 조건 : 없음
-- 다음 작업 : 1단계 프로젝트 기반
+- 다음 작업 : 1단계의 남은 항목 (config.json 읽기, 로그, 오류 체계, 데몬 진입점)
 
 ## 작업 규칙
 
@@ -17,36 +17,85 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 단계의 완료 기준을 채우기 전에는 다음 단계로 넘어가지 않는다.
 - 사양에 없는 것을 새로 정했으면 "결정 사항" 에 적는다. 사양 자체를 바꿔야 하면 AGENTS.md 를 먼저 고친다.
 
-## 디렉토리 구성 (제안, 1단계에서 확정)
+## 디렉토리 구성
+
+파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
+`main.ts` 와 `test/smoke.test.ts` 외에는 아직 주석만 있는 뼈대이다.
 
 ```
 rdbms/
-  config.json        설정 파일 (없으면 기본값으로 구동)
+  package.json, tsconfig.json
+  config.json            설정 파일. 없으면 기본값으로 구동한다 (아직 만들지 않음)
   src/
-    daemon/          데몬 진입점, 구동과 정상 종료 절차, 잠금 파일
-    cli/             hwdb 명령 (데몬 제어, SQL 접속)
-    common/          오류, 로그
-    config/          config.json 읽기와 검증
-    storage/         페이지 파일, 버퍼 캐시, format/v1/ (포맷 버전별 구현)
-    types/           데이터 타입
-    sql/             어휘 분석, 구문 분석, 구문 트리
-    catalog/         카탈로그, 딕셔너리 뷰
-    exec/            질의 실행, 내장 함수
-    txn/             트랜잭션, 잠금
-    auth/            사용자, 권한, SCRAM
-    net/             프로토콜, TCP, UDP, 로컬 전용 채널
-  test/
-    fixtures/        이전 포맷 버전의 데이터 파일 (호환성 테스트용)
-  docs/              저장 포맷 문서, 프로토콜 명세
+    cli/                 hwdb 명령
+      main.ts              진입점. 하위 명령 분기, 옵션 해석
+      daemonControl.ts     hwdb start, stop, status
+      sqlShell.ts          SQL 접속 (대화형 모드, 스크립트 모드)
+      resultPrinter.ts     실행 결과의 화면 출력
+    client/
+      connection.ts        클라이언트 쪽 프로토콜. CLI 와 테스트가 쓴다
+    daemon/
+      main.ts              데몬 프로세스의 진입점, 신호 처리
+      server.ts            구성 요소 조립, 구동과 종료의 순서
+      lockFile.ts          데이터 디렉토리 잠금 파일, 제어 토큰
+    config/
+      config.ts            config.json 읽기, 기본값, 검증
+    common/
+      errors.ts            오류 체계 (SQLSTATE, 내부 오류 번호)
+      logger.ts            로그
+      instance.ts          인스턴스 식별 규칙(포트 번호 → 로컬 전용 채널 주소), 공용 상수
+    storage/
+      pageFile.ts          페이지 단위 파일 입출력
+      bufferCache.ts       버퍼 캐시
+      format/format.ts     포맷 버전의 공통 인터페이스, 버전 선택
+      format/v1/           포맷 버전 1 : index.ts(헤더, 빈 페이지), heap.ts(행 저장소), btree.ts(인덱스)
+    types/               dataType.ts, value.ts, codec.ts, numeric.ts, datetime.ts, cast.ts
+    sql/                 lexer.ts, ast.ts, parser.ts
+    catalog/             catalog.ts, tablespaceManager.ts, bootstrap.ts, dictionaryViews.ts
+    session/             session.ts(SQL 실행의 입구), sessionManager.ts
+    exec/                analyzer.ts, planner.ts, executor.ts, expression.ts, functions.ts, dml.ts, ddl.ts
+    txn/                 transaction.ts, lockManager.ts
+    auth/                scram.ts, users.ts, privileges.ts
+    net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
+                         tcpServer.ts, udpServer.ts, localChannelServer.ts
+  test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
+    smoke.test.ts          프로젝트 구성 확인용
+    fixtures/              이전 포맷 버전의 데이터 파일 (2단계에서 만든다)
+  docs/                  저장 포맷 문서, 프로토콜 명세 (2단계, 9단계에서 만든다)
+  dist/                  빌드 결과물. git 에 넣지 않는다
 ```
+
+### 모듈 사이의 의존 방향
+
+- `common` 은 다른 모듈을 import 하지 않는다. 다른 모듈은 모두 `common` 을 쓸 수 있다.
+- `storage` 는 SQL 의 타입을 모르고 바이트열만 다룬다. `types` 는 `storage` 를 모른다. 둘을 잇는 것은 `types/codec.ts` 가 만든 바이트열이다.
+- `sql` 은 문법만 다룬다. `catalog` 나 `storage` 를 import 하지 않는다.
+- `exec` 가 `sql`, `catalog`, `storage`, `types`, `txn`, `auth` 를 엮어 문장을 실행한다.
+- `session` 이 SQL 실행의 입구이다. `net` 은 `session` 만 호출하고 `exec` 를 직접 부르지 않는다.
+- 상위 계층은 `storage/format/format.ts` 만 import 하고 `v1` 같은 특정 버전의 모듈을 직접 import 하지 않는다.
+- `client` 는 서버 쪽 모듈을 import 하지 않는다. 공유하는 것은 `net/protocol.ts`, `net/framing.ts`, `net/udpReliability.ts`, `auth/scram.ts` 뿐이다.
+- 구성 요소를 서로 연결하는 일은 `daemon/server.ts` 에서만 한다.
+
+### 명령
+
+`rdbms` 디렉토리에서 실행한다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `npm install` | 개발 의존성 설치 |
+| `npm run build` | `dist` 를 지우고 빌드 |
+| `npm test` | 빌드한 뒤 `node:test` 로 테스트 실행 |
+| `npm run hwdb -- <인자>` | 빌드된 `hwdb` 명령 실행. 예 : `npm run hwdb -- --help` |
 
 ## 세부 계획
 
 ### 1단계. 프로젝트 기반
 
-- [ ] `package.json` : `name` 은 `org.duckdns.hjow.helloworlddb.rdbms`, `engines.node` 는 `>=22.0.0`, `bin` 에 `hwdb` 를 등록한다
-- [ ] TypeScript 빌드 구성. 빌드 결과물이 Node.js 22.0 과 bun 에서 실행되는지 확인한다
-- [ ] `node:test` 기반 테스트 실행 구성
+- [x] `package.json` : `name` 은 `org.duckdns.hjow.helloworlddb.rdbms`, `engines.node` 는 `>=22.0.0`, `bin` 에 `hwdb` 를 등록한다
+- [x] TypeScript 빌드 구성 (ES 모듈). 빌드 결과물이 Node.js 22.12 와 bun 1.3.14 에서 실행되는 것을 확인했다. Node.js 22.0 자체에서는 확인하지 못했다 (미결 사항)
+- [x] 개발 의존성의 타입스크립트를 6 버전으로 고정 (AGENTS.md 지켜야 할 사항 7)
+- [x] `node:test` 기반 테스트 실행 구성
+- [x] 모듈별 뼈대 파일과 담당 범위 주석
 - [ ] config.json 읽기 : 기본값 채우기, 값 검증, 모르는 키 경고, 상대 경로 처리 (상세 7)
 - [ ] 로그 : 레벨, 파일 출력. 비밀번호가 로그에 남지 않게 한다
 - [ ] 오류 체계 : SQLSTATE, 내부 오류 번호, 영문 메시지 (상세 0)
@@ -188,6 +237,8 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
+- Node.js 22.0 자체에서의 실행 확인 (1단계). 개발 장비의 Node.js 는 22.12 이다. 22.0 에 없는 API 를 쓰지 않도록 주의하고, 22.0 을 구할 수 있으면 그 버전으로 테스트를 돌려 본다.
+- `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
 - 저장 포맷의 바이트 순서를 비롯한 바이트 단위 레이아웃 (2단계)
 - SCRAM 반복 횟수의 기본값 (8단계)
 - 유닉스 도메인 소켓 파일의 접근 권한, 비정상 종료 뒤 남은 소켓 파일의 정리 (9단계)
@@ -198,11 +249,20 @@ SQL 접속 (상세 14-2)
 
 ## 결정 사항
 
-아직 없음.
+- ES 모듈로 작성한다. `package.json` 에 `"type": "module"`, `tsconfig.json` 에 `module: NodeNext` 를 두었다.
+  상대 경로 import 에는 확장자 `.js` 를 붙인다. (예 : `import { x } from "./x.js"`)
+- 빌드 결과물은 `dist/src` 와 `dist/test` 로 나간다. `bin` 의 `hwdb` 는 `dist/src/cli/main.js` 를 가리킨다.
+- 컴파일러는 타입스크립트 6 하나만 쓴다. `package.json` 의 개발 의존성이 `^6.0.3` 이라 `npm install` 로 7 이 들어오지 않는다. 7 로 올리지 않는다 (AGENTS.md 지켜야 할 사항 7).
+  처음에는 7 로 빌드하고 6 으로 따로 검사하는 구성을 해 보았으나, 두 패키지의 `tsc` 명령이 충돌하여 사용자와 상의해 6 하나로 정했다. 그때 같은 코드가 7.0.2 에서도 컴파일되는 것은 확인했다.
+- `tsconfig.json` 에는 타입스크립트 6 이 폐기 예정이라고 알리는 옵션을 넣지 않고, `ignoreDeprecations` 로 그 알림을 끄지도 않는다. 나중에 상위 버전으로 올릴 때를 위해서이다.
+- 테스트 파일 이름은 `*.test.ts` 이다. 이 이름이어야 `npm test` 의 실행 대상이 된다.
+- 소스 파일 맨 위 주석은 "담당, 관련 사양, 구현 단계" 형식을 지킨다. 구현하면서 담당 범위가 달라지면 주석도 함께 고친다.
 
 ## 인수인계 사항
 
-- 구현을 시작하지 않았다. 1단계부터 진행한다.
+- 프로젝트 구성과 모듈 뼈대까지 되어 있다. `src/cli/main.ts` 가 하위 명령을 가르는 것 외에는 기능 코드가 없다. 1단계의 남은 항목부터 진행한다.
+- 타입스크립트 코드를 고쳤으면 `npm test` 로 확인한다. 타입스크립트 6 으로 빌드하므로, 6 에 없는 문법이나 `tsconfig.json` 옵션을 쓰면 빌드에서 걸린다.
+- 뼈대의 파일 나눔은 출발점이다. 구현하다가 파일을 더 나누거나 합쳐야 하면 그렇게 하고, 이 문서의 "디렉토리 구성" 을 함께 고친다. "모듈 사이의 의존 방향" 은 지킨다.
 - 통신은 TCP, UDP, 로컬 전용 채널이다. 초기 계획에 있던 HTTP 웹소켓은 사양에서 빠졌으므로 웹소켓 구현이나 `ws` 패키지는 필요 없다.
 - CLI 는 `nodejsDriver` 보다 먼저 만들어지므로 이 프로젝트 안에 클라이언트 코드를 가진다. 9단계의 테스트용 클라이언트와 CLI 가 같은 코드를 쓰게 하면 `nodejsDriver` 가 그것을 출발점으로 삼을 수 있다.
 - 서버 실행 파일을 따로 두지 않는다. 명령은 `hwdb` 하나이고, 데몬은 `hwdb start` 가 분리된 프로세스로 띄운다. 9단계까지는 포그라운드 구동으로 개발하고 시험한다.
@@ -213,3 +273,4 @@ SQL 접속 (상세 14-2)
 
 - 2026-10-08 : 세부 계획 작성.
 - 2026-10-08 : 사양 변경 반영. 데몬 구동과 `hwdb start`, `stop`, `status` 추가, 포트 번호를 인스턴스 식별자로 사용(TCP 와 UDP 포트 통합), 패키지명 확정.
+- 2026-10-08 : 1단계 착수. Node.js 프로젝트 구성(ES 모듈, TypeScript), 모듈별 뼈대 파일 52개 작성, 개발 의존성의 타입스크립트를 6 버전으로 고정. `npm test` 통과, Node.js 22.12 와 bun 1.3.14 에서 `hwdb --help` 실행 확인.

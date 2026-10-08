@@ -21,7 +21,8 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 ### 12-1. 패키지 구성
 
 - [ ] `package.json` : `name` 은 `org.duckdns.hjow.helloworlddb.nodejsdriver`, `engines.node` 는 `>=22.0.0`. 실행에 필요한 외부 패키지 없이 Node.js 내장 모듈만 쓴다
-- [ ] TypeScript 로 작성하고, JavaScript 와 타입 정의를 함께 내보낸다
+- [ ] TypeScript 로 작성하고(ES 모듈), JavaScript 와 타입 정의를 함께 내보낸다
+- [ ] 개발 의존성의 타입스크립트는 `rdbms` 와 같이 6 버전으로 둔다 (AGENTS.md 지켜야 할 사항 7). `tsconfig.json` 도 `rdbms` 의 것을 바탕으로 한다
 - [ ] `node:test` 기반 테스트 구성. 통합 테스트는 `rdbms` 를 임시 데이터 디렉토리와 시험용 포트 번호로 띄워서 수행한다
 
 ### 12-2. 프로토콜 계층
@@ -69,7 +70,7 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 
 ## 미결 사항
 
-- 모듈 형식. ESM 만 낼지 CommonJS 도 함께 낼지
+- 소스는 ES 모듈로 작성한다. 배포할 때 CommonJS 결과물도 함께 낼지는 정하지 않았다
 - 날짜시간 값을 `Date` 로 받는 옵션을 둘지
 
 ## 결정 사항

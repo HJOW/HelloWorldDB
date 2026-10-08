@@ -1,0 +1,10 @@
+# 설치한 패키지
+node_modules/
+
+# 빌드 결과물
+dist/
+*.tsbuildinfo
+
+# 실행하면 생기는 것 (config.json 의 dataDir, log.dir 기본값)
+data/
+logs/

@@ -545,10 +545,12 @@ SELECT * FROM HELLO
    각 프로젝트 작업 전 이 문서를 반드시 참고한다.
    각 작업 완료 전 PROGRESS.md 문서를 반드시 갱신한다.
    이 프로젝트 전체를 아우르는 공통 진행 상황과 인수인계 상황은 이 프로젝트 루트 경로 내 PROGRESS.md 를 이용한다.
-5. RDBMS 및 Node.js 드라이버는 Node.js 22.0 이상 버전을 지원해야 한다.
+5. RDBMS 및 Node.js 드라이버는 Node.js 22 이상 버전을 지원해야 한다.
+   (당장은 시스템에 설치된 Node.js 를 사용해 테스트하고, 추후 Node.js 22.X 버전 설치 PC에서 전역 테스트 시 문제가 발견되면 수정하는 것으로 한다.)
 6. Node.js 및 자바 패키지명은 `org.duckdns.hjow.helloworlddb` 로 시작하며, 그 뒤에 프로젝트 디렉토리 이름을 소문자로 붙인다.
    rdbms 는 `org.duckdns.hjow.helloworlddb.rdbms`, nodejsDriver 는 `org.duckdns.hjow.helloworlddb.nodejsdriver`,
    jdbc5 는 `org.duckdns.hjow.helloworlddb.jdbc5`, jdbc8 은 `org.duckdns.hjow.helloworlddb.jdbc8`, gui 는 `org.duckdns.hjow.helloworlddb.gui` 이다.
+7. 타입스크립트 사용 시 타입스크립트 버전 6 에서도 컴파일이 가능하도록 호환성 있게 코드를 작성한다.
 
 # 구현 계획
 
@@ -558,6 +560,8 @@ JDBC 와 GUI DB툴은 보류한다. 위의 둘을 마친 뒤 계획부터 다시
 ## 공통 방침
 
 - `rdbms` 와 `nodejsDriver` 는 TypeScript 로 작성하고 JavaScript 로 빌드하여 실행한다. Node.js 22.0 은 TypeScript 를 직접 실행하지 못하므로 빌드 결과물을 기준으로 Node.js 22.0 이상과 bun 양쪽에서 동작해야 한다.
+- 두 프로젝트 모두 ES 모듈로 작성한다. (`package.json` 의 `"type": "module"`)
+- 타입스크립트 6 호환(지켜야 할 사항 7)을 위해, 개발 의존성의 타입스크립트는 6 버전으로 둔다.
 - 외부 패키지 의존은 최소로 한다. `rdbms` 의 통신은 Node.js 내장 모듈(`node:net`, `node:tls`, `node:dgram`)만으로 구현한다.
 - 테스트는 Node.js 의 `node:test` 로 작성한다. bun 에서는 구동과 주요 시나리오가 동작하는지 따로 확인한다.
 - 모든 단계는 테스트 코드와 함께 끝낸다.

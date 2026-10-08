@@ -1,0 +1,32 @@
+{
+  // 타입스크립트 6 으로 빌드한다. (AGENTS.md 지켜야 할 사항 7. package.json 의 개발 의존성도 6 으로 묶어 두었다)
+  // 타입스크립트 6 이 폐기 예정이라고 알리는 옵션은 쓰지 않고, `ignoreDeprecations` 로 그 알림을 끄지도 않는다.
+  // 그래야 나중에 상위 버전으로 올려도 그대로 컴파일된다.
+  "compilerOptions": {
+    // 빌드 결과물은 Node.js 22.0 이상과 bun 에서 그대로 실행한다.
+    "target": "ES2023",
+    // ES 모듈로 내보낸다. package.json 의 "type": "module" 과 짝을 이룬다.
+    // 상대 경로 import 에는 확장자 .js 를 붙여야 한다. (예: import { x } from "./x.js")
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // 주석만 있는 파일도 모듈로 다룬다.
+    "moduleDetection": "force",
+    // 타입만 가져올 때는 import type 을 쓰게 한다.
+    "verbatimModuleSyntax": true,
+
+    // src 는 dist/src 로, test 는 dist/test 로 나간다.
+    "rootDir": ".",
+    "outDir": "dist",
+    "sourceMap": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
