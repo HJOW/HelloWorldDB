@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { LogLevel } from "../config/config.js";
 import { LOG_FILE_NAME } from "./instance.js";
+import { StartupError } from "./errors.js";
 
 /** 로그 파일에 쓰는 한 줄의 형태이다. */
 function formatLine(level: LogLevel, message: string): string {
@@ -27,9 +28,11 @@ function formatLine(level: LogLevel, message: string): string {
  * - `IDENTIFIED BY "비밀번호"` 형태도 함께 가린다.
  */
 export function sanitizeLogMessage(message: string): string {
+  const separator = String.raw`(?:\s|/\*[\s\S]*?\*/|--[^\r\n]*(?:\r?\n|$))+`;
+  const prefix = `IDENTIFIED${separator}BY${separator}`;
   return message
-    .replace(/IDENTIFIED\s+BY\s+'(?:[^']|'')*'/gi, "IDENTIFIED BY '***'")
-    .replace(/IDENTIFIED\s+BY\s+"(?:[^"]|"")*"/gi, 'IDENTIFIED BY "***"');
+    .replace(new RegExp(`${prefix}'(?:[^']|'')*(?:'|$)`, "gi"), "IDENTIFIED BY '***'")
+    .replace(new RegExp(`${prefix}"(?:[^"]|"")*(?:"|$)`, "gi"), 'IDENTIFIED BY "***"');
 }
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
@@ -57,13 +60,28 @@ export interface Logger {
 
 /** 로그 디렉토리를 만들고 파일에 덧붙이는 로거를 만든다. */
 export function createLogger(options: LoggerOptions): Logger {
-  fs.mkdirSync(options.dir, { recursive: true });
   const filePath = path.join(options.dir, LOG_FILE_NAME);
-  const stream = fs.createWriteStream(filePath, { flags: "a", encoding: "utf8" });
+  let descriptor: number | undefined;
+  try {
+    fs.mkdirSync(options.dir, { recursive: true });
+    descriptor = fs.openSync(filePath, "a", 0o600);
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new StartupError(`Log path is not a regular file: ${filePath}`);
+    }
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    throw new StartupError(`Cannot open log file: ${filePath}`, { cause: error });
+  }
+  const stream = fs.createWriteStream(filePath, { fd: descriptor, encoding: "utf8", autoClose: true });
+  let failure: Error | undefined;
+  let closing: Promise<void> | undefined;
+  stream.on("error", (error: Error) => { failure = error; });
 
   const shouldWrite = (level: LogLevel): boolean => LEVEL_ORDER[level] <= LEVEL_ORDER[options.level];
 
   const write = (level: LogLevel, message: string): void => {
+    if (failure !== undefined) throw new StartupError(`Cannot write log file: ${filePath}`, { cause: failure });
+    if (closing !== undefined) return;
     if (!shouldWrite(level)) {
       return;
     }
@@ -91,11 +109,15 @@ export function createLogger(options: LoggerOptions): Logger {
     debug: (message: string): void => {
       write("debug", message);
     },
-    close: (): Promise<void> =>
-      new Promise<void>((resolve) => {
-        stream.end(() => {
-          resolve();
-        });
-      }),
+    close: (): Promise<void> => {
+      closing ??= new Promise<void>((resolve, reject) => {
+        const done = (): void => { if (failure !== undefined) reject(failure); else resolve(); };
+        // finish 이후에도 Windows에서는 파일 핸들이 열려 있을 수 있으므로 close까지 기다린다.
+        if (stream.closed) { done(); return; }
+        stream.once("close", done);
+        stream.end();
+      });
+      return closing;
+    },
   };
 }

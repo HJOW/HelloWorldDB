@@ -8,6 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { createLogger, sanitizeLogMessage } from "../../src/common/logger.js";
 import { LOG_FILE_NAME } from "../../src/common/instance.js";
+import { StartupError } from "../../src/common/errors.js";
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-log-"));
@@ -48,4 +49,26 @@ test("비밀번호가 들어간 문장도 가려서 파일에 남는다", async 
   const text = fs.readFileSync(path.join(dir, LOG_FILE_NAME), "utf8");
   assert.match(text, /IDENTIFIED BY '\*\*\*'/);
   assert.doesNotMatch(text, /secret123/);
+});
+
+test("주석, 이스케이프와 끝나지 않은 비밀번호 리터럴도 가린다", () => {
+  for (const sql of [
+    "ALTER USER A IDENTIFIED /* comment */ BY 'se''cret'",
+    "ALTER USER A IDENTIFIED BY /* comment */ 'secret'",
+    "ALTER USER A IDENTIFIED -- comment\nBY 'secret'",
+    "ALTER USER A IDENTIFIED BY 'unterminated-secret",
+  ]) {
+    assert.doesNotMatch(sanitizeLogMessage(sql), /secret|se''cret/);
+    assert.match(sanitizeLogMessage(sql), /\*\*\*/);
+  }
+});
+
+test("로그 파일 열기 실패를 처리하고 닫기는 여러 번 호출할 수 있다", async (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, LOG_FILE_NAME));
+  assert.throws(() => createLogger({ level: "info", dir, foreground: false }), StartupError);
+  const goodDir = path.join(dir, "ok");
+  const logger = createLogger({ level: "info", dir: goodDir, foreground: false });
+  logger.info("ok"); await logger.close(); await logger.close();
 });

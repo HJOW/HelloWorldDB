@@ -119,7 +119,8 @@ export function loadConfig(installDir: string): LoadedConfig {
   let raw: unknown = {};
   let found = false;
   try {
-    const rawText = fs.readFileSync(configFilePath, "utf8");
+    const rawText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+      .decode(fs.readFileSync(configFilePath));
     // Windows 메모장 등이 붙이는 BOM 이 있으면 떼고 해석한다.
     const text = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
     found = true;
@@ -198,7 +199,7 @@ export function loadConfig(installDir: string): LoadedConfig {
 
   if (root["maxConnections"] !== undefined) {
     const value = root["maxConnections"];
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
       fail(`Invalid config value: "maxConnections" must be an integer >= 1.`);
     }
     maxConnections = value;
@@ -206,8 +207,8 @@ export function loadConfig(installDir: string): LoadedConfig {
 
   if (root["timeZone"] !== undefined) {
     const value = root["timeZone"];
-    if (typeof value !== "string" || value.length === 0) {
-      fail(`Invalid config value: "timeZone" must be a non-empty string.`);
+    if (typeof value !== "string" || !isValidTimeZone(value)) {
+      fail(`Invalid config value: "timeZone" must be "local", a UTC offset, or an IANA time zone.`);
     }
     timeZone = value;
   }
@@ -412,6 +413,20 @@ export function loadConfig(installDir: string): LoadedConfig {
 
 function isTlsMinVersion(value: string): value is TlsMinVersion {
   return (TLS_MIN_VERSIONS as readonly string[]).includes(value);
+}
+
+/** 세션 초기값으로 쓸 수 있는 타임존만 받는다. */
+function isValidTimeZone(value: string): boolean {
+  if (value === "local") return true;
+  if (/^[+-]\d{2}:\d{2}$/.test(value)) {
+    return Number(value.slice(1, 3)) <= 23 && Number(value.slice(4)) <= 59;
+  }
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value });
+    return value.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isLogLevel(value: string): value is LogLevel {

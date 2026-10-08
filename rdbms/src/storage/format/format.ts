@@ -14,3 +14,101 @@
  * 관련 사양 : AGENTS.md 상세 3
  * 구현 단계 : 2단계
  */
+
+import { PageFile } from "../pageFile.js";
+import { corrupt } from "../errors.js";
+import { unsupportedFeature } from "../../common/errors.js";
+import { V1Tablespace } from "./v1/index.js";
+
+export const FILE_MAGIC = Buffer.from("HWDBTS\r\n", "ascii");
+export const LATEST_FORMAT_VERSION = 1;
+
+export interface RowId { pageId: number; slotId: number; }
+export interface StoredRow { id: RowId; data: Buffer; }
+export interface IndexEntry { key: Buffer; rowId: RowId; }
+export interface IndexRange {
+  lower?: Buffer;
+  upper?: Buffer;
+  lowerInclusive?: boolean;
+  upperInclusive?: boolean;
+  limit?: number;
+}
+export interface HeapReader {
+  get(id: RowId): Buffer | null;
+  scan(): StoredRow[];
+}
+export interface Heap extends HeapReader {
+  insert(data: Buffer): RowId;
+  update(id: RowId, data: Buffer): boolean;
+  delete(id: RowId): boolean;
+}
+export interface IndexReader {
+  find(key: Buffer): RowId[];
+  range(options?: IndexRange): IndexEntry[];
+}
+export interface StorageIndex extends IndexReader {
+  insert(key: Buffer, rowId: RowId): void;
+  delete(key: Buffer, rowId: RowId): boolean;
+}
+export interface TablespaceHeader {
+  formatVersion: number;
+  pageSize: number;
+  characterSet: string;
+  name: string;
+  createdAt: number;
+  serverVersion: string;
+  cleanShutdown: boolean;
+  catalogRoot: number;
+  freeListHead: number;
+  pageCount: number;
+}
+export interface StorageBatch {
+  createHeap(): number;
+  heap(root: number): Heap;
+  createIndex(options?: { unique?: boolean }): number;
+  index(root: number): StorageIndex;
+  dropHeap(root: number): void;
+  dropIndex(root: number): void;
+  getCatalog(): Buffer | null;
+  setCatalog(data: Buffer | null): void;
+  commit(): void;
+  rollback(): void;
+}
+export interface Tablespace {
+  readonly header: TablespaceHeader;
+  begin(): StorageBatch;
+  heap(root: number): HeapReader;
+  index(root: number): IndexReader;
+  getCatalog(): Buffer | null;
+  supports(feature: string): boolean;
+  requireFeature(feature: string): void;
+  close(): void;
+}
+export interface CreateTablespaceOptions {
+  name: string;
+  serverVersion?: string;
+  createdAt?: number;
+  characterSet?: string;
+  cachePages?: number;
+}
+export interface OpenTablespaceOptions {
+  cachePages?: number;
+  onWarning?: (message: string) => void;
+}
+
+/** 상위 계층이 버전을 가정하지 않고 고정 위치의 식별 정보로 구현을 고른다. */
+export function openTablespace(filePath: string, options: OpenTablespaceOptions = {}): Tablespace {
+  const file = PageFile.open(filePath);
+  try {
+    const prefix = file.readPrefix(12);
+    if (!prefix.subarray(0, 8).equals(FILE_MAGIC)) throw corrupt("Invalid tablespace magic.");
+    const version = prefix.readUInt32LE(8);
+    if (version !== 1) throw unsupportedFeature(`Unsupported tablespace format version: ${version}.`);
+    return V1Tablespace.open(file, options);
+  } catch (error) { file.close(); throw error; }
+}
+
+/** 새 파일은 언제나 지원하는 최신 포맷으로 만든다. */
+export function createTablespace(filePath: string, options: CreateTablespaceOptions): Tablespace {
+  return V1Tablespace.create(filePath, options);
+}

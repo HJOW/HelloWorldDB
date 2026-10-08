@@ -11,6 +11,7 @@ import { loadConfig } from "../../src/config/config.js";
 import { createLogger } from "../../src/common/logger.js";
 import { Server } from "../../src/daemon/server.js";
 import { isRunning } from "../../src/daemon/lockFile.js";
+import { runForeground } from "../../src/daemon/main.js";
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-server-"));
@@ -82,4 +83,18 @@ test("이미 구동 중이면 두 번째 구동에 실패한다", async () => {
   });
   await logger.close();
   await first.stop();
+});
+
+test("포그라운드 구동의 종료와 구동 완료 콜백 실패는 자원을 정리한다", async (t) => {
+  const installDir = makeTempDir();
+  t.after(() => fs.rmSync(installDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(installDir, "config.json"), JSON.stringify({ log: { level: "error" } }), "utf8");
+  const { config } = loadConfig(installDir);
+  const before = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+  await runForeground(installDir, { ready: () => { process.emit("SIGINT"); } });
+  assert.equal(isRunning(config.dataDir), false);
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], before);
+  await assert.rejects(runForeground(installDir, { ready: () => { throw new Error("Injected ready failure."); } }), /Injected ready failure/);
+  assert.equal(isRunning(config.dataDir), false);
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], before);
 });

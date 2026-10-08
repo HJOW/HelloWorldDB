@@ -104,3 +104,24 @@ test("JSON이 아니면 구동에 실패한다", () => {
   fs.writeFileSync(path.join(dir, "config.json"), "{ not json", "utf8");
   assert.throws(() => loadConfig(dir), StartupError);
 });
+
+test("잘못된 UTF-8은 구동 실패이며 UTF-8 BOM은 허용한다", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "config.json"), Buffer.concat([Buffer.from('{"dataDir":"'), Buffer.from([0xff]), Buffer.from('"}')]));
+  assert.throws(() => loadConfig(dir), StartupError);
+  fs.writeFileSync(path.join(dir, "config.json"), "\ufeff{\"port\":7421}", "utf8");
+  assert.equal(loadConfig(dir).config.port, 7421);
+});
+
+test("타임존과 큰 정수의 범위를 검증한다", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const timeZone of ["local", "Asia/Seoul", "UTC", "+09:00", "-12:30"]) {
+    writeConfig(dir, { timeZone }); assert.equal(loadConfig(dir).config.timeZone, timeZone);
+  }
+  for (const timeZone of ["", "Mars/Olympus", "+24:00", "+09:99"]) {
+    writeConfig(dir, { timeZone }); assert.throws(() => loadConfig(dir), StartupError);
+  }
+  writeConfig(dir, { maxConnections: 1e30 }); assert.throws(() => loadConfig(dir), StartupError);
+});

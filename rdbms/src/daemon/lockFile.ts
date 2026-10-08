@@ -77,30 +77,44 @@ export function isProcessAlive(pid: number): boolean {
  */
 export function acquireLock(dataDir: string, port: number): LockFileContent {
   fs.mkdirSync(dataDir, { recursive: true });
-  const existing = readLockFile(dataDir);
-  if (existing !== null && isProcessAlive(existing.pid)) {
-    throw new StartupError(
-      `Data directory is already in use by process ${String(existing.pid)} (port ${String(existing.port)}).`,
-    );
-  }
-  const content: LockFileContent = {
-    pid: process.pid,
-    port,
-    startedAt: new Date().toISOString(),
-    controlToken: crypto.randomBytes(16).toString("hex"),
-  };
   const lockPath = getLockFilePath(dataDir);
+  // 읽기와 쓰기 사이에 다른 프로세스가 잠금을 덮어쓰지 못하도록 생성 절차를 직렬화한다.
+  // 이 짧은 구간에서 프로세스가 강제 종료되면 불완전한 잠금을 자동으로 추측해 지우지 않는다.
+  const gatePath = `${lockPath}.acquire`;
   try {
-    fs.writeFileSync(lockPath, JSON.stringify(content, null, 2), "utf8");
+    fs.mkdirSync(gatePath);
   } catch (error) {
-    throw new StartupError(`Cannot write lock file: ${lockPath}`, { cause: error });
+    throw new StartupError(`Cannot acquire data directory lock: ${gatePath}`, { cause: error });
   }
-  return content;
+  try {
+    const existing = readLockFile(dataDir);
+    if (existing !== null && isProcessAlive(existing.pid)) {
+      throw new StartupError(
+        `Data directory is already in use by process ${String(existing.pid)} (port ${String(existing.port)}).`,
+      );
+    }
+    const content: LockFileContent = {
+      pid: process.pid,
+      port,
+      startedAt: new Date().toISOString(),
+      controlToken: crypto.randomBytes(16).toString("hex"),
+    };
+    try {
+      if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+      fs.writeFileSync(lockPath, JSON.stringify(content, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+    } catch (error) {
+      throw new StartupError(`Cannot write lock file: ${lockPath}`, { cause: error });
+    }
+    return content;
+  } finally {
+    fs.rmdirSync(gatePath);
+  }
 }
 
 /** 정상 종료 때 잠금 파일을 지운다. 없으면 넘어간다. */
-export function releaseLock(dataDir: string): void {
+export function releaseLock(dataDir: string, owner?: LockFileContent): void {
   const lockPath = getLockFilePath(dataDir);
+  if (owner !== undefined && readLockFile(dataDir)?.controlToken !== owner.controlToken) return;
   try {
     fs.rmSync(lockPath, { force: true });
   } catch (error) {
@@ -121,8 +135,9 @@ function isLockFileContent(value: unknown): value is LockFileContent {
   const record = value as Record<string, unknown>;
   return (
     typeof record["pid"] === "number" &&
-    Number.isInteger(record["pid"]) &&
+    Number.isSafeInteger(record["pid"]) && record["pid"] > 0 &&
     typeof record["port"] === "number" &&
+    Number.isInteger(record["port"]) && record["port"] >= 1 && record["port"] <= 65535 &&
     typeof record["startedAt"] === "string" &&
     typeof record["controlToken"] === "string" &&
     record["controlToken"].length > 0

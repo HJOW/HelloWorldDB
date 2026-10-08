@@ -33,6 +33,16 @@ export const ERROR_CODES = {
   FEATURE_NOT_SUPPORTED: 1,
   /** 내부 오류. SQLSTATE XX000. */
   INTERNAL_ERROR: 2,
+  /** 저장 파일 입출력 실패. SQLSTATE 58030. */
+  STORAGE_IO: 1000,
+  /** 저장 파일 손상. SQLSTATE XX001. */
+  STORAGE_CORRUPT: 1001,
+  /** 잘못된 저장 API 인자. SQLSTATE 22023. */
+  STORAGE_ARGUMENT: 1002,
+  /** 다른 배치의 커밋으로 인한 충돌. SQLSTATE 40001. */
+  STORAGE_CONFLICT: 1003,
+  /** 유일 인덱스의 중복 키. SQLSTATE 23505. */
+  DUPLICATE_KEY: 1004,
 } as const;
 
 /** SQL 실행 오류. 메시지는 영문으로 적는다. */

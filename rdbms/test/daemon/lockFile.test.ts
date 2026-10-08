@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { spawn } from "node:child_process";
 import {
   acquireLock,
   isProcessAlive,
@@ -62,4 +63,51 @@ test("깨진 잠금 파일은 구동 중이 아닌 것으로 본다", () => {
   fs.writeFileSync(getLockFilePath(dataDir), "not json", "utf8");
   assert.equal(readLockFile(dataDir), null);
   assert.equal(isRunning(dataDir), false);
+});
+
+test("자신의 제어 토큰과 다른 잠금은 종료 때 지우지 않는다", (t) => {
+  const dataDir = makeTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const owner = acquireLock(dataDir, 7410);
+  releaseLock(dataDir, { ...owner, controlToken: "another-owner" });
+  assert.equal(readLockFile(dataDir)?.controlToken, owner.controlToken);
+  releaseLock(dataDir, owner);
+  assert.equal(readLockFile(dataDir), null);
+});
+
+test("8개 프로세스의 동시 구동에서 데이터 디렉토리는 하나만 점유된다", async (t) => {
+  const dataDir = makeTempDir();
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const moduleUrl = new URL("../../src/daemon/lockFile.js", import.meta.url).href;
+  const script = `
+    import { acquireLock } from ${JSON.stringify(moduleUrl)};
+    process.stdin.once('data', () => {
+      try { acquireLock(process.argv[1], 7410); process.stdout.write('owned'); }
+      catch { process.stdout.write('rejected'); }
+    });
+    setInterval(() => {}, 1000);
+    process.stdout.write('ready');
+  `;
+  const children = Array.from({ length: 8 }, () => spawn(process.execPath, ["--input-type=module", "-e", script, dataDir], {
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  }));
+  const results: string[] = [];
+  try {
+    await Promise.all(children.map((child) => new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", () => resolve());
+    })));
+    await Promise.all(children.map((child) => new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", (data: Buffer) => { results.push(data.toString()); resolve(); });
+      child.stdin.write("start");
+    })));
+    assert.equal(results.filter((result) => result === "owned").length, 1);
+    assert.equal(results.filter((result) => result === "rejected").length, 7);
+  } finally {
+    await Promise.all(children.map((child) => new Promise<void>((resolve) => {
+      if (child.exitCode !== null) { resolve(); return; }
+      child.once("exit", () => resolve()); child.kill();
+    })));
+  }
 });

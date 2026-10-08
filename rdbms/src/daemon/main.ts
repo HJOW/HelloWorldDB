@@ -23,7 +23,7 @@ import type { Logger } from "../common/logger.js";
 import { Server } from "./server.js";
 
 export interface ForegroundOptions {
-  /** 구동 완료를 알리기 전에 기다리는 일. 10단계의 분리 구동에서 쓴다. 지금은 쓰지 않는다. */
+  /** 구동 완료 콜백. 테스트와 10단계의 분리 구동에서 쓴다. */
   ready?: () => void;
 }
 
@@ -34,53 +34,59 @@ export interface ForegroundOptions {
 export async function runForeground(installDir: string, options?: ForegroundOptions): Promise<void> {
   const { config, warnings } = loadConfig(installDir);
   let logger: Logger | null = null;
+  let server: Server | null = null;
+  let shutdown: { promise: Promise<void>; cancel(): void } | undefined;
   try {
     logger = createLogger({ level: config.log.level, dir: config.log.dir, foreground: true });
     for (const warning of warnings) {
       logger.warn(warning);
     }
-    const server = new Server(config, logger);
+    server = new Server(config, logger);
     await server.start();
+    shutdown = waitForShutdownSignal(logger);
     options?.ready?.();
 
-    await waitForShutdownSignal(server, logger);
-    await server.stop();
-    await logger.close();
-    logger = null;
+    await shutdown.promise;
   } catch (error) {
     if (logger !== null) {
-      logger.error(describeStartupFailure(error));
-      await logger.close();
+      try { logger.error(describeStartupFailure(error)); } catch { /* 로그 오류로 최초 실패를 가리지 않는다. */ }
     }
     throw error;
+  } finally {
+    shutdown?.cancel();
+    try { await server?.stop(); } finally { await logger?.close(); }
   }
 }
 
 /** 종료 신호가 올 때까지 기다린다. 신호가 오면 한 번만 종료 절차를 시작한다. */
-function waitForShutdownSignal(server: Server, logger: Logger): Promise<void> {
-  return new Promise<void>((resolve) => {
+function waitForShutdownSignal(logger: Logger): { promise: Promise<void>; cancel(): void } {
+  let cancel = (): void => {};
+  const promise = new Promise<void>((resolve) => {
     let settled = false;
     // 신호 대기만으로는 이벤트 루프가 비어 프로세스가 바로 끝나므로,
     // 종료될 때까지 루프를 붙잡는 타이머를 둔다.
     const keepAlive = setInterval(() => {}, 60_000);
+    const onInterrupt = (): void => onSignal("SIGINT");
+    const onTerminate = (): void => onSignal("SIGTERM");
+    cancel = (): void => {
+      clearInterval(keepAlive);
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onTerminate);
+    };
     const onSignal = (signal: string): void => {
       if (settled) {
         return;
       }
       settled = true;
-      clearInterval(keepAlive);
-      logger.info(`Received ${signal}; shutting down.`);
+      cancel();
+      try { logger.info(`Received ${signal}; shutting down.`); }
+      catch { /* 로그가 실패해도 종료 대기를 반드시 풀고 자원을 정리한다. */ }
       resolve();
     };
-    process.once("SIGINT", () => {
-      onSignal("SIGINT");
-    });
-    process.once("SIGTERM", () => {
-      onSignal("SIGTERM");
-    });
-    // 신호 외에 서버가 먼저 멈추는 경우는 1단계에 없으므로 신호만 기다린다.
-    void server;
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTerminate);
   });
+  return { promise, cancel: () => cancel() };
 }
 
 /** 구동 실패를 로그와 화면에 남길 한 줄 영문 설명으로 바꾼다. */
