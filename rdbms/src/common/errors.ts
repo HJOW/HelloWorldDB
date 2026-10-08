@@ -43,6 +43,8 @@ export const ERROR_CODES = {
   STORAGE_CONFLICT: 1003,
   /** 유일 인덱스의 중복 키. SQLSTATE 23505. */
   DUPLICATE_KEY: 1004,
+  /** 잘못된 데이터 타입 인자. SQLSTATE 22023. */
+  TYPE_PARAMETER_INVALID: 2000,
 } as const;
 
 /** SQL 실행 오류. 메시지는 영문으로 적는다. */

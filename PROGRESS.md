@@ -7,9 +7,10 @@
 
 - 최종 갱신 : 2026-10-08
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
-- `rdbms` 1단계를 점검·보완하고 2단계 저장 엔진까지 마쳤다. config.json, 로그, 잠금 파일과 포그라운드 구동 외에 페이지 저장, 슬롯 힙/오버플로, B+Tree, 저장 배치가 동작한다. `npm test` 51개가 통과한다.
+- `rdbms` 1단계를 점검·보완하고 2단계 저장 엔진까지 마쳤다. 3단계에서는 변경된 타입 기본값 상수와 고정소수 타입 인자 해석을 우선 반영했다. 전체 타입 시스템은 진행할 작업이다.
 - 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
 - 다음 작업 : `rdbms` 3단계(타입 시스템. 타입 정의와 값/인덱스 키 인코딩부터)
+- 검증 : TypeScript 6 빌드와 `npm test` 54개 통과. 변경된 고정소수 인자 해석 테스트는 bun에서도 통과했다.
 
 ## 프로젝트별 상태
 
@@ -17,7 +18,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 2단계 완료, 3단계 착수 전 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 2단계 완료, 3단계 기본값 정책 반영 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
@@ -36,6 +37,7 @@
 - SYSTEM 계정은 CONNECT 없이 만들어지므로 처음에는 로컬에서만 접속된다. 설치 후 관리자가 서버 장비에서 `hwdb` 로 접속해 초기 암호를 바꾸는 것이 표준 절차이다.
 - 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계, SQL 트랜잭션과 행 잠금은 7단계이다.
 - v1 고정 바이너리와 해시 검증 테스트를 보관했다. 개요 3의 1.0 출시 전 포맷 변경 예외는 적용 가능하며, 변경 시 포맷 문서와 테스트 자료도 의도적으로 갱신한다.
+- 변경된 타입 정책은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md)에 정리했다. VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이며 DECIMAL/DEC/NUMERIC의 인자 전체 생략은 (10,3), 정밀도만 지정한 `(p)`는 (p,0)이다. 드라이버와 DB툴은 실제 컬럼 인자를 서버 메타데이터에서 읽는다.
 - 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, bun 1.4.2이다. Node.js와 bun 양쪽에서 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료를 확인했다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
 
 ## 사용자 확인이 필요한 사항
@@ -52,3 +54,4 @@
 - 2026-10-08 : `rdbms` 1단계 착수. Node.js 프로젝트 구성(ES 모듈, TypeScript), 모듈별 뼈대 작성, 개발 의존성의 타입스크립트를 6 버전으로 고정.
 - 2026-10-08 : `rdbms` 1단계 완료. config.json 읽기, 로그, 오류 체계, 포그라운드 구동과 잠금 파일 동작. `npm test` 29개 통과.
 - 2026-10-08 : 기존 구현 점검 및 보완. 동시 구동 시 잠금 덮어쓰기, 잘못된 UTF-8/타임존 허용, SQL 주석을 낀 비밀번호 로그 노출, 로그 파일 오류와 종료 자원 정리를 수정했다. `rdbms` 2단계 저장 엔진 완료. `npm test` 51개와 Node.js/bun 주요 실행 검증 통과.
+- 2026-10-08 : AGENTS.md 개요 변경을 상세 표, 타입 정책 문서, 프로젝트별 인수인계 및 소스에 동기화했다. 고정소수 기본값 (10,3), VARCHAR/NVARCHAR 길이 65,535, 1.0 출시 전 저장 포맷 예외를 반영했다. `npm test` 54개와 bun의 고정소수 인자 해석 테스트 통과.

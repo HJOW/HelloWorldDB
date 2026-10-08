@@ -18,7 +18,7 @@
 
 1. ANSI SQL 에 정의된 모든 데이터 타입 (단 CLOB, BLOB는 후순위로 초기 버전에서는 미지원)
    예외적으로 VARCHAR 및 NVARCHAR 의 최대 길이는 65535 로 한다.
-   DECIMAL 타입에서 자리수와 소수자리 생략 시 오류 처리하는 대신 DECIMAL(10, 3) 으로 처리한다.
+   DECIMAL 타입에서 자리수와 소수자리 생략 시 오류 처리하는 대신 DECIMAL(10, 3) 으로 처리한다. 단, 자리수를 입력하고 소수자리만 생략한 경우는 소수자리를 0으로 처리한다.
    NUMERIC 타입은 DECIMAL 과 동일하게 처리하며, 자리수와 소수자리 생략 규칙을 동일하게 적용한다.
    문법 및 명령어 지원 (테이블 및 뷰 DDL, CRUD 기본 문법)
    추가로 Oracle 호환을 위해 NVL, TO_CHAR, TO_DATE 기본 함수를 제공한다.
@@ -100,7 +100,7 @@
 | 이진 | `BINARY(n)` | 고정 길이 바이트열. n = 1~2,000 (생략 시 1) |
 | 이진 | `VARBINARY(n)` (`BINARY VARYING`) | 가변 길이 바이트열. n = 1~65,535 (생략 시 65,535) |
 | 정수 | `SMALLINT`, `INTEGER` (`INT`), `BIGINT` | 부호 있는 16, 32, 64비트 정수 |
-| 고정소수 | `NUMERIC(p,s)`, `DECIMAL(p,s)` (`DEC`) | p = 1~38 (생략 시 38), s = 0~p (생략 시 0). 부동소수를 거치지 않는 10진 정확 연산 |
+| 고정소수 | `NUMERIC(p,s)`, `DECIMAL(p,s)` (`DEC`) | p = 1~38, s = 0~p. 인자를 모두 생략하면 (10,3), p만 지정하면 s = 0. 부동소수를 거치지 않는 10진 정확 연산 |
 | 부동소수 | `REAL`, `DOUBLE PRECISION`, `FLOAT(p)` | IEEE 754 단정도, 배정도. `FLOAT(p)` 는 p 가 24 이하면 `REAL`, 그 외(생략 포함)는 `DOUBLE PRECISION` |
 | 논리 | `BOOLEAN` | TRUE, FALSE, UNKNOWN(NULL) |
 | 날짜시간 | `DATE` | 연-월-일 (시각 없음). 0001-01-01 ~ 9999-12-31 |
@@ -109,6 +109,7 @@
 | 기간 | `INTERVAL` 연-월 계열, 일-시간 계열 | ANSI 한정자 (`YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND` 와 `A TO B` 조합) |
 
 - 문자 타입의 길이 단위는 바이트가 아니라 문자(유니코드 코드 포인트)이다. `NCHAR`, `NVARCHAR` 는 캐릭터셋이 UTF-8 뿐이므로 `CHAR`, `VARCHAR` 와 동일하게 처리한다.
+- `DECIMAL`, `DEC`, `NUMERIC` 은 동일하게 처리한다. 인자 전체 생략은 `(10,3)`, 정밀도만 지정한 `(p)`는 `(p,0)`, `(p,s)`는 지정한 값을 사용한다.
 - `WITH TIME ZONE` 타입은 UTC 기준 시각과 입력 당시의 오프셋을 함께 저장한다. 세션 타임존은 config.json 의 `timeZone` 으로 시작하고 `SET TIME ZONE` 으로 바꾼다.
 - 초기 버전 제외 : CLOB, NCLOB, BLOB (개요 명시). 그 외에 보편적인 DBMS 가 공통으로 지원하지 않는 DECFLOAT, XML, JSON, ARRAY, MULTISET, ROW, 사용자 정의 타입, REF 도 제외한다.
 
@@ -217,6 +218,7 @@ DROP TABLESPACE 이름 [INCLUDING CONTENTS]
   - 행은 슬롯 페이지 구조의 힙에 저장하고, 한 페이지를 넘는 행은 오버플로 페이지로 잇는다. 인덱스는 B+Tree 이다. 페이지마다 체크섬을 둔다.
   - 바이트 단위의 상세 레이아웃은 저장 엔진 구현 시 확정하여 `rdbms` 디렉토리 내 문서로 남긴다.
 - 버전 관리
+  - 아래의 릴리스된 포맷 보존과 이전 버전 호환성 규칙에는 개요 3의 예외를 적용한다. RDBMS 1.0 출시 전에는 포맷 번호를 유지한 구조 변경과 기존 호환성 생략이 가능하다. 변경 시 저장 포맷 문서와 테스트 자료를 함께 갱신한다.
   - 포맷 버전은 1 부터 시작하는 정수이다. 새 테이블스페이스는 항상 서버가 지원하는 최신 버전으로 만든다.
   - 버전별 구현 코드를 분리하고(예: `storage/format/v1`, `v2`), 상위 계층은 공통 인터페이스로만 접근한다. 파일을 열 때 헤더의 버전을 보고 구현을 고른다.
   - 릴리스된 버전의 구현은 버그 수정 외에는 바꾸지 않는다. 구조를 바꿔야 하면 새 버전을 추가한다.
@@ -439,7 +441,7 @@ SET AUTOCOMMIT { ON | OFF }
 | 객체 이름 앞의 테이블스페이스명 | 세션의 현재 테이블스페이스 |
 | `INSERT` 의 `INTO`, `DELETE` 의 `FROM`, `TRUNCATE` 의 `TABLE`, `ALTER TABLE` 의 `COLUMN`, 별칭 앞의 `AS`, `INNER`, `OUTER`, `ASC`, `PRIVILEGES`, `WORK`, `ROLLBACK TO` 의 `SAVEPOINT` | 뜻이 달라지지 않음 |
 | `INSERT` 의 컬럼 목록 | 테이블의 모든 컬럼 (정의 순서) |
-| 타입의 길이, 정밀도 | `CHAR` 는 1, `VARCHAR` 와 `VARBINARY` 는 최대 길이, `NUMERIC` 은 (38,0), `TIME` 은 0, `TIMESTAMP` 는 6 |
+| 타입의 길이, 정밀도 | `CHAR` 는 1, `VARCHAR`·`NVARCHAR`·`VARBINARY` 는 65,535, `DECIMAL`·`DEC`·`NUMERIC` 의 인자 전체 생략은 (10,3), `(p)`는 (p,0), `TIME` 은 0, `TIMESTAMP` 는 6 |
 | 제약조건 이름, 인덱스 이름 | 자동 부여 (10, 11 참조) |
 | `REFERENCES` 의 컬럼 목록 | 대상 테이블의 PK |
 | FK 의 참조동작, `DROP` 의 `RESTRICT` | `NO ACTION`, `RESTRICT` |

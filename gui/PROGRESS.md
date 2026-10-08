@@ -69,8 +69,10 @@ electron 기반의 GUI DB툴을 개발하는 프로젝트이다. HelloWorldDB �
 
 - 16단계의 작업량은 15단계에서 어댑터 경계를 얼마나 지켰는지에 달려 있다. 화면 코드가 HelloWorldDB 의 딕셔너리 뷰 이름이나 문법을 직접 알게 하지 않는다.
 - `nodejsDriver` 의 공개 API 가 바뀌면 HelloWorldDB 어댑터만 고치면 되어야 한다.
+- HelloWorldDB의 타입 선언 인자 전체 생략은 DECIMAL/DEC/NUMERIC (10,3), VARCHAR/NVARCHAR 길이 65,535이다. DDL 표시와 컬럼 정보는 실제 서버 메타데이터를 따르며 이 기본값을 타사 DB 어댑터에 공통 적용하지 않는다. [rdbms 타입 정책](../rdbms/docs/data-types.md)을 참고한다.
 
 ## 작업 이력
 
 - 2026-10-08 : 세부 계획 작성.
 - 2026-10-08 : 보류로 전환. 세부 계획은 초안으로 남김. 패키지명 확정.
+- 2026-10-08 : HelloWorldDB의 변경된 타입 기본값과 메타데이터 사용 규칙을 인수인계에 반영했다. 개발은 계속 보류한다.
