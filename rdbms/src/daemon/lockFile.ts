@@ -13,4 +13,126 @@
  *
  * 관련 사양 : AGENTS.md 상세 9, 14-1
  * 구현 단계 : 1단계(중복 구동 방지), 10단계(제어 토큰)
+ * 1단계에서는 중복 구동 방지와 기본 상태 조회까지만 쓴다.
+ * 제어 토큰을 로컬 전용 채널에 싣는 일은 9~10단계에서 한다.
  */
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { StartupError } from "../common/errors.js";
+import { getLockFilePath } from "../common/instance.js";
+
+/** 잠금 파일의 내용이다. */
+export interface LockFileContent {
+  pid: number;
+  port: number;
+  startedAt: string;
+  controlToken: string;
+}
+
+/** 잠금 파일의 내용을 읽는다. 파일이 없으면 null 을 돌려준다. */
+export function readLockFile(dataDir: string): LockFileContent | null {
+  const lockPath = getLockFilePath(dataDir);
+  let text: string;
+  try {
+    text = fs.readFileSync(lockPath, "utf8");
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return null;
+    }
+    throw new StartupError(`Cannot read lock file: ${lockPath}`, { cause: error });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isLockFileContent(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+/** PID 의 프로세스가 살아 있는지 확인한다. 권한이 없어도 존재하면 참이다. */
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isErrnoError(error) && error.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+}
+
+/**
+ * 잠금 파일을 확보한다.
+ * 이미 살아 있는 데몬의 잠금이면 StartupError 를 던진다.
+ * 비정상 종료로 남은 파일(PID 의 프로세스가 없음)은 덮어쓴다.
+ */
+export function acquireLock(dataDir: string, port: number): LockFileContent {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const existing = readLockFile(dataDir);
+  if (existing !== null && isProcessAlive(existing.pid)) {
+    throw new StartupError(
+      `Data directory is already in use by process ${String(existing.pid)} (port ${String(existing.port)}).`,
+    );
+  }
+  const content: LockFileContent = {
+    pid: process.pid,
+    port,
+    startedAt: new Date().toISOString(),
+    controlToken: crypto.randomBytes(16).toString("hex"),
+  };
+  const lockPath = getLockFilePath(dataDir);
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify(content, null, 2), "utf8");
+  } catch (error) {
+    throw new StartupError(`Cannot write lock file: ${lockPath}`, { cause: error });
+  }
+  return content;
+}
+
+/** 정상 종료 때 잠금 파일을 지운다. 없으면 넘어간다. */
+export function releaseLock(dataDir: string): void {
+  const lockPath = getLockFilePath(dataDir);
+  try {
+    fs.rmSync(lockPath, { force: true });
+  } catch (error) {
+    throw new StartupError(`Cannot remove lock file: ${lockPath}`, { cause: error });
+  }
+}
+
+/** 데몬이 구동 중인지 잠금 파일과 PID 로 판단한다. */
+export function isRunning(dataDir: string): boolean {
+  const existing = readLockFile(dataDir);
+  return existing !== null && isProcessAlive(existing.pid);
+}
+
+function isLockFileContent(value: unknown): value is LockFileContent {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record["pid"] === "number" &&
+    Number.isInteger(record["pid"]) &&
+    typeof record["port"] === "number" &&
+    typeof record["startedAt"] === "string" &&
+    typeof record["controlToken"] === "string" &&
+    record["controlToken"].length > 0
+  );
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return isErrnoError(error) && error.code === "ENOENT";
+}
+
+function isErrnoError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}

@@ -12,8 +12,13 @@
  * 여기에 두지 않는 것 : 데몬 본체의 구동 절차 (daemon/main.ts)
  *
  * 관련 사양 : AGENTS.md 상세 14
- * 구현 단계 : 10단계. 지금은 하위 명령을 가르는 뼈대만 있다.
+ * 구현 단계 : 1단계에서 `start --foreground` 와 `status` 를 연결했다.
+ *             분리 구동과 SQL 접속은 10단계에서 붙는다.
  */
+
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { startCommand, statusCommand, stopCommand } from "./daemonControl.js";
 
 /** 데몬 제어용 하위 명령. 이 밖의 인자는 모두 SQL 접속으로 본다. */
 const DAEMON_COMMANDS = ["start", "stop", "status"] as const;
@@ -38,8 +43,41 @@ Options for an SQL session:
       --help                 Show this help
 `;
 
+const DEFAULT_TIMEOUT_SECONDS = 30;
+
 function isDaemonCommand(arg: string | undefined): arg is DaemonCommand {
   return DAEMON_COMMANDS.includes(arg as DaemonCommand);
+}
+
+/**
+ * 설치 디렉토리를 찾는다. config.json 이 있는 디렉토리이다.
+ * HWDB_INSTALL_DIR 환경 변수가 있으면 시험용으로 그것을 쓴다.
+ */
+export function findInstallDir(): string {
+  const override = process.env["HWDB_INSTALL_DIR"];
+  if (override !== undefined && override.length > 0) {
+    return path.resolve(override);
+  }
+  const cliDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(cliDir, "..", "..", "..");
+}
+
+function parseTimeoutSeconds(args: readonly string[]): number | null {
+  const index = args.indexOf("--timeout");
+  if (index === -1) {
+    return DEFAULT_TIMEOUT_SECONDS;
+  }
+  const raw = args[index + 1];
+  if (raw === undefined) {
+    process.stderr.write("hwdb: --timeout needs a value in seconds\n");
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    process.stderr.write("hwdb: --timeout must be a positive integer (seconds)\n");
+    return null;
+  }
+  return parsed;
 }
 
 /** 인자를 보고 할 일을 정해 실행한 뒤, 프로세스 종료 코드를 돌려준다. */
@@ -52,9 +90,42 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (isDaemonCommand(first)) {
-    // TODO(10단계) : daemonControl.ts 의 start, stop, status 를 호출한다.
-    process.stderr.write(`hwdb ${first}: not implemented yet\n`);
-    return 1;
+    const installDir = findInstallDir();
+    if (first === "status") {
+      if (argv.length > 1) {
+        process.stderr.write("hwdb status: this command takes no arguments\n");
+        return 1;
+      }
+      return await statusCommand(installDir);
+    }
+    if (first === "stop") {
+      const timeoutSeconds = parseTimeoutSeconds(argv);
+      if (timeoutSeconds === null) {
+        return 1;
+      }
+      const rest = argv.filter((arg, index) => arg !== "--timeout" && argv[index - 1] !== "--timeout");
+      if (rest.length > 1) {
+        process.stderr.write("hwdb stop: unknown arguments\n");
+        return 1;
+      }
+      return await stopCommand(installDir, timeoutSeconds);
+    }
+    const timeoutSeconds = parseTimeoutSeconds(argv);
+    if (timeoutSeconds === null) {
+      return 1;
+    }
+    const foreground = argv.includes("--foreground");
+    const rest = argv.filter((arg, index) => {
+      if (arg === "--timeout" || argv[index - 1] === "--timeout" || arg === "--foreground") {
+        return false;
+      }
+      return true;
+    });
+    if (rest.length > 1) {
+      process.stderr.write("hwdb start: unknown arguments\n");
+      return 1;
+    }
+    return await startCommand({ installDir, foreground, timeoutSeconds });
   }
 
   // TODO(10단계) : 옵션을 해석하여 sqlShell.ts 로 넘긴다.

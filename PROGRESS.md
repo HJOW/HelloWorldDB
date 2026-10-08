@@ -7,9 +7,9 @@
 
 - 최종 갱신 : 2026-10-08
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
-- `rdbms` 1단계를 시작했다. Node.js 프로젝트 구성과 모듈 뼈대까지 끝났고, 기능 코드는 아직 없다.
+- `rdbms` 1단계를 마쳤다. config.json 읽기, 로그, 오류 체계, 포그라운드 구동과 잠금 파일까지 동작하며 `npm test` 29개가 통과한다.
 - 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `rdbms` 1단계의 남은 항목 (config.json 읽기, 로그, 오류 체계, 데몬 진입점)
+- 다음 작업 : `rdbms` 2단계(저장 엔진. 바이트 단위 파일 포맷 문서부터)
 
 ## 프로젝트별 상태
 
@@ -17,7 +17,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1단계 진행 중 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1단계 완료, 2단계 착수 전 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
@@ -47,3 +47,4 @@
 - 2026-10-08 : 사양 변경 반영. 통신 방식을 HTTP 웹소켓에서 TCP 로 변경, 접속용 CLI 와 로컬 전용 채널 추가, 문법 생략 원칙 추가. 프로젝트별 PROGRESS.md 작성.
 - 2026-10-08 : 사양 변경 반영. 데몬 구동과 CLI 를 통한 구동, 종료, 상태 조회 추가. SID 대신 포트 번호로 인스턴스를 식별하도록 명시하고 TCP 와 UDP 포트를 하나로 통합. 패키지명 규칙 확정. JDBC 와 GUI DB툴 보류.
 - 2026-10-08 : `rdbms` 1단계 착수. Node.js 프로젝트 구성(ES 모듈, TypeScript), 모듈별 뼈대 작성, 개발 의존성의 타입스크립트를 6 버전으로 고정.
+- 2026-10-08 : `rdbms` 1단계 완료. config.json 읽기, 로그, 오류 체계, 포그라운드 구동과 잠금 파일 동작. `npm test` 29개 통과.
