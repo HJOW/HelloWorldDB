@@ -1,0 +1,8 @@
+{
+  "name": "helloworlddb",
+  "version": "0.1.0",
+  "description": "Simple DBMS written in Node.js",
+  "main": "src/db.js",
+  "scripts": { "test": "node --test test/*.test.js" },
+  "license": "Apache-2.0"
+}
