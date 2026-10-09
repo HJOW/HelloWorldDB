@@ -6,11 +6,11 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-08
-- 진행 단계 : 1단계 점검·보완, 2단계 저장 엔진 완료. 3단계에서 타입 정의·별칭·인자 기본값과 범위 검증을 구현했다.
+- 최종 갱신 : 2026-10-09
+- 진행 단계 : 1 ~ 4단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서)
 - 착수 조건 : 없음
-- 다음 작업 : `types/value.ts`와 `types/codec.ts`에서 타입별 값 표현, 저장 형식, 정렬 순서를 보존하는 인덱스 키 인코딩을 구현한다.
-- 검증 : Windows의 Node.js 24.19.0 / TypeScript 6.0.3에서 `npm test` 60개 통과, Bun 1.3.14에서 타입 테스트 9개 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`는 앞선 작업에서 Node.js/bun 양쪽으로 검증했다.
+- 다음 작업 : 5단계 카탈로그와 DDL. 프로세스 내부 세션 API(`session/session.ts`)부터 만들고, SYSTEM 테이블스페이스 최초 생성과 테이블스페이스·테이블·뷰·인덱스 DDL 을 붙인다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 233개 통과, Bun 1.3.14에서 타입·SQL 테스트 182개(`bun test dist/test/types/ dist/test/sql/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
 
 ## 작업 규칙
 
@@ -21,7 +21,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, 데몬/CLI의 1단계 범위와 `storage`에 구현 코드가 있다. `types/dataType.ts`는 타입 정의와 인자 해석을 제공하며 값 표현/코덱, SQL, 카탈로그, 인증, 통신은 아직 뼈대이다.
+`config`, `common`, 데몬/CLI의 1단계 범위와 `storage`, `types`, `sql`에 구현 코드가 있다. 카탈로그, 세션, 실행, 인증, 통신은 아직 뼈대이다.
 
 ```
 rdbms/
@@ -57,8 +57,19 @@ rdbms/
         overflow.ts          행/긴 키/카탈로그의 오버플로 체인
         heap.ts              슬롯 힙
         btree.ts             B+Tree
-    types/               dataType.ts, value.ts, codec.ts, numeric.ts, datetime.ts, cast.ts
-    sql/                 lexer.ts, ast.ts, parser.ts
+    types/               타입 시스템. storage 를 import 하지 않는다
+      dataType.ts          타입 정의, 이름과 별칭 해석, 인자 기본값과 범위, SQL 표기
+      errors.ts            타입 시스템의 오류 생성 (2001 ~ 2012번)
+      numeric.ts           Decimal. bigint 기반 10진 정확 연산
+      datetime.ts          DATE/TIME/TIMESTAMP/INTERVAL 값, 문자열 변환, 타임존, 날짜 연산
+      value.ts             SqlValue, 값을 타입에 맞추기, 비교와 정렬, 3값 논리, 문자열 표기
+      cast.ts              암묵적 형변환의 범위, CAST, 문자열 리터럴 해석, 공통 타입
+      arithmetic.ts        사칙연산, 단항 -, 연결 || 의 결과 타입과 계산
+      codec.ts             행 인코딩, 순서를 보존하는 인덱스 키 인코딩, UTF-8 변환
+    sql/                 SQL 문법. catalog, storage 를 import 하지 않는다
+      lexer.ts             어휘 분석. 토큰과 위치, 문법 오류 생성
+      ast.ts               구문 트리의 타입 정의
+      parser.ts            구문 분석. parseStatement, 예약어 목록, 깊이 한도
     catalog/             catalog.ts, tablespaceManager.ts, bootstrap.ts, dictionaryViews.ts
     session/             session.ts(SQL 실행의 입구), sessionManager.ts
     exec/                analyzer.ts, planner.ts, executor.ts, expression.ts, functions.ts, dml.ts, ddl.ts
@@ -69,10 +80,15 @@ rdbms/
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
     smoke.test.ts          프로젝트 구성 확인용
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
+    types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
+                           codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
+    sql/                   어휘 분석, 구문 분석 테스트. helpers.ts 는 구문 트리를 한 줄 표기로 바꾸는 도우미
+                           parserRobustness.test.ts 는 망가뜨린 입력으로 파서의 견고성을 본다
     fixtures/              storage-v1.hwdb, 해시/내용 설명, 최초 생성 스크립트
   docs/
-    data-types.md          변경된 타입 인자와 기본값, 메타데이터 사용 규칙
-    storage-v1.md          저장 포맷, API 사용 원칙과 트랜잭션 설계. 프로토콜 명세는 9단계
+    data-types.md          타입 인자와 기본값, 값 표현, 비교, 형변환, 연산 결과 타입, 타입 오류 번호
+    sql-syntax.md          어휘 규칙, 예약어, 사양에 더해 받는 문법, 지원하지 않는 문법, 한도, 구문 트리의 원칙
+    storage-v1.md          저장 포맷, 행과 인덱스 키의 값 인코딩, API 사용 원칙과 트랜잭션 설계. 프로토콜 명세는 9단계
   dist/                  빌드 결과물. git 에 넣지 않는다
 ```
 
@@ -98,6 +114,7 @@ rdbms/
 | `npm test` | 빌드한 뒤 `node:test` 로 테스트 실행 |
 | `node test/storage/runtime-smoke.mjs` | 빌드 결과물의 저장/재열기와 포그라운드 종료 검증 |
 | `bun test/storage/runtime-smoke.mjs` | 같은 주요 경로를 bun에서 검증 |
+| `bun test dist/test/types/ dist/test/sql/` | 빌드한 타입 시스템, SQL 파서 테스트를 bun에서 실행 |
 | `npm run hwdb -- <인자>` | 빌드된 `hwdb` 명령 실행. 예 : `npm run hwdb -- --help` |
 
 ## 세부 계획
@@ -135,22 +152,27 @@ rdbms/
 - [x] 타입 이름과 별칭 해석, 길이와 정밀도의 범위 검증, 생략했을 때의 기본값 (상세 1-1, 13)
   - 문자/이진, 정수, 고정·부동소수, 논리, 날짜시간, INTERVAL 타입을 정규화했다. `CHAR`/`VARCHAR`/`BINARY` 계열 길이와 DECIMAL, FLOAT, TIME/TIMESTAMP, INTERVAL 정밀도를 검증하고 기본값을 적용한다.
   - 전용 테스트에서 별칭, 경계값, 잘못된 인자, 지원하지 않는 타입의 SQLSTATE를 확인했다.
-- [ ] 값의 저장 형식, 정렬 순서가 유지되는 인덱스 키 형식
-- [ ] 비교 규칙 : NULL, CHAR 의 뒤쪽 공백, 코드 포인트 순 (상세 1-2)
-- [ ] NUMERIC 의 10진 정확 연산. 부동소수를 거치지 않는다 (`bigint` 기반 구현 권장)
-- [ ] 날짜시간, 타임존, INTERVAL 연산
-- [ ] 암묵적 형변환과 `CAST`
+- [x] 값의 저장 형식, 정렬 순서가 유지되는 인덱스 키 형식
+  - `codec.ts`의 `encodeRow`/`decodeRow`, `encodeKey`, `prefixUpperBound`. 형식은 [docs/storage-v1.md](docs/storage-v1.md)의 "행과 인덱스 키의 값 인코딩"에 있고 고정 검증값 테스트로 묶었다.
+- [x] 비교 규칙 : NULL, CHAR 의 뒤쪽 공백, 코드 포인트 순 (상세 1-2)
+- [x] NUMERIC 의 10진 정확 연산. 부동소수를 거치지 않는다 (`bigint` 기반)
+- [x] 날짜시간, 타임존, INTERVAL 연산
+- [x] 암묵적 형변환과 `CAST`
+- [x] 사칙연산, 단항 `-`, `||` 의 결과 타입과 계산 (`arithmetic.ts`)
 - 완료 기준 : 타입별 경계값, 오버플로, NULL 처리 테스트 통과.
+  (`test/types`의 102개 테스트 통과. 키의 바이트 순서와 값의 정렬 순서가 같은지를 표본값·무작위값·복합 키로 확인했고, 코덱이 만든 행과 키를 실제 저장 엔진에 넣어 재열기 후 인덱스 순서로 읽는 테스트를 두었다. 빌드 결과물에 결함을 주입해 테스트가 잡아내는지도 확인했다.)
 
 ### 4단계. SQL 파서
 
-- [ ] 어휘 분석 : 키워드, 식별자(큰따옴표 포함), 리터럴, 주석, `?`
-- [ ] 식 : 연산자 우선순위, `CASE`, `CAST`, 함수 호출, 서브쿼리
-- [ ] 문장 : 질의, DML, DDL, 트랜잭션, 테이블스페이스, 사용자, 권한, 세션 문장(`USE`, `SET TIME ZONE`, `SET AUTOCOMMIT`)
-- [ ] 생략 규칙 전부 (상세 13)
-- [ ] 지원하지 않는 문법을 알아보고 `0A000` 으로 답한다 (`UNIQUE`, `CHECK`, `WITH`, `MERGE`, 윈도우 함수 등. 상세 11, 16)
-- [ ] 문법 오류에 줄과 칸 위치를 담는다
+- [x] 어휘 분석 : 키워드, 식별자(큰따옴표 포함), 리터럴, 주석, `?`
+- [x] 식 : 연산자 우선순위, `CASE`, `CAST`, 함수 호출, 서브쿼리
+- [x] 문장 : 질의, DML, DDL, 트랜잭션, 테이블스페이스, 사용자, 권한, 세션 문장(`USE`, `SET TIME ZONE`, `SET AUTOCOMMIT`)
+- [x] 생략 규칙 전부 (상세 13)
+- [x] 지원하지 않는 문법을 알아보고 `0A000` 으로 답한다 (`UNIQUE`, `CHECK`, `WITH`, `MERGE`, 윈도우 함수 등. 상세 11, 16)
+- [x] 문법 오류에 줄과 칸 위치를 담는다
+- [x] 견고성 : 어떤 입력에도 `DbError` 이외의 예외로 죽지 않는다. 겹친 깊이와 구문 트리 깊이의 한도를 둔다
 - 완료 기준 : 지원 문법은 구문 트리로, 미지원 문법은 `0A000`, 잘못된 문법은 위치 정보를 담은 오류로 처리된다.
+  (`test/sql`의 80개 테스트 통과. 받아들이는 문법과 결정 사항은 [docs/sql-syntax.md](docs/sql-syntax.md)에 있다. 상세 13 의 Hello World 세 문장이 그대로 구문 분석된다. 토큰을 빼고 바꾸고 끼워 넣은 입력 만여 건에서 `DbError` 이외의 예외가 없음을 확인했고, 빌드 결과물에 결함 20개를 주입해 테스트가 모두 잡아내는 것을 확인했다.)
 
 ### 5단계. 카탈로그와 DDL
 
@@ -254,6 +276,8 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
+- 행의 컬럼 추가(`ADD COLUMN`)를 기존 행을 다시 쓰는 방식으로 할지, 저장된 컬럼 수가 적은 행을 읽을 때 채우는 방식으로 할지 (5단계). 행 형식은 두 방식을 모두 받을 수 있게 컬럼 수를 앞에 둔다. 기본값이 있는 컬럼을 추가하면 기존 행에도 그 값이 보여야 한다는 점을 함께 정한다.
+- 길게 이어진 `UNION ALL`(약 1,000개 초과)은 구문 트리 깊이 한도에 걸린다. 여러 행을 한 번에 넣을 때는 `INSERT ... VALUES (...), (...)`를 쓰면 된다. 실제 사용에서 불편하면 집합 연산도 `AND`/`OR`처럼 나란히 담는 노드로 바꾼다 (6단계에서 판단).
 - Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.19.0이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
 - `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
 - SCRAM 반복 횟수의 기본값 (8단계)
@@ -285,6 +309,28 @@ SQL 접속 (상세 14-2)
 - AGENTS.md 개요 1에 맞춰 고정소수 타입의 인자 전체 생략은 (10,3)으로 통일했다. 정밀도만 명시한 `(p)`는 기존 규칙대로 (p,0)이며 최대 정밀도는 38이다. `types/dataType.ts`의 `resolveExactNumericType()`을 사용하고 SQL 파서에서 기본값을 따로 중복 정의하지 않는다. 타입 인자 오류는 2000번(`22023`)이다. [docs/data-types.md](docs/data-types.md)를 참고한다.
 - 타입 이름은 대소문자를 구분하지 않고 공백을 정규화한다. 별칭은 `resolveDataType()`에서 정규 타입으로 통일하며, 잘못된 인자 수/범위는 2000번(`22023`), 미지원 타입은 1번(`0A000`)으로 반환한다. 저장 형식은 아직 확정하지 않았으며 이후 `codec.ts`에서 별도로 구현한다.
 - 명세에서 정하지 않은 `FLOAT(p)`의 상한은 IEEE 754 배정도 정밀도 53으로, INTERVAL 선행 정밀도 상한은 9로 정했다. INTERVAL 기본 선행 정밀도는 2, 초 소수 자릿수 기본값은 6이며 범위는 각각 1~9, 0~6이다. 세부 사항과 `resolveDataType()`의 인자 순서는 [docs/data-types.md](docs/data-types.md)를 따른다.
+- 4단계에서 정한 사항이다. 전체 목록은 [docs/sql-syntax.md](docs/sql-syntax.md)에 있다.
+  - 예약어는 문장과 절의 구조를 정하는 단어만 둔다(76개). 타입 이름, 함수 이름, `KEY`·`INDEX`·`USER`·`MESSAGE` 같은 나머지 키워드는 문맥으로 구별하여 이름으로 쓸 수 있게 했다. Hello World 샘플의 `MESSAGE`, 딕셔너리 뷰의 컬럼 이름이 따옴표 없이 쓰이도록 하기 위함이다.
+  - 구문 분석기가 데이터 타입을 바로 해석하여 구문 트리에 `DataType`으로 담는다. 타입의 기본값을 두 곳에서 정의하지 않기 위함이다. 그 밖의 생략된 부분은 `null`로 남긴다.
+  - 수 리터럴과 문자열 리터럴은 타입을 정하지 않고 표기만 남긴다. 값의 타입은 6단계의 분석기가 문맥으로 정한다. 수 리터럴 앞의 단항 부호만 리터럴에 합친다.
+  - `AND`, `OR`은 피연산자를 나란히 담는 `Logical` 노드이다. 조건이 길게 이어져도 트리가 깊어지지 않는다.
+  - 괄호가 겹친 곳이 질의인지 식(또는 조인)인지는 되돌려 읽지 않고, 안쪽 질의 뒤에 이어지는 토큰으로 한 번에 정한다. 되돌려 읽는 방식은 겹친 깊이에 지수적으로 느려지는 것을 실제로 확인하여 버렸다.
+  - 겹친 깊이는 200, 구문 트리 깊이는 1,000 으로 제한하고 넘으면 `54001`이다. Node.js 에서 노드당 2프레임짜리 재귀 순회가 깊이 약 5,000 에서 스택을 넘기는 것을 재어 정한 값이다.
+  - 오류 번호 3000(`42601` 문법 오류), 3001(`42622` 식별자 길이), 3002(`54001` 처리 한도)를 배정했다. `DbError`에 선택 항목 `position`을 추가했고, 위치는 메시지 끝에도 `(line L, column C).`로 적는다.
+  - 사양의 구문에 없지만 뜻이 같거나 널리 쓰이는 표기를 더 받는다(쉼표 조인, `DEFAULT VALUES`, `IS TRUE`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, `INCLUDING CONTENTS AND DATAFILES` 등). `DROP INDEX`와 `CREATE VIEW`/`CREATE INDEX`의 `IF [NOT] EXISTS`처럼 사양에 없는 절은 넣지 않았다.
+  - `BETWEEN`, `LIKE`, `DEFAULT`, 행 수 제한의 인자는 비교·논리 연산자를 포함하지 않는 식으로 읽는다. `DEFAULT 0 NOT NULL`의 `NOT`이 식의 일부로 읽히지 않게 하기 위함이다.
+  - 한 번에 문장 하나만 받으며 빈 문장은 문법 오류이다. 여러 문장을 나누는 것은 10단계의 CLI 가 `sql/lexer.ts`의 토큰으로 한다.
+- 3단계에서 정한 사항이다. 근거와 표는 [docs/data-types.md](docs/data-types.md)에 있다.
+  - 실행 중의 값은 타입 꼬리표 없는 JavaScript 값(`SqlValue`)이고 타입 정의는 따로 다닌다. 정수는 폭과 무관하게 `bigint`, NUMERIC 은 `Decimal`, 날짜시간은 전용 클래스이다. 실행기는 식마다 타입을 정적으로 정해 두어야 한다. (결과 컬럼의 메타데이터에도 필요하다)
+  - `WITH TIME ZONE` 값은 UTC 기준 마이크로초와 오프셋(분)을 가진다. 지역 이름은 저장하지 않는다. 오프셋 범위는 config.json 검증과 같은 -23:59 ~ +23:59 이다. 지역 이름 타임존의 오프셋은 분 단위로 반올림한다.
+  - 길이를 넘는 문자열은 `22001`이되, 넘는 부분이 모두 공백이면 그 공백만 뗀다. 소수 초는 NUMERIC 의 소수부처럼 반올림한다. INTERVAL 은 종료 필드보다 작은 단위를 버린다.
+  - `CHAR`끼리의 비교는 뒤쪽 공백을 뗀 뒤 코드 포인트 순으로 한다(공백을 채워 비교하는 방식이 아니다). 인덱스 키도 공백을 떼고 만든다.
+  - 부동소수는 유한한 값만 받는다. NaN 과 무한대는 값이 될 수 없으므로 정렬 순서를 따로 정하지 않았다.
+  - 암묵적 형변환의 계열, `CAST` 지원 조합, 문자열 → `BOOLEAN` 은 `TRUE`/`FALSE` 만 받는 것, 문자·이진 사이의 `CAST` 미지원을 정했다. 타입이 정해지지 않은 문자열은 `castLiteral`로 해석하며 이진 타입은 16진 문자열로 읽는다.
+  - 연산 결과 타입 : 정수끼리는 적어도 `INTEGER`, `DECIMAL`은 정밀도 38 안에서 정수부를 먼저 지키는 식, `DATE - DATE`는 일수(`INTEGER`), 시각의 차이는 `INTERVAL DAY(9) TO SECOND`, 계산으로 얻은 기간의 선행 정밀도는 9 이다.
+  - 타입 오류 번호 2001 ~ 2012 를 배정했다. 값의 표현이 타입과 어긋난 채 넘어오면 내부 오류(`XX000`)이다.
+  - 값의 저장 형식은 포맷 v1 의 일부이다. 행은 컬럼 수와 NULL 비트맵을 앞에 두어, 저장된 컬럼이 정의보다 적으면 뒤쪽을 NULL 로 읽는다. (`ADD COLUMN`을 어떻게 처리할지는 5단계에서 정한다)
+  - 뼈대에 없던 `types/errors.ts`, `types/arithmetic.ts`를 추가했다. 연산 결과 타입은 `cast.ts`가 아니라 `arithmetic.ts`가 맡는다.
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -298,7 +344,21 @@ SQL 접속 (상세 14-2)
 ## 인수인계 사항
 
 - 1단계를 점검·보완하고 2단계를 마쳤다. `config`, `common`, 데몬/CLI의 1단계 범위와 `storage`에 기능 코드가 있다. SQL 실행/접속은 아직 구현되지 않았다.
-- 3단계에서 `types/dataType.ts`의 타입 이름/별칭, 기본값, 길이·정밀도 범위 검증을 구현했다. 다음은 `value.ts`, `codec.ts`의 값·인덱스 키 인코딩이다. 저장소는 바이트열만 받아들이므로 `types`에서 저장소 모듈을 import하지 않는다.
+- 3단계까지 마쳤다. 타입 시스템을 쓰는 순서는 다음과 같다. (실제 호출 예는 `test/types/codecStorage.test.ts`)
+  - 타입 선언은 `resolveDataType(이름, ...인자)`로 `DataType`을 만든다. 식의 결과 타입은 `bindArithmetic`/`bindConcat`/`bindNegate`의 `resultType`, 여러 식을 함께 다룰 때는 `commonType`으로 정한다.
+  - 값은 `castValue`(명시적), `assignValue`(암묵적, 계열 검사 포함), `castLiteral`(타입이 정해지지 않은 문자열)로 대상 타입에 맞춘 뒤에 저장하거나 비교한다. 이 함수들은 마지막에 `conformValue`를 거치므로 결과는 항상 타입에 맞는 값이다.
+  - 저장은 `encodeRow`, 인덱스는 `encodeKey`. 키를 만들 값은 인덱스 컬럼의 타입으로 먼저 바꾼다. 앞쪽 컬럼 조건은 접두 키와 `prefixUpperBound`로 범위를 만든다.
+  - 비교는 `compareNullable`(조건), `compareForSort`(정렬), `isNotDistinct`(GROUP BY, DISTINCT). 두 값이 모두 `CHAR`일 때만 `ignoreTrailingSpaces`를 준다.
+  - 형변환과 날짜시간 연산에는 `TypeContext`(세션 타임존, 문장 시작 시각)가 필요하다. 세션이 문장마다 만들어 넘긴다.
+- `EXTRACT`, `TO_CHAR`, `TO_DATE`, `MOD` 등 내장 함수는 6단계이다. 필요한 부품(`civilFromDays`, `splitTimeOfDay`, `Decimal.remainder`, `Decimal.round`)은 타입 모듈에 있다.
+- 4단계까지 마쳤다. SQL 은 `parseStatement(sql)`로 구문 트리를 얻는다. 뒤 단계가 알아 둘 점은 다음과 같다.
+  - 구문 트리는 문법만 담는다. 이름의 존재, 타입, 권한, 값의 범위는 보지 않았다. 예를 들어 `DATE 'abc'`, 없는 함수, `INSERT`의 값 개수 불일치, `GROUP BY` 없는 집계의 오용, `SELECT` 없는 곳의 `FOR UPDATE`는 그대로 통과한다.
+  - 수 리터럴의 타입은 분석기가 정한다. `INTEGER` 종류는 값의 크기에 따라 `INTEGER`, `BIGINT`, `DECIMAL(n,0)`으로, `DECIMAL` 종류는 적힌 자릿수의 `DECIMAL(p,s)`로, `FLOAT` 종류는 `DOUBLE PRECISION`으로 보는 것을 권한다. 문자열 리터럴과 문자열로 온 `?` 파라미터는 `castLiteral`로 문맥의 타입에 맞춘다.
+  - INTERVAL 리터럴은 한정자를 적힌 그대로 가진다. 선행 정밀도를 생략한 리터럴은 값의 자릿수에 맞추어 넓혀 주는 것을 권한다(`INTERVAL '100' DAY`가 오류가 되지 않도록).
+  - 구문 트리를 재귀로 순회해도 된다. 깊이는 1,000 을 넘지 않는다. 6단계에서 최대 깊이의 식으로 분석기와 실행기가 스택을 넘기지 않는지 테스트한다. 세션은 그래도 `DbError`가 아닌 예외를 내부 오류로 바꾸어 응답해야 한다.
+  - 뒤 단계의 오류에도 위치를 붙일 수 있다. 식과 객체 이름의 `position`을 `withPosition(error, position)`에 넘긴다.
+  - 뷰 정의는 `CreateViewStatement.queryText`(질의의 원문)를 카탈로그에 저장하고, 쓸 때 다시 구문 분석하는 방식을 염두에 두었다. 구문 트리 자체를 저장 형식으로 삼지 않는다.
+  - 비밀번호가 든 문장(`CREATE USER`, `ALTER USER`)의 원문을 로그에 남길 때는 1단계의 로그 가림을 거친다. 구문 트리의 `password`는 평문이다.
 - 저장 API의 실제 호출 예와 검증은 `test/storage/storage.test.ts`, Node.js/bun 실행 경로는 `test/storage/runtime-smoke.mjs`를 참고한다. 저장 배치 중 오류가 나면 호출자가 해당 배치를 롤백해야 한다.
 - SQL 카탈로그, SYSTEM 자동 생성과 데몬 조립은 5단계에 붙인다. 지금의 `hwdb start --foreground`는 저장 엔진을 자동으로 생성/개방하지 않는다. 네트워크 리스너도 아직 열지 않으므로 로그는 설정 상태로만 표현한다.
 - 저장 API 호출자는 파일을 독점 사용해야 한다. 데몬에서 연결할 때 데이터 디렉토리 잠금을 먼저 확보하고 마지막에 해제한다.
@@ -320,3 +380,5 @@ SQL 접속 (상세 14-2)
 - 2026-10-08 : 2단계 완료. 포맷/트랜잭션 설계 문서, 페이지 I/O, 포맷 선택, LRU/배치 캐시, 슬롯 힙/오버플로, 빈 페이지, B+Tree, 카탈로그 바이트 저장, 체크섬/정상 종료 표시와 v1 고정 자료를 추가했다. TypeScript 6.0.3, Node.js 24.19.0에서 `npm test` 51개 통과. bun 1.4.2 주요 실행 검증 통과.
 - 2026-10-08 : AGENTS.md 변경 반영. DECIMAL/DEC/NUMERIC 전체 생략 시 (10,3), VARCHAR/NVARCHAR 최대·기본 길이 65,535를 기본값 상수와 고정소수 인자 해석에 적용하고 정책 테스트를 추가했다. 저장 포맷과 타입 코덱 주석에 1.0 출시 전 호환성 예외를 명시했다. `npm test` 54개와 bun의 고정소수 인자 해석 테스트 통과. 전체 타입 시스템과 SQL 연결은 후속 단계이다.
 - 2026-10-08 : 3단계 타입 정의 작업. `resolveDataType()`에 ANSI 타입 정규화와 별칭, 기본값, 길이/정밀도 검증을 추가하고 `docs/data-types.md` 및 타입 테스트를 확장했다. 명세에 없던 FLOAT/INTERVAL 정밀도 경계는 결정 사항으로 기록했다. TypeScript 6.0.3 빌드 및 `npm test` 60개, Bun 1.3.14 타입 테스트 9개 통과. 값 표현과 저장/인덱스 키 코덱은 미완료이다.
+- 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
+- 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.

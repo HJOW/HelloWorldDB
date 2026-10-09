@@ -45,18 +45,66 @@ export const ERROR_CODES = {
   DUPLICATE_KEY: 1004,
   /** 잘못된 데이터 타입 인자. SQLSTATE 22023. */
   TYPE_PARAMETER_INVALID: 2000,
+  /** 문자열이나 바이트열이 타입의 길이를 넘음. SQLSTATE 22001. */
+  STRING_TOO_LONG: 2001,
+  /** 숫자가 타입의 범위나 정밀도를 넘음. SQLSTATE 22003. */
+  NUMERIC_OUT_OF_RANGE: 2002,
+  /** 0 으로 나눔. SQLSTATE 22012. */
+  DIVISION_BY_ZERO: 2003,
+  /** 문자열을 대상 타입의 값으로 해석할 수 없음. SQLSTATE 22018. */
+  INVALID_CAST_VALUE: 2004,
+  /** 날짜시간 문자열의 형식이 틀림. SQLSTATE 22007. */
+  INVALID_DATETIME_FORMAT: 2005,
+  /** 날짜시간 값이 범위를 넘음. SQLSTATE 22008. */
+  DATETIME_OUT_OF_RANGE: 2006,
+  /** INTERVAL 문자열의 형식이 틀림. SQLSTATE 22006. */
+  INVALID_INTERVAL_FORMAT: 2007,
+  /** INTERVAL 값이 필드 범위나 선행 정밀도를 넘음. SQLSTATE 22015. */
+  INTERVAL_OUT_OF_RANGE: 2008,
+  /** 타임존 지정이 틀림. SQLSTATE 22009. */
+  INVALID_TIME_ZONE: 2009,
+  /** 올바르지 않은 UTF-8 바이트열 또는 짝이 맞지 않는 서러게이트. SQLSTATE 22021. */
+  INVALID_CHARACTER_ENCODING: 2010,
+  /** 타입이 맞지 않아 암묵적 형변환이나 연산을 할 수 없음. SQLSTATE 42804. */
+  TYPE_MISMATCH: 2011,
+  /** 지원하지 않는 형변환(CAST). SQLSTATE 42846. */
+  CAST_NOT_SUPPORTED: 2012,
+  /** SQL 문법 오류. SQLSTATE 42601. */
+  SYNTAX_ERROR: 3000,
+  /** 식별자가 최대 길이(128자)를 넘음. SQLSTATE 42622. */
+  IDENTIFIER_TOO_LONG: 3001,
+  /** 문장이 너무 깊이 겹쳤거나 식이 너무 길게 이어져 처리 한도를 넘음. SQLSTATE 54001. */
+  STATEMENT_TOO_COMPLEX: 3002,
 } as const;
+
+/** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */
+export interface SourcePosition {
+  /** 문장 맨 앞부터의 UTF-16 단위 수. 0 부터 센다. */
+  offset: number;
+  line: number;
+  column: number;
+}
 
 /** SQL 실행 오류. 메시지는 영문으로 적는다. */
 export class DbError extends Error {
   readonly sqlState: SqlState;
   readonly code: number;
+  /** 오류가 난 SQL 문장 안의 위치. 문법 오류처럼 위치를 알 수 있을 때만 있다. */
+  readonly position?: SourcePosition;
 
-  constructor(sqlState: SqlState, code: number, message: string, options?: { cause?: unknown }) {
-    super(message, options);
+  constructor(
+    sqlState: SqlState,
+    code: number,
+    message: string,
+    options?: { cause?: unknown; position?: SourcePosition },
+  ) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "DbError";
     this.sqlState = sqlState;
     this.code = code;
+    if (options?.position !== undefined) {
+      this.position = options.position;
+    }
   }
 }
 
@@ -86,4 +134,19 @@ export function internalError(message: string, options?: { cause?: unknown }): D
 /** 화면과 로그에 보여 줄 한 줄 설명을 만든다. */
 export function formatDbError(error: DbError): string {
   return `[${error.sqlState}:${error.code}] ${error.message}`;
+}
+
+/**
+ * 같은 오류에 SQL 문장 안의 위치를 붙인 오류를 만든다. 메시지 끝에도 줄과 칸을 적는다.
+ * 이미 위치가 있는 오류는 그대로 돌려준다.
+ */
+export function withPosition(error: DbError, position: SourcePosition): DbError {
+  if (error.position !== undefined) return error;
+  const text = error.message.replace(/\.$/, "");
+  return new DbError(
+    error.sqlState,
+    error.code,
+    `${text} (line ${position.line}, column ${position.column}).`,
+    { cause: error.cause, position },
+  );
 }

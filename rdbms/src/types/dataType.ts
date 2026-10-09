@@ -107,6 +107,107 @@ export type DataType =
   | TimestampDataType
   | IntervalDataType;
 
+// ---------------------------------------------------------------------------
+// 자주 쓰는 타입 정의와 생성 도우미
+// ---------------------------------------------------------------------------
+
+export const SMALLINT_TYPE: IntegerDataType = { kind: "INTEGER", name: "SMALLINT", bits: 16 };
+export const INTEGER_TYPE: IntegerDataType = { kind: "INTEGER", name: "INTEGER", bits: 32 };
+export const BIGINT_TYPE: IntegerDataType = { kind: "INTEGER", name: "BIGINT", bits: 64 };
+export const REAL_TYPE: FloatingPointDataType = { kind: "FLOAT", name: "REAL", bits: 32 };
+export const DOUBLE_TYPE: FloatingPointDataType = { kind: "FLOAT", name: "DOUBLE PRECISION", bits: 64 };
+export const BOOLEAN_TYPE: BooleanDataType = { kind: "BOOLEAN", name: "BOOLEAN" };
+export const DATE_TYPE: DateDataType = { kind: "DATE", name: "DATE" };
+
+export function charType(length: number): CharacterDataType {
+  return { kind: "CHAR", name: "CHAR", length };
+}
+
+export function varcharType(length: number = DEFAULT_VARCHAR_LENGTH): CharacterDataType {
+  return { kind: "VARCHAR", name: "VARCHAR", length };
+}
+
+export function binaryType(length: number): BinaryDataType {
+  return { kind: "BINARY", name: "BINARY", length };
+}
+
+export function varbinaryType(length: number = VARBINARY_MAX_LENGTH): BinaryDataType {
+  return { kind: "VARBINARY", name: "VARBINARY", length };
+}
+
+export function integerType(bits: 16 | 32 | 64): IntegerDataType {
+  return bits === 16 ? SMALLINT_TYPE : bits === 32 ? INTEGER_TYPE : BIGINT_TYPE;
+}
+
+export function decimalType(precision: number, scale: number): DecimalDataType {
+  return { kind: "DECIMAL", name: "DECIMAL", precision, scale };
+}
+
+export function timeType(fractionalPrecision: number, withTimeZone: boolean): TimeDataType {
+  return { kind: "TIME", name: withTimeZone ? "TIME WITH TIME ZONE" : "TIME", fractionalPrecision, withTimeZone };
+}
+
+export function timestampType(fractionalPrecision: number, withTimeZone: boolean): TimestampDataType {
+  return {
+    kind: "TIMESTAMP",
+    name: withTimeZone ? "TIMESTAMP WITH TIME ZONE" : "TIMESTAMP",
+    fractionalPrecision,
+    withTimeZone,
+  };
+}
+
+/** 종료 필드가 SECOND 가 아니면 소수 초 자릿수는 null 로 맞춘다. */
+export function intervalType(
+  startField: IntervalField,
+  endField: IntervalField,
+  leadingPrecision: number = DEFAULT_INTERVAL_LEADING_PRECISION,
+  fractionalPrecision: number = DEFAULT_INTERVAL_FRACTIONAL_PRECISION,
+): IntervalDataType {
+  return {
+    kind: "INTERVAL",
+    name: "INTERVAL",
+    startField,
+    endField,
+    leadingPrecision,
+    fractionalPrecision: endField === "SECOND" ? fractionalPrecision : null,
+  };
+}
+
+/**
+ * 타입 정의를 SQL 표기로 적는다. 오류 메시지와 메타데이터 표시에 쓴다.
+ * (예 : `VARCHAR(10)`, `DECIMAL(10,3)`, `TIMESTAMP(6) WITH TIME ZONE`, `INTERVAL DAY(2) TO SECOND(6)`)
+ */
+export function formatDataType(type: DataType): string {
+  switch (type.kind) {
+    case "CHAR":
+    case "VARCHAR":
+    case "BINARY":
+    case "VARBINARY":
+      return `${type.name}(${type.length})`;
+    case "DECIMAL":
+      return `DECIMAL(${type.precision},${type.scale})`;
+    case "INTEGER":
+    case "FLOAT":
+    case "BOOLEAN":
+    case "DATE":
+      return type.name;
+    case "TIME":
+      return `TIME(${type.fractionalPrecision})${type.withTimeZone ? " WITH TIME ZONE" : ""}`;
+    case "TIMESTAMP":
+      return `TIMESTAMP(${type.fractionalPrecision})${type.withTimeZone ? " WITH TIME ZONE" : ""}`;
+    case "INTERVAL": {
+      const fraction = type.fractionalPrecision ?? 0;
+      if (type.startField === type.endField) {
+        return type.startField === "SECOND"
+          ? `INTERVAL SECOND(${type.leadingPrecision},${fraction})`
+          : `INTERVAL ${type.startField}(${type.leadingPrecision})`;
+      }
+      const end = type.endField === "SECOND" ? `SECOND(${fraction})` : type.endField;
+      return `INTERVAL ${type.startField}(${type.leadingPrecision}) TO ${end}`;
+    }
+  }
+}
+
 /** 고정소수 타입 이름과 인자를 받아 공통 DECIMAL 정의를 만든다. */
 export function resolveExactNumericType(name: string, precision?: number, scale?: number): ExactNumericType {
   const normalized = normalizeTypeName(name);
@@ -125,6 +226,44 @@ export function resolveExactNumericType(name: string, precision?: number, scale?
     throw invalidParameter("Exact numeric scale must be an integer between 0 and precision.");
   }
   return { name: "DECIMAL", precision: resolvedPrecision, scale: resolvedScale };
+}
+
+const INTERVAL_END_FIELDS: Record<IntervalField, readonly IntervalField[]> = {
+  YEAR: ["YEAR", "MONTH"],
+  MONTH: ["MONTH"],
+  DAY: ["DAY", "HOUR", "MINUTE", "SECOND"],
+  HOUR: ["HOUR", "MINUTE", "SECOND"],
+  MINUTE: ["MINUTE", "SECOND"],
+  SECOND: ["SECOND"],
+};
+
+/**
+ * INTERVAL 한정자를 타입 정의로 해석한다. SQL 구문 `INTERVAL 시작(선행 정밀도) [TO 종료(소수 초 자릿수)]` 에 대응한다.
+ *  - endField 를 생략하면 단일 필드이다. `TO` 로 같은 필드를 다시 적은 것(`DAY TO DAY`)은 받지 않는다.
+ *  - 선행 정밀도는 1 ~ 9 (생략 시 2), 소수 초 자릿수는 0 ~ 6 (생략 시 6)이며 종료 필드가 SECOND 일 때만 줄 수 있다.
+ * 잘못된 조합이나 범위는 22023 이다.
+ */
+export function resolveIntervalType(
+  startField: IntervalField,
+  endField?: IntervalField,
+  leadingPrecision?: number,
+  fractionalPrecision?: number,
+): IntervalDataType {
+  const end = endField ?? startField;
+  if ((endField !== undefined && endField === startField) || !INTERVAL_END_FIELDS[startField].includes(end)) {
+    throw invalidParameter(`Invalid INTERVAL qualifier: ${startField} TO ${end}.`);
+  }
+  const leading = leadingPrecision ?? DEFAULT_INTERVAL_LEADING_PRECISION;
+  validateRange("Interval leading precision", leading, 1, MAX_INTERVAL_LEADING_PRECISION);
+  if (end !== "SECOND") {
+    if (fractionalPrecision !== undefined) {
+      throw invalidParameter("Fractional seconds precision requires an INTERVAL qualifier ending in SECOND.");
+    }
+    return { kind: "INTERVAL", name: "INTERVAL", startField, endField: end, leadingPrecision: leading, fractionalPrecision: null };
+  }
+  const fraction = fractionalPrecision ?? DEFAULT_INTERVAL_FRACTIONAL_PRECISION;
+  validateRange("Interval fractional seconds precision", fraction, 0, 6);
+  return { kind: "INTERVAL", name: "INTERVAL", startField, endField: end, leadingPrecision: leading, fractionalPrecision: fraction };
 }
 
 /**
@@ -249,12 +388,15 @@ function resolveCharacterName(name: string): CharacterDataType["name"] | null {
     case "CHARACTER":
     case "NCHAR":
     case "NATIONAL CHARACTER":
+    case "NATIONAL CHAR":
       return "CHAR";
     case "VARCHAR":
     case "CHARACTER VARYING":
     case "CHAR VARYING":
     case "NVARCHAR":
     case "NATIONAL CHARACTER VARYING":
+    case "NATIONAL CHAR VARYING":
+    case "NCHAR VARYING":
       return "VARCHAR";
     default:
       return null;
@@ -313,15 +455,7 @@ function resolveIntervalFields(name: string): { startField: IntervalField; endFi
   if (match[2] !== undefined && startField === endField) {
     return null;
   }
-  const validEndFields: Record<IntervalField, readonly IntervalField[]> = {
-    YEAR: ["YEAR", "MONTH"],
-    MONTH: ["MONTH"],
-    DAY: ["DAY", "HOUR", "MINUTE", "SECOND"],
-    HOUR: ["HOUR", "MINUTE", "SECOND"],
-    MINUTE: ["MINUTE", "SECOND"],
-    SECOND: ["SECOND"],
-  };
-  if (!validEndFields[startField].includes(endField)) {
+  if (!INTERVAL_END_FIELDS[startField].includes(endField)) {
     return null;
   }
   return { startField, endField };
