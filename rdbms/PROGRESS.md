@@ -6,11 +6,11 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-09
-- 진행 단계 : 1 ~ 4단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서)
+- 최종 갱신 : 2026-10-10
+- 진행 단계 : 1 ~ 5단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL)
 - 착수 조건 : 없음
-- 다음 작업 : 5단계 카탈로그와 DDL. 프로세스 내부 세션 API(`session/session.ts`)부터 만들고, SYSTEM 테이블스페이스 최초 생성과 테이블스페이스·테이블·뷰·인덱스 DDL 을 붙인다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 233개 통과, Bun 1.3.14에서 타입·SQL 테스트 182개(`bun test dist/test/types/ dist/test/sql/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
+- 다음 작업 : 6단계 질의 실행. 이름과 타입 검사부터 단일 테이블 조회, 조인, 집계, 서브쿼리, DML, 내장 함수, 파라미터 바인딩, 규칙 기반 인덱스 선택을 붙인다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 246개 통과, Bun 1.4.2에서 타입·SQL 테스트 182개(`bun test dist/test/types/ dist/test/sql/`)와 카탈로그 테스트 13개(`bun test dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
 
 ## 작업 규칙
 
@@ -21,7 +21,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, 데몬/CLI의 1단계 범위와 `storage`, `types`, `sql`에 구현 코드가 있다. 카탈로그, 세션, 실행, 인증, 통신은 아직 뼈대이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지 붙었다. 인증, 통신, 나머지 실행은 아직 뼈대이다.
 
 ```
 rdbms/
@@ -70,15 +70,17 @@ rdbms/
       lexer.ts             어휘 분석. 토큰과 위치, 문법 오류 생성
       ast.ts               구문 트리의 타입 정의
       parser.ts            구문 분석. parseStatement, 예약어 목록, 깊이 한도
-    catalog/             catalog.ts, tablespaceManager.ts, bootstrap.ts, dictionaryViews.ts
-    session/             session.ts(SQL 실행의 입구), sessionManager.ts
-    exec/                analyzer.ts, planner.ts, executor.ts, expression.ts, functions.ts, dml.ts, ddl.ts
+    catalog/             catalog.ts(정의 저장과 의존 추적), tablespaceManager.ts(목록과 파일 관리),
+                         bootstrap.ts(SYSTEM 최초 생성), dictionaryViews.ts(12개 뷰와 컬럼 정의)
+    session/             session.ts(SQL 실행의 입구, Database 와 Session), sessionManager.ts(9단계용 뼈대)
+    exec/                ddl.ts(테이블·뷰·인덱스 DDL 실행), analyzer.ts, planner.ts, executor.ts, expression.ts, functions.ts, dml.ts(6단계용 뼈대)
     txn/                 transaction.ts, lockManager.ts
     auth/                scram.ts, users.ts, privileges.ts
     net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
                          tcpServer.ts, udpServer.ts, localChannelServer.ts
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
     smoke.test.ts          프로젝트 구성 확인용
+    catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
@@ -176,14 +178,15 @@ rdbms/
 
 ### 5단계. 카탈로그와 DDL
 
-- [ ] 프로세스 내부 세션 API. 네트워크 없이 SQL 을 실행하는 통로이며 5 ~ 8단계의 테스트가 이것을 쓴다
-- [ ] 최초 구동 시 SYSTEM 테이블스페이스 생성 (상세 3)
-- [ ] 테이블스페이스 생성과 삭제, 구동 시 열기, 사용 불가 상태 처리
-- [ ] 테이블, 뷰, 인덱스 DDL. `RESTRICT` 와 `CASCADE` 의 의존성 처리 (상세 1-3)
-- [ ] 제약조건 정의 저장 : PK, NOT NULL, FK (상세 11)
-- [ ] 이름 해석 : 현재 테이블스페이스, `USE`
-- [ ] 딕셔너리 뷰와 `DUAL` (상세 3)
+- [x] 프로세스 내부 세션 API. 네트워크 없이 SQL 을 실행하는 통로이며 5 ~ 8단계의 테스트가 이것을 쓴다
+- [x] 최초 구동 시 SYSTEM 테이블스페이스 생성 (상세 3)
+- [x] 테이블스페이스 생성과 삭제, 구동 시 열기, 사용 불가 상태 처리
+- [x] 테이블, 뷰, 인덱스 DDL. `RESTRICT` 와 `CASCADE` 의 의존성 처리 (상세 1-3)
+- [x] 제약조건 정의 저장 : PK, NOT NULL, FK (상세 11)
+- [x] 이름 해석 : 현재 테이블스페이스, `USE`
+- [x] 딕셔너리 뷰와 `DUAL` (상세 3)
 - 완료 기준 : DDL 로 만든 객체가 재구동 후에도 남고 딕셔너리 뷰에서 조회된다.
+  (`test/catalog/catalog.test.ts`의 13개 테스트 통과. 테이블스페이스·테이블·뷰·인덱스 생성과 삭제, PK·FK·NOT NULL 저장, RESTRICT·CASCADE, USE, 12개 딕셔너리 뷰와 DUAL 조회, 재구동 persistence, 손상·분실 시 사용 불가 처리를 확인했다. 데몬(`daemon/server.ts`)도 구동 때 테이블스페이스를 함께 연다.)
 
 ### 6단계. 질의 실행
 
@@ -276,7 +279,6 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
-- 행의 컬럼 추가(`ADD COLUMN`)를 기존 행을 다시 쓰는 방식으로 할지, 저장된 컬럼 수가 적은 행을 읽을 때 채우는 방식으로 할지 (5단계). 행 형식은 두 방식을 모두 받을 수 있게 컬럼 수를 앞에 둔다. 기본값이 있는 컬럼을 추가하면 기존 행에도 그 값이 보여야 한다는 점을 함께 정한다.
 - 길게 이어진 `UNION ALL`(약 1,000개 초과)은 구문 트리 깊이 한도에 걸린다. 여러 행을 한 번에 넣을 때는 `INSERT ... VALUES (...), (...)`를 쓰면 된다. 실제 사용에서 불편하면 집합 연산도 `AND`/`OR`처럼 나란히 담는 노드로 바꾼다 (6단계에서 판단).
 - Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.19.0이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
 - `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
@@ -331,6 +333,16 @@ SQL 접속 (상세 14-2)
   - 타입 오류 번호 2001 ~ 2012 를 배정했다. 값의 표현이 타입과 어긋난 채 넘어오면 내부 오류(`XX000`)이다.
   - 값의 저장 형식은 포맷 v1 의 일부이다. 행은 컬럼 수와 NULL 비트맵을 앞에 두어, 저장된 컬럼이 정의보다 적으면 뒤쪽을 NULL 로 읽는다. (`ADD COLUMN`을 어떻게 처리할지는 5단계에서 정한다)
   - 뼈대에 없던 `types/errors.ts`, `types/arithmetic.ts`를 추가했다. 연산 결과 타입은 `cast.ts`가 아니라 `arithmetic.ts`가 맡는다.
+- 5단계에서 정한 사항이다.
+  - 카탈로그는 테이블스페이스 파일의 카탈로그 영역에 JSON(UTF-8)으로 둔다. `CatalogData`는 테이블, 뷰, 인덱스, 제약조건, 자동 이름 순번을 가지며 SYSTEM 만 `system.tablespaces` 레지스트리를 함께 가진다. `parseCatalog`는 빠진 항목을 빈 값으로 채워 앞으로 항목이 늘어나도 읽는다.
+  - `DATAFILE` 생략은 `<dataDir>/<이름>.hwdb`이며, 상대 경로는 데이터 디렉토리 기준이다. `CHARACTER SET`은 `UTF8`만 받는다.
+  - `ADD COLUMN`은 기존 행을 다시 쓰지 않는다. 행 형식에 컬럼 수를 앞에 두므로 저장된 컬럼이 적으면 뒤쪽을 NULL 로 읽는다. 기본값이 있는 컬럼을 추가해도 기존 행에는 NULL 로 보이며, 6단계의 조회가 DEFAULT 를 채울 때 함께 정한다. `DROP COLUMN`의 행 다시 쓰기도 6단계이다.
+  - FK 타입 일치는 `formatDataType` 표기가 같은지로 본다. 같은 테이블스페이스의 PK 만 참조할 수 있으며 컬럼 수와 순서가 맞아야 한다.
+  - `SYS_` 와 `DUAL` 예약은 SYSTEM 에서만 막는다. 다른 테이블스페이스에서는 같은 이름의 사용자 객체가 먼저이며, 없을 때만 딕셔너리·DUAL 로 푼다.
+  - 딕셔너리 12개 뷰의 컬럼은 `catalog/dictionaryViews.ts`에 고정했다. `SYS_USERS`, `SYS_PRIVILEGES`, `SYS_GROUP_GRANTS`, `SYS_SESSIONS`는 8~9단계까지 비어 있다. `DUAL`은 저장하지 않는 가상 한 행(`DUMMY VARCHAR(1) = 'X'`)이다.
+  - DDL 오류 번호 4000 ~ 4017 을 배정했다. `3D000` 테이블스페이스 없음, `42P06` 중복, `42P07` 중복 테이블·뷰, `42P01` 없음, `42701`·`42703` 컬럼 중복·없음, `42710`·`42704` 제약·인덱스 중복·없음, `42P16`·`42P17` 잘못된 정의, `55006` 사용 중, `42602` 예약 이름, `54011` 컬럼 초과이다.
+  - 세션의 SELECT 는 5단계에서 딕셔너리·DUAL·FROM 없는 리터럴만 받는다. `WHERE`, `ORDER BY`, 행 수 제한, 조인, 집합 연산은 `0A000`으로 알리고 6단계에서 푼다.
+  - 데몬(`daemon/server.ts`)은 구동 때 `TablespaceManager.open`으로 SYSTEM 과 목록을 함께 열고, 종료 때 닫아 정상 종료 표시를 쓴다. SYSTEM 이 손상되면 구동에 실패하고 나머지는 사용 불가로 두고 구동한다.
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -343,6 +355,12 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
+- 5단계까지 마쳤다. 내부 세션 API 로 SQL 을 실행한다. (실제 호출 예는 `test/catalog/catalog.test.ts`)
+  - `Database.open(데이터디렉토리)`로 열고 `createSession({ user, tablespace })`으로 세션을 만든다. `session.execute(sql)`이 구문 분석부터 DDL 실행까지 맡는다.
+  - 테이블스페이스 DDL 은 `TablespaceManager`가 맡는다. `CREATE TABLESPACE`는 파일을 만들고 SYSTEM 레지스트리에 올리며, `DROP`은 `INCLUDING CONTENTS`가 없으면 객체가 남았을 때 `55006`이다.
+  - 테이블·뷰·인덱스 DDL 은 `exec/ddl.ts`가 `catalog/CatalogStore`와 저장 배치(힙·인덱스 할당과 카탈로그 쓰기를 한 배치)로 실행한다.
+  - 조회는 5단계에서 딕셔너리 12개 뷰와 `DUAL`, FROM 없는 리터럴만 된다. 사용자 테이블 조회와 식 계산, DML 은 6단계이다. 사용자와 권한 문장은 `0A000`으로 알리고 8단계에서 붙인다.
+  - 데몬은 구동 때 테이블스페이스를 함께 연다. `hwdb start --foreground` 뒤 `Database` 없이도 `SYSTEM.hwdb`가 생긴다.
 - 1단계를 점검·보완하고 2단계를 마쳤다. `config`, `common`, 데몬/CLI의 1단계 범위와 `storage`에 기능 코드가 있다. SQL 실행/접속은 아직 구현되지 않았다.
 - 3단계까지 마쳤다. 타입 시스템을 쓰는 순서는 다음과 같다. (실제 호출 예는 `test/types/codecStorage.test.ts`)
   - 타입 선언은 `resolveDataType(이름, ...인자)`로 `DataType`을 만든다. 식의 결과 타입은 `bindArithmetic`/`bindConcat`/`bindNegate`의 `resultType`, 여러 식을 함께 다룰 때는 `commonType`으로 정한다.
@@ -360,7 +378,7 @@ SQL 접속 (상세 14-2)
   - 뷰 정의는 `CreateViewStatement.queryText`(질의의 원문)를 카탈로그에 저장하고, 쓸 때 다시 구문 분석하는 방식을 염두에 두었다. 구문 트리 자체를 저장 형식으로 삼지 않는다.
   - 비밀번호가 든 문장(`CREATE USER`, `ALTER USER`)의 원문을 로그에 남길 때는 1단계의 로그 가림을 거친다. 구문 트리의 `password`는 평문이다.
 - 저장 API의 실제 호출 예와 검증은 `test/storage/storage.test.ts`, Node.js/bun 실행 경로는 `test/storage/runtime-smoke.mjs`를 참고한다. 저장 배치 중 오류가 나면 호출자가 해당 배치를 롤백해야 한다.
-- SQL 카탈로그, SYSTEM 자동 생성과 데몬 조립은 5단계에 붙인다. 지금의 `hwdb start --foreground`는 저장 엔진을 자동으로 생성/개방하지 않는다. 네트워크 리스너도 아직 열지 않으므로 로그는 설정 상태로만 표현한다.
+- 5단계에서 SYSTEM 자동 생성과 데몬 조립을 붙였다. `hwdb start --foreground`는 데이터 디렉토리에 `SYSTEM.hwdb`를 만들고 목록의 테이블스페이스를 함께 연다. 네트워크 리스너는 9단계까지 열지 않으므로 로그는 설정 상태로만 표현한다.
 - 저장 API 호출자는 파일을 독점 사용해야 한다. 데몬에서 연결할 때 데이터 디렉토리 잠금을 먼저 확보하고 마지막에 해제한다.
 - 타입스크립트 코드를 고쳤으면 `npm test` 로 확인한다. 타입스크립트 6 으로 빌드하므로, 6 에 없는 문법이나 `tsconfig.json` 옵션을 쓰면 빌드에서 걸린다.
 - 뼈대의 파일 나눔은 출발점이다. 구현하다가 파일을 더 나누거나 합쳐야 하면 그렇게 하고, 이 문서의 "디렉토리 구성" 을 함께 고친다. "모듈 사이의 의존 방향" 은 지킨다.
@@ -382,3 +400,4 @@ SQL 접속 (상세 14-2)
 - 2026-10-08 : 3단계 타입 정의 작업. `resolveDataType()`에 ANSI 타입 정규화와 별칭, 기본값, 길이/정밀도 검증을 추가하고 `docs/data-types.md` 및 타입 테스트를 확장했다. 명세에 없던 FLOAT/INTERVAL 정밀도 경계는 결정 사항으로 기록했다. TypeScript 6.0.3 빌드 및 `npm test` 60개, Bun 1.3.14 타입 테스트 9개 통과. 값 표현과 저장/인덱스 키 코덱은 미완료이다.
 - 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
 - 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.
+- 2026-10-10 : 5단계 완료. 내부 세션 API(`Database`, `Session`), SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL(RESTRICT·CASCADE, PK·FK·NOT NULL, 자동 이름), `USE`와 딕셔너리 12개 뷰·`DUAL`, 데몬 구동 때 테이블스페이스 열기를 구현했다. 오류 번호 4000 ~ 4017 을 배정했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.

@@ -24,6 +24,7 @@ import { RDBMS_VERSION } from "../common/instance.js";
 import type { Logger } from "../common/logger.js";
 import { acquireLock, readLockFile, releaseLock } from "./lockFile.js";
 import type { LockFileContent } from "./lockFile.js";
+import { TablespaceManager } from "../catalog/tablespaceManager.js";
 
 /** 상태 조회에 답할 정보이다. 세션 수는 통신(9단계)이 붙기 전에는 0이다. */
 export interface ServerStatus {
@@ -41,6 +42,7 @@ export interface ServerStatus {
 /**
  * 1단계의 데몬 본체.
  * 잠금 파일을 잡고 살아 있는 동안 점유한다. 통신과 저장 엔진은 이후 단계에서 붙는다.
+ * 5단계부터 SYSTEM 테이블스페이스와 나머지 테이블스페이스를 함께 연다.
  */
 export class Server {
   private readonly config: ResolvedConfig;
@@ -48,13 +50,14 @@ export class Server {
   private running = false;
   private startedAt = "";
   private lock: LockFileContent | undefined;
+  private tablespaces: TablespaceManager | undefined;
 
   constructor(config: ResolvedConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
   }
 
-  /** 구동 순서의 1단계 뼈대 : 잠금 파일 확보와 기동 로그. */
+  /** 구동 순서 : 잠금 파일 확보 → 테이블스페이스 열기 → 접속 대기(9단계). */
   async start(): Promise<void> {
     if (this.running) {
       throw new StartupError("Server is already running.");
@@ -72,6 +75,17 @@ export class Server {
     this.startedAt = lock.startedAt;
     this.running = true;
     try {
+      // SYSTEM 이 없으면 새로 만들고, 있으면 열어 목록의 나머지를 함께 연다.
+      // SYSTEM 이 손상되었으면 구동에 실패한다. 나머지는 사용 불가로 두고 구동한다.
+      try {
+        this.tablespaces = TablespaceManager.open(this.config.dataDir, {
+          onWarning: (message) => this.logger.warn(message),
+        });
+      } catch (error) {
+        throw error instanceof StartupError || error instanceof Error
+          ? new StartupError(`Cannot open tablespaces: ${error.message}`, { cause: error })
+          : error;
+      }
       this.logger.info(
         `Server started. port=${String(this.config.port)} pid=${String(lock.pid)} dataDir="${this.config.dataDir}"`,
       );
@@ -79,6 +93,12 @@ export class Server {
         `Configured transports (not opened yet): local-channel=always tcp=${this.config.tcp.enabled ? "on" : "off"} udp=${this.config.udp.enabled ? "on" : "off"}`,
       );
     } catch (error) {
+      try {
+        this.tablespaces?.close();
+      } catch {
+        // 닫기 오류는 원래 오류를 가리지 않는다.
+      }
+      this.tablespaces = undefined;
       releaseLock(this.config.dataDir, this.lock);
       this.lock = undefined;
       this.running = false;
@@ -98,7 +118,13 @@ export class Server {
     finally {
       // 저장소/세션을 연결한 뒤 : 새 접속 차단 → 진행 중인 트랜잭션 롤백
       //                          → 데이터 파일 반영(fsync) → 정상 종료 표시 기록.
-      // 현재는 점유한 잠금 파일만 해제한다.
+      // 5단계에서는 테이블스페이스를 닫아 정상 종료 표시를 쓴다.
+      try {
+        this.tablespaces?.close();
+      } catch {
+        // 닫기 중 하나의 실패가 잠금 해제를 막지 않는다.
+      }
+      this.tablespaces = undefined;
       releaseLock(this.config.dataDir, this.lock);
       this.lock = undefined;
       this.running = false;

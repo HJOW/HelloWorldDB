@@ -75,6 +75,42 @@ export const ERROR_CODES = {
   IDENTIFIER_TOO_LONG: 3001,
   /** 문장이 너무 깊이 겹쳤거나 식이 너무 길게 이어져 처리 한도를 넘음. SQLSTATE 54001. */
   STATEMENT_TOO_COMPLEX: 3002,
+  /** 테이블스페이스가 없음. SQLSTATE 3D000. */
+  TABLESPACE_NOT_FOUND: 4000,
+  /** 테이블스페이스가 이미 있음. SQLSTATE 42P06. */
+  TABLESPACE_EXISTS: 4001,
+  /** 테이블이 이미 있음. SQLSTATE 42P07. */
+  TABLE_EXISTS: 4002,
+  /** 테이블이 없음. SQLSTATE 42P01. */
+  TABLE_NOT_FOUND: 4003,
+  /** 컬럼이 이미 있음. SQLSTATE 42701. */
+  COLUMN_EXISTS: 4004,
+  /** 컬럼이 없음. SQLSTATE 42703. */
+  COLUMN_NOT_FOUND: 4005,
+  /** 제약조건이 이미 있음. SQLSTATE 42710. */
+  CONSTRAINT_EXISTS: 4006,
+  /** 제약조건이 없음. SQLSTATE 42704. */
+  CONSTRAINT_NOT_FOUND: 4007,
+  /** 인덱스가 이미 있음. SQLSTATE 42710. */
+  INDEX_EXISTS: 4008,
+  /** 인덱스가 없음. SQLSTATE 42704. */
+  INDEX_NOT_FOUND: 4009,
+  /** 뷰가 이미 있음. SQLSTATE 42P07. */
+  VIEW_EXISTS: 4010,
+  /** 뷰가 없음. SQLSTATE 42P01. */
+  VIEW_NOT_FOUND: 4011,
+  /** 테이블 정의가 잘못됨. SQLSTATE 42P16. */
+  INVALID_TABLE_DEFINITION: 4012,
+  /** RESTRICT 로 막힌 삭제. SQLSTATE 55006. */
+  OBJECT_IN_USE: 4013,
+  /** 예약된 이름. SQLSTATE 42602. */
+  RESERVED_NAME: 4014,
+  /** 컬럼이 너무 많음. SQLSTATE 54011. */
+  TOO_MANY_COLUMNS: 4015,
+  /** 뷰 정의가 잘못됨. SQLSTATE 42P17. */
+  INVALID_VIEW_DEFINITION: 4016,
+  /** 인덱스 정의가 잘못됨. SQLSTATE 42P16. */
+  INVALID_INDEX_DEFINITION: 4017,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */
