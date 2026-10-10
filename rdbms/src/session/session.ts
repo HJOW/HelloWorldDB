@@ -24,6 +24,7 @@ import { currentUtcMicros, resolveTimeZone } from "../types/datetime.js";
 import type { TypeContext } from "../types/cast.js";
 import type { SqlValue } from "../types/value.js";
 import { ensureSystemTablespace } from "../catalog/bootstrap.js";
+import type { TablespaceManager } from "../catalog/tablespaceManager.js";
 import {
   executeAlterTable,
   executeCreateIndex,
@@ -105,7 +106,6 @@ export class Database {
   }
 }
 
-import type { TablespaceManager } from "../catalog/tablespaceManager.js";
 
 /**
  * 접속 하나의 실행 단위이다. 한 번에 문장 하나씩 순서대로 처리한다.
@@ -181,7 +181,7 @@ export class Session {
         executeCreateTable(manager, this.currentTablespace, this.user, stmt);
         return { kind: "ok", message: `Table "${stmt.name.name}" created.` };
       case "AlterTable":
-        executeAlterTable(manager, this.currentTablespace, this.user, stmt);
+        executeAlterTable(manager, this.currentTablespace, this.user, stmt, this.queryContext(params));
         return { kind: "ok", message: `Table "${stmt.name.name}" altered.` };
       case "DropTable":
         executeDropTable(manager, this.currentTablespace, stmt);
@@ -206,12 +206,8 @@ export class Session {
         if (!manager.has(stmt.tablespace)) {
           fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${stmt.tablespace}".`);
         }
-        try {
-          manager.requireCatalog(stmt.tablespace);
-        } catch (error) {
-          if (error instanceof DbError) throw error;
-          throw error;
-        }
+        // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
+        manager.requireCatalog(stmt.tablespace);
         this.currentTablespace = stmt.tablespace;
         return { kind: "ok", message: `Current tablespace is "${stmt.tablespace}".` };
       }
@@ -221,16 +217,23 @@ export class Session {
         return { kind: "ok", message: `Time zone is "${stmt.zone}".` };
       }
       case "SetAutocommit":
-        this.autocommit = stmt.value;
-        return { kind: "ok", message: `Autocommit is ${stmt.value ? "ON" : "OFF"}.` };
-      case "Begin":
+        // 7단계 전에는 문장마다 바로 커밋되므로 자동 커밋을 끌 수 없다. 켜는 것은 지금 동작과 같다.
+        if (!stmt.value) {
+          throw unsupportedFeature("SET AUTOCOMMIT OFF is supported together with transactions in a later step.");
+        }
+        return { kind: "ok", message: "Autocommit is ON." };
       case "Commit":
+        // 문장마다 이미 커밋되어 있으므로 커밋할 것이 없다.
+        return { kind: "ok", message: "Nothing to commit; every statement is committed immediately." };
+      case "SetTransaction":
+        // 지원하는 격리 수준은 READ COMMITTED 하나뿐이고 파서가 그 밖의 값을 거른다.
+        return { kind: "ok", message: "Isolation level is READ COMMITTED." };
+      case "Begin":
       case "Rollback":
       case "Savepoint":
       case "ReleaseSavepoint":
-      case "SetTransaction":
-        // 트랜잭션의 실제 동작은 7단계이다. 지금은 순서만 받는다.
-        return { kind: "ok", message: "Transaction statement accepted." };
+        // 되돌릴 수 없는 채로 성공을 알리면 데이터가 남아 버린다. 트랜잭션은 7단계에서 구현한다.
+        throw unsupportedFeature("Explicit transactions, ROLLBACK and SAVEPOINT are supported in a later step.");
       case "Query":
         return this.executeQuery(stmt, params);
       case "Insert": {

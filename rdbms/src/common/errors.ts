@@ -111,6 +111,8 @@ export const ERROR_CODES = {
   INVALID_VIEW_DEFINITION: 4016,
   /** 인덱스 정의가 잘못됨. SQLSTATE 42P16. */
   INVALID_INDEX_DEFINITION: 4017,
+  /** 읽기 전용 객체(딕셔너리 뷰, DUAL)를 고치려 함. SQLSTATE 42809. */
+  READ_ONLY_OBJECT: 4018,
   /** 컬럼 참조가 모호함. SQLSTATE 42702. */
   AMBIGUOUS_COLUMN: 5000,
   /** 정의되지 않은 함수. SQLSTATE 42883. */

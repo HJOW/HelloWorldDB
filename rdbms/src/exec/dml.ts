@@ -30,20 +30,19 @@ import type {
 } from "../sql/ast.js";
 import type { DataType } from "../types/dataType.js";
 import { assignValue, isImplicitlyConvertible } from "../types/cast.js";
-import { isNotDistinct } from "../types/value.js";
 import type { SqlValue } from "../types/value.js";
 import { decodeRow, encodeKey, encodeRow } from "../types/codec.js";
 import type { KeyColumn } from "../types/codec.js";
 import type { RowId, StorageBatch } from "../storage/format/format.js";
 import type { CatalogStore, StoredTable } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
-import { executeQuery, readTableRows, scanTableForDml } from "./executor.js";
+import { dataHandlers, executeQuery, readTableRows, scanTableForDml, typeHandlers } from "./executor.js";
 import type { QueryContext } from "./executor.js";
 import { evaluateExpression } from "./expression.js";
 import { atInnerLevel } from "./expression.js";
-import type { RowScope } from "./expression.js";
+
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
-import { executeTruncateTable } from "./ddl.js";
+import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -76,6 +75,7 @@ function resolveTarget(
   if (!manager.has(tablespace)) {
     fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${tablespace}".`, target.position);
   }
+  assertNotDictionaryObject(manager, tablespace, target.name, target.position);
   const catalog = manager.requireCatalog(tablespace);
   const table = catalog.data.tables[target.name];
   if (table !== undefined) {
@@ -208,17 +208,6 @@ class StatementImages {
   }
 }
 
-/** PK 튜플이 같은지 본다. CHAR는 뒤쪽 공백을 무시한다. */
-function pkEquals(left: SqlValue[], right: SqlValue[], types: DataType[]): boolean {
-  for (let index = 0; index < types.length; index++) {
-    const type = types[index] as DataType;
-    if (!isNotDistinct(left[index] as SqlValue, right[index] as SqlValue, { ignoreTrailingSpaces: type.kind === "CHAR" })) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /** 행에서 PK 값을 뽑는다. */
 function pkOf(table: StoredTable, values: SqlValue[]): SqlValue[] {
   return table.pkColumns.map((column) => {
@@ -257,23 +246,33 @@ function checkNotNull(image: TableImage, position?: SourcePosition): void {
   }
 }
 
+/**
+ * 값 묶음을 비교할 수 있는 문자열로 바꾼다. 인덱스 키와 같은 인코딩이므로 CHAR 의 뒤쪽 공백을 무시하고,
+ * 같은 값이면 같은 문자열이다. 쌍마다 견주지 않고 집합으로 찾기 위해 쓴다.
+ */
+function tupleKey(values: SqlValue[], types: DataType[]): string {
+  return encodeKey(
+    values,
+    types.map((type): KeyColumn => ({ type, descending: false })),
+  ).toString("latin1");
+}
+
+function columnTypes(table: StoredTable, columns: readonly string[]): DataType[] {
+  return columns.map((column) => (table.columns.find((entry) => entry.name === column) as StoredTable["columns"][number]).dataType);
+}
+
 /** 살아 있는 행들의 PK 유일성을 검사한다. */
 function checkPrimaryKey(image: TableImage, position?: SourcePosition): void {
   if (image.table.pkName === null) return;
-  const types = image.table.pkColumns.map((column) => {
-    const found = image.table.columns.find((entry) => entry.name === column);
-    return (found as StoredTable["columns"][number]).dataType;
-  });
-  const seen: SqlValue[][] = [];
+  const types = columnTypes(image.table, image.table.pkColumns);
+  const seen = new Set<string>();
   for (const row of image.rows) {
     if (row.deleted) continue;
-    const key = pkOf(image.table, row.values);
-    for (const other of seen) {
-      if (pkEquals(key, other, types)) {
-        fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${image.table.name}".`, position);
-      }
+    const key = tupleKey(pkOf(image.table, row.values), types);
+    if (seen.has(key)) {
+      fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${image.table.name}".`, position);
     }
-    seen.push(key);
+    seen.add(key);
   }
 }
 
@@ -281,26 +280,19 @@ function checkPrimaryKey(image: TableImage, position?: SourcePosition): void {
 function checkForeignKeys(images: StatementImages, image: TableImage, position?: SourcePosition): void {
   for (const constraint of Object.values(image.catalog.data.constraints)) {
     if (constraint.kind !== "FOREIGN KEY" || constraint.table !== image.table.name) continue;
-    const childTypes = constraint.columns.map((column) => {
-      const found = image.table.columns.find((entry) => entry.name === column);
-      return (found as StoredTable["columns"][number]).dataType;
-    });
     const parent = images.image(image.tablespace, constraint.refTable as string);
-    const parentTypes = (constraint.refColumns as string[]).map((column) => {
-      const found = parent.table.columns.find((entry) => entry.name === column);
-      return (found as StoredTable["columns"][number]).dataType;
-    });
+    const refColumns = constraint.refColumns as string[];
+    const parentTypes = columnTypes(parent.table, refColumns);
+    const parentKeys = new Set<string>();
+    for (const parentRow of parent.rows) {
+      if (parentRow.deleted) continue;
+      parentKeys.add(tupleKey(fkOf(refColumns, parent.table, parentRow.values), parentTypes));
+    }
     for (const row of image.rows) {
       if (row.deleted) continue;
       const key = fkOf(constraint.columns, image.table, row.values);
       if (fkIsNull(key)) continue;
-      const found = parent.rows.some((parentRow) => {
-        if (parentRow.deleted) return false;
-        const parentKey = fkOf(constraint.refColumns as string[], parent.table, parentRow.values);
-        return pkEquals(key, parentKey, parentTypes);
-      });
-      void childTypes;
-      if (!found) {
+      if (!parentKeys.has(tupleKey(key, parentTypes))) {
         fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
       }
     }
@@ -321,30 +313,34 @@ function applyReferentialActions(
         // 자식 이미지를 준비한다. 같은 테이블스페이스만 참조하므로 같이 있다.
         const child = images.image(image.tablespace, constraint.table);
         const parent = images.image(image.tablespace, constraint.refTable as string);
-        const parentTypes = (constraint.refColumns as string[]).map((column) => {
-          const found = parent.table.columns.find((entry) => entry.name === column);
-          return (found as StoredTable["columns"][number]).dataType;
-        });
+        const refColumns = constraint.refColumns as string[];
+        const parentTypes = columnTypes(parent.table, refColumns);
+        // 부모의 현재 키와 원래 키를 한 번씩만 모은다. 자기 테이블 참조로 부모가 중간에 바뀌어도
+        // 바깥 반복(progressed)이 다시 돌면서 새로 모으므로 결국 같은 결과에 이른다.
+        const aliveKeys = new Set<string>();
+        const originalKeys = new Set<string>();
+        for (const parentRow of parent.rows) {
+          if (!parentRow.deleted) aliveKeys.add(tupleKey(fkOf(refColumns, parent.table, parentRow.values), parentTypes));
+          const original = parentRow.original ?? (parentRow.deleted ? parentRow.values : null);
+          if (original !== null) originalKeys.add(tupleKey(fkOf(refColumns, parent.table, original), parentTypes));
+        }
+        // 바뀐 부모의 원래 키 → 새 값 (ON UPDATE CASCADE 용)
+        const updatedByOriginal = new Map<string, SqlValue[]>();
+        if (kind === "update") {
+          for (const parentRow of parent.rows) {
+            if (parentRow.deleted || parentRow.original === null) continue;
+            updatedByOriginal.set(tupleKey(fkOf(refColumns, parent.table, parentRow.original), parentTypes), parentRow.values);
+          }
+        }
         for (const childRow of [...child.rows]) {
           if (childRow.deleted) continue;
           const key = fkOf(constraint.columns, child.table, childRow.values);
           if (fkIsNull(key)) continue;
+          const keyText = tupleKey(key, parentTypes);
           // 현재 부모에 있으면 할 일이 없다.
-          const alive = parent.rows.some((parentRow) => {
-            if (parentRow.deleted) return false;
-            return pkEquals(key, fkOf(constraint.refColumns as string[], parent.table, parentRow.values), parentTypes);
-          });
-          if (alive) continue;
+          if (aliveKeys.has(keyText)) continue;
           // 원래 부모에 있었는지 본다. 없었으면 이 문장이 만든 orphan이므로 동작 없이 오류이다.
-          const wasReferenced = parent.rows.some((parentRow) => {
-            const original = parentRow.original ?? (parentRow.deleted ? parentRow.values : null);
-            if (original === null) return false;
-            return pkEquals(key, fkOf(constraint.refColumns as string[], parent.table, original), parentTypes);
-          });
-          // 새로 넣은 자식 행이 없는 부모를 가리키면 오류이다.
-          if (!wasReferenced) {
-            const action = kind === "delete" ? constraint.onDelete : constraint.onUpdate;
-            void action;
+          if (!originalKeys.has(keyText)) {
             fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
           }
           const action = kind === "delete" ? constraint.onDelete : constraint.onUpdate;
@@ -354,19 +350,15 @@ function applyReferentialActions(
               progressed = true;
             } else {
               // 바뀐 부모를 찾아 새 PK로 맞춘다.
-              const updated = parent.rows.find((parentRow) => {
-                if (parentRow.deleted || parentRow.original === null) return false;
-                return pkEquals(key, fkOf(constraint.refColumns as string[], parent.table, parentRow.original), parentTypes);
-              });
+              const updated = updatedByOriginal.get(keyText);
               if (updated === undefined) {
                 fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
               }
               const newValues = [...childRow.values];
               (constraint.columns as string[]).forEach((column, index) => {
                 const columnIndex = child.table.columns.findIndex((entry) => entry.name === column);
-                const refColumn = (constraint.refColumns as string[])[index] as string;
-                const refIndex = parent.table.columns.findIndex((entry) => entry.name === refColumn);
-                newValues[columnIndex] = (updated.values[refIndex] ?? null) as SqlValue;
+                const refIndex = parent.table.columns.findIndex((entry) => entry.name === refColumns[index]);
+                newValues[columnIndex] = (updated[refIndex] ?? null) as SqlValue;
               });
               images.updateRow(child, childRow, newValues);
               progressed = true;
@@ -488,12 +480,28 @@ function evaluateInsertRow(
       params: ctx.params,
       scopes: [...ctx.outerScopes],
       currentUser: ctx.currentUser,
-      subqueries: dataHandlersFor(ctx),
-      typeSubqueries: typeHandlersFor(ctx),
+      subqueries: dataHandlers([], ctx),
+      typeSubqueries: typeHandlers(ctx),
     };
-    const bound = evaluateExpression(expression, evalCtx, column.dataType);
-    return bound.value;
+    return toColumnValue(evaluateExpression(expression, evalCtx, column.dataType), column, ctx, position);
   });
+}
+
+/**
+ * 식의 결과를 컬럼 타입에 맞춘다. 스칼라 서브쿼리처럼 기대 타입을 따르지 않는 식은
+ * 자기 타입의 값을 돌려주므로, 저장하기 전에 암묵적 형변환과 길이·범위 검사를 거친다.
+ */
+function toColumnValue(
+  bound: { value: SqlValue; type: DataType },
+  column: StoredTable["columns"][number],
+  ctx: QueryContext,
+  position?: SourcePosition,
+): SqlValue {
+  if (bound.value === null) return null;
+  if (!isImplicitlyConvertible(bound.type, column.dataType)) {
+    fail("42804", 2011, `Cannot convert ${bound.type.name} to ${column.dataType.name} implicitly; use CAST.`, position);
+  }
+  return assignValue(bound.value, bound.type, column.dataType, ctx.typeCtx);
 }
 
 /** 컬럼의 DEFAULT를 평가한다. 없으면 NULL이다. */
@@ -504,49 +512,10 @@ function evaluateColumnDefault(column: StoredTable["columns"][number], ctx: Quer
     params: ctx.params,
     scopes: [...ctx.outerScopes],
     currentUser: ctx.currentUser,
-    subqueries: dataHandlersFor(ctx),
-    typeSubqueries: typeHandlersFor(ctx),
+    subqueries: dataHandlers([], ctx),
+    typeSubqueries: typeHandlers(ctx),
   };
-  const bound = evaluateExpression(column.defaultExpr, evalCtx, column.dataType);
-  return bound.value;
-}
-
-function dataHandlersFor(ctx: QueryContext) {
-  return {
-    scalar: (query: import("../sql/ast.js").Query): import("./functions.js").TypedValue => {
-      const result = executeQuery(query, ctx);
-      if (result.columns.length !== 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Scalar subquery must return a single column.");
-      }
-      if (result.rows.length === 0) {
-        return { value: null, type: (result.columns[0] as { type: DataType }).type };
-      }
-      if (result.rows.length > 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Scalar subquery returned more than one row.");
-      }
-      return { value: (result.rows[0] as SqlValue[])[0] as SqlValue, type: (result.columns[0] as { type: DataType }).type };
-    },
-    exists: (query: import("../sql/ast.js").Query): boolean => executeQuery(query, ctx).rows.length > 0,
-    columnValues: (query: import("../sql/ast.js").Query): { values: SqlValue[]; type: DataType } => {
-      const result = executeQuery(query, ctx);
-      if (result.columns.length !== 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Subquery must return a single column.");
-      }
-      return { values: result.rows.map((row) => row[0] as SqlValue), type: (result.columns[0] as { type: DataType }).type };
-    },
-  };
-}
-
-function typeHandlersFor(ctx: QueryContext) {
-  void ctx;
-  return {
-    scalar: (_query: import("../sql/ast.js").Query): import("./functions.js").TypedValue => ({ value: null, type: { kind: "INTEGER", name: "INTEGER", bits: 32 } as DataType }),
-    exists: (_query: import("../sql/ast.js").Query): boolean => false,
-    columnValues: (_query: import("../sql/ast.js").Query): { values: SqlValue[]; type: DataType } => ({
-      values: [],
-      type: { kind: "INTEGER", name: "INTEGER", bits: 32 } as DataType,
-    }),
-  };
+  return toColumnValue(evaluateExpression(column.defaultExpr, evalCtx, column.dataType), column, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -598,11 +567,15 @@ export function executeUpdate(
         params: ctx.params,
         scopes: [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, row.scopes)],
         currentUser: ctx.currentUser,
-        subqueries: dataHandlersForRow(row.scopes, ctx),
-        typeSubqueries: typeHandlersFor(ctx),
+        subqueries: dataHandlers(row.scopes, ctx),
+        typeSubqueries: typeHandlers(ctx),
       };
-      const bound = evaluateExpression(assignment.value, evalCtx, assignment.column.dataType);
-      newValues[index] = bound.value;
+      newValues[index] = toColumnValue(
+        evaluateExpression(assignment.value, evalCtx, assignment.column.dataType),
+        assignment.column,
+        ctx,
+        stmt.target.position,
+      );
     }
     images.updateRow(image, stored, newValues);
     count++;
@@ -655,34 +628,6 @@ export function executeDelete(
   return found.length;
 }
 
-function dataHandlersForRow(scopes: RowScope[], ctx: QueryContext) {
-  const outer = [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, scopes)];
-  return {
-    scalar: (query: import("../sql/ast.js").Query): import("./functions.js").TypedValue => {
-      const result = executeQuery(query, { ...ctx, outerScopes: outer });
-      if (result.columns.length !== 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Scalar subquery must return a single column.");
-      }
-      if (result.rows.length === 0) {
-        return { value: null, type: (result.columns[0] as { type: DataType }).type };
-      }
-      if (result.rows.length > 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Scalar subquery returned more than one row.");
-      }
-      return { value: (result.rows[0] as SqlValue[])[0] as SqlValue, type: (result.columns[0] as { type: DataType }).type };
-    },
-    exists: (query: import("../sql/ast.js").Query): boolean =>
-      executeQuery(query, { ...ctx, outerScopes: outer }).rows.length > 0,
-    columnValues: (query: import("../sql/ast.js").Query): { values: SqlValue[]; type: DataType } => {
-      const result = executeQuery(query, { ...ctx, outerScopes: outer });
-      if (result.columns.length !== 1) {
-        fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Subquery must return a single column.");
-      }
-      return { values: result.rows.map((row) => row[0] as SqlValue), type: (result.columns[0] as { type: DataType }).type };
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // TRUNCATE
 // ---------------------------------------------------------------------------
@@ -714,12 +659,14 @@ export function executeTruncate(
       const found = resolved.table.columns.find((entry) => entry.name === column);
       return (found as StoredTable["columns"][number]).dataType;
     });
+    const refColumns = constraint.refColumns as string[];
+    const parentKeys = new Set(
+      parentRows.map((parentRow) => tupleKey(fkOf(refColumns, resolved.table, parentRow.values), parentTypes)),
+    );
     const referenced = childRows.some((childRow) => {
       const key = fkOf(constraint.columns, childTable, childRow.values);
       if (fkIsNull(key)) return false;
-      return parentRows.some((parentRow) =>
-        pkEquals(key, fkOf(constraint.refColumns as string[], resolved.table, parentRow.values), parentTypes),
-      );
+      return parentKeys.has(tupleKey(key, parentTypes));
     });
     if (referenced) {
       fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Table "${resolved.table.name}" is referenced by "${constraint.table}".`, stmt.name.position);

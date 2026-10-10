@@ -75,6 +75,9 @@ SELECT SET SOME TABLE THEN TO TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE W
 - 비밀번호는 문자열 리터럴만 받는다.
 - 데이터 타입은 생략할 수 없다. 타입의 길이와 정밀도는 생략할 수 있다(상세 13).
 - INTERVAL 리터럴의 한정자는 적힌 그대로(생략한 정밀도는 생략된 채로) 남긴다. 리터럴의 값이 한정자에 맞는지는 뒤 단계가 본다.
+- 별칭을 준 FROM 출처는 별칭으로만 한정해 부를 수 있다. `FROM K x` 에서 `K.A` 는 오류(`42703`)이고 `x.A` 로 쓴다. 같은 테이블을 두 번 쓰는 자기 조인에서 테이블 이름이 두 출처에 모두 맞아 모호해지지 않게 하기 위함이다.
+- 딕셔너리 뷰(`SYS_*`)와 `DUAL` 은 읽기 전용이다. 이것들을 대상으로 한 DML 과 `DROP`·`ALTER`·`TRUNCATE`·`CREATE INDEX` 는 `42809` 이다. SYSTEM 이 아닌 테이블스페이스에 같은 이름의 사용자 객체를 만든 경우에는 그 객체가 먼저이다.
+- `ALTER TABLE ... ADD COLUMN` : `DEFAULT` 가 있으면 한 번 계산하여 기존 행에도 같은 값을 채운다(행을 다시 쓰므로 행 수에 비례한다). `DEFAULT` 가 없거나 NULL 이 되는데 `NOT NULL` 이면 행이 있는 테이블에서는 `23502` 이다. 행이 있는 테이블에 `REFERENCES` 와 NULL 이 아닌 `DEFAULT` 를 함께 주는 조합은 지원하지 않는다(`0A000`).
 
 ## 지원하지 않는 문법
 
@@ -90,6 +93,7 @@ SELECT SET SOME TABLE THEN TO TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE W
 - DML : `RETURNING`, `ON CONFLICT`, `INSERT ALL`, `UPDATE ... FROM`, `DELETE ... USING`, 여러 컬럼 대입 `SET (a, b) = ...`
 - 권한 : `WITH GRANT OPTION`, `GRANT OPTION FOR`, `PUBLIC`, 컬럼 단위 권한, `REFERENCES`·`EXECUTE` 등 사양에 없는 권한, 사용자 정의 권한 그룹
 - 트랜잭션 : `READ COMMITTED` 외의 격리 수준, `READ ONLY`·`READ WRITE`, `AND CHAIN`
+- 7단계 전의 임시 제한 : 문장마다 바로 커밋되므로 `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF` 는 `0A000` 이다. 되돌릴 수 없는데 성공으로 알리면 데이터가 남기 때문이다. `COMMIT`, `SET AUTOCOMMIT ON`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` 는 할 일이 없는 채로 받는다. 7단계에서 이 제한을 푼다.
 
 ## 한도
 

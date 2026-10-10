@@ -108,7 +108,8 @@ export function tableColumnTypes(table: StoredTable): DataType[] {
 // 서브쿼리 핸들러
 // ---------------------------------------------------------------------------
 
-function dataHandlers(scopes: RowScope[], ctx: QueryContext) {
+/** 서브쿼리를 실제로 실행하는 핸들러이다. DML 도 같은 것을 쓴다. */
+export function dataHandlers(scopes: RowScope[], ctx: QueryContext) {
   const leveled = atInnerLevel(ctx.outerScopes, scopes);
   const outer = [...ctx.outerScopes, ...leveled];
   return {
@@ -126,7 +127,8 @@ function dataHandlers(scopes: RowScope[], ctx: QueryContext) {
   };
 }
 
-function typeHandlers(ctx: QueryContext) {
+/** 서브쿼리의 결과 타입만 알아보는 핸들러이다. 행을 읽지 않는다. */
+export function typeHandlers(ctx: QueryContext) {
   return {
     scalar: (query: Query): TypedValue => {
       const columns = inferOutputColumns(query, ctx);

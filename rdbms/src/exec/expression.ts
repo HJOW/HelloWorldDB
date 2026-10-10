@@ -290,12 +290,13 @@ function resolveColumn(
 ): { value: SqlValue; type: DataType } {
   const matches: { value: SqlValue; type: DataType; level: number }[] = [];
   for (const scope of scopes) {
+    // 별칭을 준 출처는 별칭으로만 부른다. `FROM K x` 에서 `K.A` 는 x 를 가리키지 않는다.
+    // (같은 테이블을 두 번 쓰는 자기 조인에서 테이블 이름이 두 출처에 모두 맞아 모호해지지 않게 한다)
+    const visibleName = scope.alias ?? scope.table;
     if (qualifier.length === 2) {
-      if (!(scope.tablespace === qualifier[0] && (scope.table === qualifier[1] || scope.alias === qualifier[1]))) {
-        continue;
-      }
+      if (!(scope.tablespace === qualifier[0] && visibleName === qualifier[1])) continue;
     } else if (qualifier.length === 1) {
-      if (scope.table !== qualifier[0] && scope.alias !== qualifier[0]) continue;
+      if (visibleName !== qualifier[0]) continue;
     }
     for (const slot of scope.slots) {
       if (scope.hidden?.includes(slot.column) && qualifier.length === 0) continue;
@@ -1164,31 +1165,23 @@ function intervalLiteral(
 ): TypedValue {
   void ctx;
   const qualifier = expression.qualifier;
-  const endField = qualifier.endField ?? qualifier.startField;
-  // 선행 정밀도를 생략했으면 값의 자릿수에 맞추어 넓힌다.
-  const body = expression.text.trim().replace(/^[+-]/, "");
-  void body;
-  const leading = qualifier.leadingPrecision ?? 2;
-  const fractional = qualifier.fractionalPrecision ?? 6;
-  const resolved = resolveIntervalType(qualifier.startField, endField, leading, endField === "SECOND" ? fractional : undefined);
-  let value = parseIntervalText(expression.text, resolved);
-  // 값이 선행 정밀도를 넘으면 정밀도를 넓혀 다시 맞춘다. (4단계 인수인계)
+  // 끝 필드를 생략한 단일 필드(`DAY`)는 resolveIntervalType 에 끝 필드 없이 넘긴다.
+  // 시작 필드로 채워 넘기면 `DAY TO DAY` 로 보아 거부한다.
+  const endField = qualifier.endField ?? undefined;
+  const endsWithSecond = (endField ?? qualifier.startField) === "SECOND";
+  const fractional = endsWithSecond ? (qualifier.fractionalPrecision ?? 6) : undefined;
+  // 선행 정밀도를 생략했으면 값의 자릿수에 맞추어 넓힌다. (`INTERVAL '100' DAY`) 적은 정밀도는 지킨다.
+  const resolveWith = (leading: number): { value: IntervalValue; type: DataType } => {
+    const type = resolveIntervalType(qualifier.startField, endField, leading, fractional);
+    return { value: conformInterval(parseIntervalText(expression.text, type), type), type };
+  };
+  if (qualifier.leadingPrecision !== null) return resolveWith(qualifier.leadingPrecision);
   try {
-    value = conformInterval(value, resolved);
+    return resolveWith(2);
   } catch (error) {
-    if (error instanceof DbError && error.sqlState === "22015") {
-      const needed = value.intervalClass === "YEAR_MONTH"
-        ? String(Math.abs(value.months)).length
-        : String(value.micros).replace(/^-/, "").length;
-      void needed;
-      // 개월 수와 마이크로초를 선행 필드 단위로 바꾸어 필요한 자릿수를 구한다.
-      const widened = resolveIntervalType(qualifier.startField, endField, 9, endField === "SECOND" ? fractional : undefined);
-      value = conformInterval(parseIntervalText(expression.text, widened), widened);
-      return { value, type: widened };
-    }
+    if (error instanceof DbError && error.sqlState === "22015") return resolveWith(9);
     throw error;
   }
-  return { value, type: resolved };
 }
 
 function validateExtractField(field: string, type: DataType, position: SourcePosition): void {

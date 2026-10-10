@@ -10,7 +10,8 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 진행 단계 : 1 ~ 6단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL, 질의 실행)
 - 착수 조건 : 없음
 - 다음 작업 : 7단계 트랜잭션과 동시성. 세션 상태와 커밋·롤백·세이브포인트, 행 잠금과 교착 감지, READ COMMITTED, 10개 세션 동시성 테스트를 붙인다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 273개 통과, Bun 1.4.2에서 222개(`bun test dist/test/exec/ dist/test/types/ dist/test/sql/ dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 282개 통과, Bun 1.3.14에서 231개(`bun test dist/test/exec/ dist/test/types/ dist/test/sql/ dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
+- 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 4건과 부수 결함을 고쳤다. 내용은 "결정 사항" 의 "6단계 점검 보완" 과 "작업 이력" 에 있다. 7단계 착수 전에 "인수인계 사항" 의 첫 항목(DML 구조와 성능)을 읽는다.
 
 ## 작업 규칙
 
@@ -84,6 +85,7 @@ rdbms/
     smoke.test.ts          프로젝트 구성 확인용
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
+                           regression.test.ts 는 6단계 점검에서 찾은 결함의 회귀 테스트이다
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
@@ -209,6 +211,8 @@ rdbms/
 
 ### 7단계. 트랜잭션과 동시성
 
+- [ ] 6단계 점검 보완에서 `0A000` 으로 막아 둔 문장을 푼다 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF`. 푸는 즉시 `test/exec/regression.test.ts` 와 `test/catalog/catalog.test.ts` 의 해당 단언을 바꾼다
+- [ ] DML 구조 재설계 : 지금은 문장마다 대상 테이블의 모든 행을 메모리 이미지로 읽고 되쓴다("인수인계 사항" 첫 항목). 행 잠금과 행 단위 undo 를 붙이기 전에 행 단위 접근으로 바꾼다
 - [ ] 세션 상태 : 자동 커밋, 진행 중인 트랜잭션, 현재 테이블스페이스, 타임존
 - [ ] 커밋, 롤백, 세이브포인트, 실패한 문장만 되돌리기 (상세 10)
 - [ ] DDL 등 자동 커밋되는 문장 처리
@@ -284,7 +288,7 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
-- Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.19.0이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
+- Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.21.0, bun 1.3.14이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
 - `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
 - SCRAM 반복 횟수의 기본값 (8단계)
 - 유닉스 도메인 소켓 파일의 접근 권한, 비정상 종료 뒤 남은 소켓 파일의 정리 (9단계)
@@ -340,11 +344,11 @@ SQL 접속 (상세 14-2)
 - 5단계에서 정한 사항이다.
   - 카탈로그는 테이블스페이스 파일의 카탈로그 영역에 JSON(UTF-8)으로 둔다. `CatalogData`는 테이블, 뷰, 인덱스, 제약조건, 자동 이름 순번을 가지며 SYSTEM 만 `system.tablespaces` 레지스트리를 함께 가진다. `parseCatalog`는 빠진 항목을 빈 값으로 채워 앞으로 항목이 늘어나도 읽는다.
   - `DATAFILE` 생략은 `<dataDir>/<이름>.hwdb`이며, 상대 경로는 데이터 디렉토리 기준이다. `CHARACTER SET`은 `UTF8`만 받는다.
-  - `ADD COLUMN`은 기존 행을 다시 쓰지 않는다. 행 형식에 컬럼 수를 앞에 두므로 저장된 컬럼이 적으면 뒤쪽을 NULL 로 읽는다. 기본값이 있는 컬럼을 추가해도 기존 행에는 NULL 로 보이며, 6단계의 조회가 DEFAULT 를 채울 때 함께 정한다. `DROP COLUMN`의 행 다시 쓰기도 6단계이다.
+  - `ADD COLUMN`은 기본값이 없으면(NULL) 기존 행을 다시 쓰지 않는다. 행 형식에 컬럼 수를 앞에 두므로 저장된 컬럼이 적으면 뒤쪽을 NULL 로 읽는다. 기본값이 있으면 6단계 점검 보완에서 기존 행을 다시 쓰도록 바꾸었다(아래 "6단계 점검 보완" 참조).
   - FK 타입 일치는 `formatDataType` 표기가 같은지로 본다. 같은 테이블스페이스의 PK 만 참조할 수 있으며 컬럼 수와 순서가 맞아야 한다.
   - `SYS_` 와 `DUAL` 예약은 SYSTEM 에서만 막는다. 다른 테이블스페이스에서는 같은 이름의 사용자 객체가 먼저이며, 없을 때만 딕셔너리·DUAL 로 푼다.
   - 딕셔너리 12개 뷰의 컬럼은 `catalog/dictionaryViews.ts`에 고정했다. `SYS_USERS`, `SYS_PRIVILEGES`, `SYS_GROUP_GRANTS`, `SYS_SESSIONS`는 8~9단계까지 비어 있다. `DUAL`은 저장하지 않는 가상 한 행(`DUMMY VARCHAR(1) = 'X'`)이다.
-  - DDL 오류 번호 4000 ~ 4017 을 배정했다. `3D000` 테이블스페이스 없음, `42P06` 중복, `42P07` 중복 테이블·뷰, `42P01` 없음, `42701`·`42703` 컬럼 중복·없음, `42710`·`42704` 제약·인덱스 중복·없음, `42P16`·`42P17` 잘못된 정의, `55006` 사용 중, `42602` 예약 이름, `54011` 컬럼 초과이다.
+  - DDL 오류 번호 4000 ~ 4018 을 배정했다. 4018 은 6단계 점검 보완에서 더한 읽기 전용 객체(`42809`)이다. `3D000` 테이블스페이스 없음, `42P06` 중복, `42P07` 중복 테이블·뷰, `42P01` 없음, `42701`·`42703` 컬럼 중복·없음, `42710`·`42704` 제약·인덱스 중복·없음, `42P16`·`42P17` 잘못된 정의, `55006` 사용 중, `42602` 예약 이름, `54011` 컬럼 초과이다.
   - 세션의 SELECT 는 5단계에서 딕셔너리·DUAL·FROM 없는 리터럴만 받는다. `WHERE`, `ORDER BY`, 행 수 제한, 조인, 집합 연산은 `0A000`으로 알리고 6단계에서 푼다.
   - 데몬(`daemon/server.ts`)은 구동 때 `TablespaceManager.open`으로 SYSTEM 과 목록을 함께 열고, 종료 때 닫아 정상 종료 표시를 쓴다. SYSTEM 이 손상되면 구동에 실패하고 나머지는 사용 불가로 두고 구동한다.
 - 6단계에서 정한 사항이다.
@@ -362,6 +366,15 @@ SQL 접속 (상세 14-2)
   - 실행 오류 번호 5000 ~ 5011 을 배정했다. `42702` 모호한 열, `42883` 정의되지 않은 함수·잘못된 인자, `21000` 스칼라 서브쿼리 행 수, `23502` NOT NULL, `23503` FK, `42803` GROUP BY, `07001` 파라미터, `42601` INSERT 값 개수(5011), `42804` 집합 연산 불일치(5010)이다. TO_DATE 형식 불일치는 `22007`이다.
   - `SELECT ... FOR UPDATE`는 6단계에서 잠금 없이 읽는다. `UNION ALL` 사슬은 왼쪽부터 재귀로 풀며, 구문 트리 한도(1,000) 안에서는 스택이 넘치지 않는다.
   - DbError가 아닌 예외는 세션 입구에서 내부 오류(`XX000`)로 바꾸어 응답한다.
+- 6단계 점검 보완에서 정한 사항이다. (2026-10-10, 다른 AI 가 만든 6단계 구현을 점검하며 직접 실행하여 찾은 결함)
+  - `INTERVAL '1' DAY` 처럼 끝 필드가 없는 단일 필드 리터럴이 전부 `22023` 이던 것을 고쳤다. `expression.ts` 가 끝 필드를 시작 필드로 채워 `resolveIntervalType` 에 넘기고 있었다. 선행 정밀도를 적지 않은 리터럴만 값에 맞추어 9까지 넓히며, 적어 둔 정밀도(`DAY(2)`)는 지킨다.
+  - INSERT 의 VALUES 와 DEFAULT, UPDATE 의 SET 이 식의 결과를 컬럼 타입으로 맞추지 않아 스칼라 서브쿼리 값이 `XX000` 이 되던 것을 고쳤다. 이제 `toColumnValue` 가 암묵적 형변환(`assignValue`)과 길이·범위 검사를 거치며 계열이 다르면 `42804` 이다. DML 이 따로 가졌던 서브쿼리 핸들러(타입 쪽은 항상 INTEGER 를 돌려주는 가짜)를 버리고 `executor.ts` 의 `dataHandlers`·`typeHandlers` 를 export 하여 같이 쓴다.
+  - `ADD COLUMN` : DEFAULT 는 한 번 계산하여 기존 행에 채운다. 이를 위해 `ddl.ts` 의 `rewriteTableRows` 로 힙·PK·인덱스를 다시 쓴다(`DROP COLUMN` 과 같은 함수이며 실패하면 메모리의 카탈로그를 원래대로 되돌린다). 행이 있는 테이블에 DEFAULT 없는(또는 NULL 이 되는) `NOT NULL` 컬럼을 추가하면 `23502` 이다. 행이 있는 테이블의 `REFERENCES` + NULL 이 아닌 `DEFAULT` 조합은 `0A000` 으로 두었다(FK 검사와 행 채우기의 순서를 풀지 않았다). `executeAlterTable` 이 `QueryContext` 를 받는다.
+  - 7단계 전의 트랜잭션 문장 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF` 는 `0A000` 이다. 이전에는 "Transaction statement accepted." 로 성공을 알리면서 아무것도 되돌리지 않아, `BEGIN; INSERT; ROLLBACK` 뒤에도 행이 남았다. `COMMIT`, `SET AUTOCOMMIT ON`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` 는 문장마다 이미 커밋되어 있으므로 그대로 받는다. **7단계에서 이 제한을 푼다.** 관련 테스트(`regression.test.ts`, `catalog.test.ts`)를 함께 고쳐야 한다.
+  - 딕셔너리 뷰와 `DUAL` 에 대한 DML 과 `DROP`·`ALTER`·`TRUNCATE`·`CREATE INDEX`·`DROP VIEW` 는 `42809`(내부 번호 4018, `READ_ONLY_OBJECT`)이다. 이전에는 "없는 객체" 로 보였다. SYSTEM 이 아닌 테이블스페이스에서는 같은 이름의 사용자 객체가 없을 때만 딕셔너리 객체로 본다(`assertNotDictionaryObject`).
+  - 별칭을 준 FROM 출처는 별칭으로만 한정해 부른다. 이전에는 테이블 이름도 맞아서 `K LEFT JOIN K k2` 에서 `K.A` 가 `42702` 였다.
+  - PK 유일성·FK 존재·TRUNCATE 의 참조 검사, 그리고 `ADD PRIMARY KEY`·`ADD FOREIGN KEY` 의 기존 행 검사를 쌍마다 견주는 방식(O(n²))에서 인덱스 키와 같은 인코딩의 문자열 집합 방식(O(n))으로 바꾸었다. 8,192행 테이블의 1건 INSERT 가 약 300ms 에서 16,384행 기준 약 26ms 가 되었다. CHAR 의 뒤쪽 공백을 무시하는 규칙은 인코딩이 그대로 보장한다.
+  - 정리 : 쓰지 않는 `void x;` 와 가짜 `withPosition` 을 만들던 죽은 코드, 아무 일도 하지 않던 try/catch, 파일 중간의 import 를 걷어냈다. 남은 `void x;`(약 40곳)는 일부러 건드리지 않았다.
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -374,6 +387,10 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
+- **7단계 착수 전에 알아 둘 DML 구조와 성능** (2026-10-10 점검). `exec/dml.ts` 는 INSERT·UPDATE·DELETE 마다 대상 테이블(과 FK 로 얽힌 테이블)의 모든 행을 `readTableRows` 로 메모리 이미지에 올리고, 제약을 검사한 뒤 바뀐 행을 되쓴다. 제약 검사는 집합 기반으로 고쳐 O(n) 이 되었지만, 테이블 크기에 비례하는 읽기는 남아 있다.
+  - 16,384행 테이블에서 1건 INSERT 가 약 26ms 이고, `INSERT ... SELECT` 로 8,192행을 더 넣는 데 약 17초가 걸린다.
+  - 남은 시간은 대부분 저장 계층이다. CPU 프로파일에서 `v1/index.ts` 의 `checkedPage`(페이지를 읽을 때마다 CRC-32 를 검증)와 `v1/pages.ts` 의 `checksum` 이 상위였다. 캐시에서 읽을 때도 매번 검증하므로, 디스크에서 올릴 때 한 번만 검증하고 쓸 때만 봉인하도록 바꾸면 크게 줄 것이다. 다만 체크섬은 손상 감지 규칙(상세 3, 12)이므로 바꿀 때 `storage.test.ts` 의 손상 감지 테스트를 유지한다.
+  - 7단계의 행 잠금, 행 단위 undo, READ COMMITTED 스냅샷은 모두 행 단위 접근을 전제하므로, 메모리 이미지 방식은 7단계에서 대체한다. 10개 세션 동시성 테스트의 규모(상세 9)에서는 지금 방식도 견디지만, 잠금을 붙인 뒤의 대기 시간이 커질 수 있다.
 - 6단계까지 마쳤다. 조회와 DML을 내부 세션 API로 실행한다. (실제 호출 예는 `test/exec/query.test.ts`, `dml.test.ts`, `functions.test.ts`)
   - `Database.open(데이터디렉토리)`로 열고 `createSession({ user, tablespace })`으로 세션을 만든다. `session.execute(sql, params)`가 구문 분석부터 실행까지 맡는다.
   - 질의는 `exec/executor.ts`의 `executeQuery`가 맡는다. FROM 묶기 → WHERE → GROUP BY·HAVING → 투영 → DISTINCT → 집합 연산 → ORDER BY → 행 수 제한 순서이다.
@@ -421,4 +438,5 @@ SQL 접속 (상세 14-2)
 - 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
 - 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.
 - 2026-10-10 : 5단계 완료. 내부 세션 API(`Database`, `Session`), SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL(RESTRICT·CASCADE, PK·FK·NOT NULL, 자동 이름), `USE`와 딕셔너리 12개 뷰·`DUAL`, 데몬 구동 때 테이블스페이스 열기를 구현했다. 오류 번호 4000 ~ 4017 을 배정했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.
+- 2026-10-10 : 6단계 점검 보완. 다른 AI 가 만든 구현을 읽고 직접 실행하여 결함을 찾아 고쳤다. (1) 단일 필드 INTERVAL 리터럴 전부 실패 (2) INSERT·UPDATE 의 스칼라 서브쿼리 값이 `XX000` (3) `ADD COLUMN` 의 DEFAULT 가 기존 행에 반영되지 않고 NOT NULL 컬럼이 행이 있는 테이블에 추가됨 (4) `BEGIN`·`ROLLBACK` 이 성공으로 답하면서 되돌리지 않음 (5) 딕셔너리 뷰·`DUAL` 변경 시 "없는 객체" 오류 (6) 자기 조인의 한정 이름이 모호함 (7) PK·FK 검사의 O(n²). 회귀 테스트 9개(`test/exec/regression.test.ts`)를 더했고, 그중 6개는 수정 전 코드에서 실패함을 확인했다. `npm test` 282개(Node.js 24.21.0), bun 1.3.14 에서 231개와 `runtime-smoke.mjs` 통과. 내용은 "결정 사항" 의 "6단계 점검 보완".
 - 2026-10-10 : 6단계 완료. 식 계산과 3값 논리, 전체 조회 파이프라인(조인 5종·USING 병합, 집계·GROUP BY·HAVING, DISTINCT, 집합 연산, 정렬, 행 수 제한), 상관 서브쿼리 5종, INSERT·UPDATE·DELETE·TRUNCATE와 NOT NULL·PK·FK·참조동작, 갱신 가능 뷰 DML, 내장 함수 전체와 NVL·TO_CHAR·TO_DATE, 파라미터 바인딩, 규칙 기반 인덱스 선택을 구현했다. 오류 번호 5000 ~ 5011 을 배정했다. `npm test` 273개, bun 222개 통과.
