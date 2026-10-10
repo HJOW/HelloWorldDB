@@ -7,10 +7,10 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-10
-- 진행 단계 : 1 ~ 5단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL)
+- 진행 단계 : 1 ~ 6단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL, 질의 실행)
 - 착수 조건 : 없음
-- 다음 작업 : 6단계 질의 실행. 이름과 타입 검사부터 단일 테이블 조회, 조인, 집계, 서브쿼리, DML, 내장 함수, 파라미터 바인딩, 규칙 기반 인덱스 선택을 붙인다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 246개 통과, Bun 1.4.2에서 타입·SQL 테스트 182개(`bun test dist/test/types/ dist/test/sql/`)와 카탈로그 테스트 13개(`bun test dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
+- 다음 작업 : 7단계 트랜잭션과 동시성. 세션 상태와 커밋·롤백·세이브포인트, 행 잠금과 교착 감지, READ COMMITTED, 10개 세션 동시성 테스트를 붙인다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 273개 통과, Bun 1.4.2에서 222개(`bun test dist/test/exec/ dist/test/types/ dist/test/sql/ dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
 
 ## 작업 규칙
 
@@ -21,7 +21,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지 붙었다. 인증, 통신, 나머지 실행은 아직 뼈대이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을 붙었다. 인증, 통신, 트랜잭션은 아직 뼈대이다.
 
 ```
 rdbms/
@@ -73,7 +73,9 @@ rdbms/
     catalog/             catalog.ts(정의 저장과 의존 추적), tablespaceManager.ts(목록과 파일 관리),
                          bootstrap.ts(SYSTEM 최초 생성), dictionaryViews.ts(12개 뷰와 컬럼 정의)
     session/             session.ts(SQL 실행의 입구, Database 와 Session), sessionManager.ts(9단계용 뼈대)
-    exec/                ddl.ts(테이블·뷰·인덱스 DDL 실행), analyzer.ts, planner.ts, executor.ts, expression.ts, functions.ts, dml.ts(6단계용 뼈대)
+    exec/                ddl.ts(테이블·뷰·인덱스 DDL 실행), analyzer.ts(이름 해석과 뷰 전개, 갱신 가능 판정),
+                         planner.ts(규칙 기반 인덱스 선택), expression.ts(식 계산과 3값 논리),
+                         functions.ts(내장 함수와 집계), executor.ts(조회 실행), dml.ts(INSERT·UPDATE·DELETE·TRUNCATE)
     txn/                 transaction.ts, lockManager.ts
     auth/                scram.ts, users.ts, privileges.ts
     net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
@@ -81,6 +83,7 @@ rdbms/
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
     smoke.test.ts          프로젝트 구성 확인용
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
+    exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
@@ -117,6 +120,7 @@ rdbms/
 | `node test/storage/runtime-smoke.mjs` | 빌드 결과물의 저장/재열기와 포그라운드 종료 검증 |
 | `bun test/storage/runtime-smoke.mjs` | 같은 주요 경로를 bun에서 검증 |
 | `bun test dist/test/types/ dist/test/sql/` | 빌드한 타입 시스템, SQL 파서 테스트를 bun에서 실행 |
+| `bun test dist/test/exec/ dist/test/catalog/` | 빌드한 카탈로그, 질의 실행 테스트를 bun에서 실행 |
 | `npm run hwdb -- <인자>` | 빌드된 `hwdb` 명령 실행. 예 : `npm run hwdb -- --help` |
 
 ## 세부 계획
@@ -190,17 +194,18 @@ rdbms/
 
 ### 6단계. 질의 실행
 
-- [ ] 이름과 타입 검사
-- [ ] 단일 테이블 조회, 조건, 식 계산
-- [ ] 조인, 집계와 `GROUP BY`, `HAVING`, 정렬, `DISTINCT`, 집합 연산, 행 수 제한 (상세 1-4)
-- [ ] 서브쿼리 : 스칼라, 인라인 뷰, `IN`, `EXISTS`, `ANY`, `ALL`, 상관 서브쿼리
-- [ ] INSERT, UPDATE, DELETE, TRUNCATE
-- [ ] 제약조건 검사와 FK 참조동작 (상세 11)
-- [ ] 뷰 전개, 갱신 가능한 뷰를 통한 DML (상세 1-3)
-- [ ] 내장 함수. `TO_CHAR`, `TO_DATE` 의 형식 요소 포함 (상세 1-5)
-- [ ] `?` 파라미터 바인딩
-- [ ] 규칙 기반 인덱스 선택 (상세 10)
+- [x] 이름과 타입 검사
+- [x] 단일 테이블 조회, 조건, 식 계산
+- [x] 조인, 집계와 `GROUP BY`, `HAVING`, 정렬, `DISTINCT`, 집합 연산, 행 수 제한 (상세 1-4)
+- [x] 서브쿼리 : 스칼라, 인라인 뷰, `IN`, `EXISTS`, `ANY`, `ALL`, 상관 서브쿼리
+- [x] INSERT, UPDATE, DELETE, TRUNCATE
+- [x] 제약조건 검사와 FK 참조동작 (상세 11)
+- [x] 뷰 전개, 갱신 가능한 뷰를 통한 DML (상세 1-3)
+- [x] 내장 함수. `TO_CHAR`, `TO_DATE` 의 형식 요소 포함 (상세 1-5)
+- [x] `?` 파라미터 바인딩
+- [x] 규칙 기반 인덱스 선택 (상세 10)
 - 완료 기준 : 문법 요소별 결과 검증 테스트 통과. NVL, TO_CHAR, TO_DATE 포함. 상세 13 의 Hello World 샘플이 그대로 실행된다.
+  (`test/exec`의 27개 테스트 통과. 조인 5종과 USING 병합, 상관 서브쿼리, 복합 PK·FK와 CASCADE·SET NULL, 갱신 가능 뷰 DML, 함수 전체와 파라미터, PK·앞쪽 컬럼 동등·범위의 규칙 기반 인덱스, Hello World 두 샘플을 확인했다. `SELECT ... FOR UPDATE`는 잠금 없이 읽으며 잠금은 7단계이다.)
 
 ### 7단계. 트랜잭션과 동시성
 
@@ -279,7 +284,6 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
-- 길게 이어진 `UNION ALL`(약 1,000개 초과)은 구문 트리 깊이 한도에 걸린다. 여러 행을 한 번에 넣을 때는 `INSERT ... VALUES (...), (...)`를 쓰면 된다. 실제 사용에서 불편하면 집합 연산도 `AND`/`OR`처럼 나란히 담는 노드로 바꾼다 (6단계에서 판단).
 - Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.19.0이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
 - `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
 - SCRAM 반복 횟수의 기본값 (8단계)
@@ -343,6 +347,21 @@ SQL 접속 (상세 14-2)
   - DDL 오류 번호 4000 ~ 4017 을 배정했다. `3D000` 테이블스페이스 없음, `42P06` 중복, `42P07` 중복 테이블·뷰, `42P01` 없음, `42701`·`42703` 컬럼 중복·없음, `42710`·`42704` 제약·인덱스 중복·없음, `42P16`·`42P17` 잘못된 정의, `55006` 사용 중, `42602` 예약 이름, `54011` 컬럼 초과이다.
   - 세션의 SELECT 는 5단계에서 딕셔너리·DUAL·FROM 없는 리터럴만 받는다. `WHERE`, `ORDER BY`, 행 수 제한, 조인, 집합 연산은 `0A000`으로 알리고 6단계에서 푼다.
   - 데몬(`daemon/server.ts`)은 구동 때 `TablespaceManager.open`으로 SYSTEM 과 목록을 함께 열고, 종료 때 닫아 정상 종료 표시를 쓴다. SYSTEM 이 손상되면 구동에 실패하고 나머지는 사용 불가로 두고 구동한다.
+- 6단계에서 정한 사항이다.
+  - 식 평가는 기대 타입을 아래로 넘긴다. 타입 없는 문자열(리터럴·문자열 파라미터)은 문맥 타입으로 `castLiteral` 해석하고, 수 리터럴은 크기별 INTEGER·BIGINT·DECIMAL(p,s), FLOAT는 DOUBLE로 묶는다. INTERVAL 리터럴은 값이 선행 정밀도를 넘으면 9까지 넓힌다.
+  - NULL은 비교·BETWEEN·IN·COALESCE·NULLIF·NVL에서 상대 타입에 적응한다. 비교에 NULL이 섞이면 타입이 달라도 UNKNOWN이며 오류가 아니다.
+  - 범위에는 깊이를 둔다. 안쪽이 바깥을 가리고 같은 깊이에 둘이면 `42702`이다. USING 병합 열은 오른쪽에서 가리고, 바깥 조인에서 비는 쪽의 병합 열은 살아 있는 쪽 값으로 채운다.
+  - 뷰 안의 생략된 이름은 뷰의 테이블스페이스에서 찾는다. 뷰 순환은 `42P17`이다.
+  - GROUP BY 검사는 집계 없는 식 전체가 GROUP BY 식과 같거나(예 : `GROUP BY SUBSTRING`의 그 식), 집계 안의 바깥 열이 GROUP BY에 있어야 한다. 상수는 항상 된다.
+  - DML은 문장 단위 메모리 이미지로 NOT NULL·PK·FK를 검사하고 CASCADE·SET NULL을 끝까지 적용한 뒤 테이블스페이스마다 배치 하나로 쓴다. 한 배치를 여러 이미지가 공유하여 저장 충돌(`40001`)이 나지 않게 한다.
+  - TRUNCATE는 참조하는 자식 행이 있으면 `23503`이다. `ALTER ... SET NOT NULL`과 PK·FK 추가, `DROP COLUMN`(힙 다시 쓰기와 인덱스 재구축)은 기존 행을 검사한다.
+  - 인덱스 선택은 앞쪽 컬럼의 동등 묶음에 범위 하나이며, DESC 컬럼의 하한·상한을 뒤집는다. `CREATE INDEX`와 PK 추가는 기존 행을 백필한다.
+  - 함수 결과 타입 : `POWER`·`SQRT`는 DOUBLE, `AVG`는 DECIMAL(38,6)·DOUBLE, `TO_CHAR`는 VARCHAR(4000), `TO_DATE`는 TIMESTAMP(0), `ROUND`는 소수 자릿수에 맞춘다. 날짜 요소(YYYY, YY, MM, DD, HH24, HH12, HH, MI, SS, FF1~FF6, AM, PM, 큰따옴표 고정 문자열)와 숫자 요소(9, 0, ., ,, FM)를 받으며, 넘치면 `#`으로 적는다. `YY`는 2000년대로 읽는다.
+  - `LIKE`는 코드 포인트 단위로 견주며, `SUBSTR`의 음수 시작은 뒤에서 센다.
+  - `?`는 문자열이면 문맥 타입으로, 아니면 `assignValue`로 맞춘다. 개수 불일치는 `07001`(5008)이다. DML 결과에 `rowCount`를 함께 둔다.
+  - 실행 오류 번호 5000 ~ 5011 을 배정했다. `42702` 모호한 열, `42883` 정의되지 않은 함수·잘못된 인자, `21000` 스칼라 서브쿼리 행 수, `23502` NOT NULL, `23503` FK, `42803` GROUP BY, `07001` 파라미터, `42601` INSERT 값 개수(5011), `42804` 집합 연산 불일치(5010)이다. TO_DATE 형식 불일치는 `22007`이다.
+  - `SELECT ... FOR UPDATE`는 6단계에서 잠금 없이 읽는다. `UNION ALL` 사슬은 왼쪽부터 재귀로 풀며, 구문 트리 한도(1,000) 안에서는 스택이 넘치지 않는다.
+  - DbError가 아닌 예외는 세션 입구에서 내부 오류(`XX000`)로 바꾸어 응답한다.
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -355,11 +374,12 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
-- 5단계까지 마쳤다. 내부 세션 API 로 SQL 을 실행한다. (실제 호출 예는 `test/catalog/catalog.test.ts`)
-  - `Database.open(데이터디렉토리)`로 열고 `createSession({ user, tablespace })`으로 세션을 만든다. `session.execute(sql)`이 구문 분석부터 DDL 실행까지 맡는다.
-  - 테이블스페이스 DDL 은 `TablespaceManager`가 맡는다. `CREATE TABLESPACE`는 파일을 만들고 SYSTEM 레지스트리에 올리며, `DROP`은 `INCLUDING CONTENTS`가 없으면 객체가 남았을 때 `55006`이다.
-  - 테이블·뷰·인덱스 DDL 은 `exec/ddl.ts`가 `catalog/CatalogStore`와 저장 배치(힙·인덱스 할당과 카탈로그 쓰기를 한 배치)로 실행한다.
-  - 조회는 5단계에서 딕셔너리 12개 뷰와 `DUAL`, FROM 없는 리터럴만 된다. 사용자 테이블 조회와 식 계산, DML 은 6단계이다. 사용자와 권한 문장은 `0A000`으로 알리고 8단계에서 붙인다.
+- 6단계까지 마쳤다. 조회와 DML을 내부 세션 API로 실행한다. (실제 호출 예는 `test/exec/query.test.ts`, `dml.test.ts`, `functions.test.ts`)
+  - `Database.open(데이터디렉토리)`로 열고 `createSession({ user, tablespace })`으로 세션을 만든다. `session.execute(sql, params)`가 구문 분석부터 실행까지 맡는다.
+  - 질의는 `exec/executor.ts`의 `executeQuery`가 맡는다. FROM 묶기 → WHERE → GROUP BY·HAVING → 투영 → DISTINCT → 집합 연산 → ORDER BY → 행 수 제한 순서이다.
+  - 식은 `exec/expression.ts`가 값과 타입을 함께 계산하고, 함수는 `exec/functions.ts`가 맡는다. 서브쿼리 실행은 순환 import를 피하려고 호출자가 넘긴 핸들러로 한다.
+  - DML은 `exec/dml.ts`가 메모리 이미지에서 제약과 참조동작을 마친 뒤 쓴다. INSERT ... SELECT의 원천 질의와 WHERE 탐색은 실행기를 재사용한다.
+  - 인덱스가 필요한 읽기는 `exec/planner.ts`의 `chooseIndex`로 고른다. (PK·유일 인덱스 포함, 앞쪽 동등과 그 다음 컬럼의 범위) 단위 테스트에서 앞쪽·뒤쪽·범위 조건의 선택을 직접 본다.
   - 데몬은 구동 때 테이블스페이스를 함께 연다. `hwdb start --foreground` 뒤 `Database` 없이도 `SYSTEM.hwdb`가 생긴다.
 - 1단계를 점검·보완하고 2단계를 마쳤다. `config`, `common`, 데몬/CLI의 1단계 범위와 `storage`에 기능 코드가 있다. SQL 실행/접속은 아직 구현되지 않았다.
 - 3단계까지 마쳤다. 타입 시스템을 쓰는 순서는 다음과 같다. (실제 호출 예는 `test/types/codecStorage.test.ts`)
@@ -401,3 +421,4 @@ SQL 접속 (상세 14-2)
 - 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
 - 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.
 - 2026-10-10 : 5단계 완료. 내부 세션 API(`Database`, `Session`), SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL(RESTRICT·CASCADE, PK·FK·NOT NULL, 자동 이름), `USE`와 딕셔너리 12개 뷰·`DUAL`, 데몬 구동 때 테이블스페이스 열기를 구현했다. 오류 번호 4000 ~ 4017 을 배정했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.
+- 2026-10-10 : 6단계 완료. 식 계산과 3값 논리, 전체 조회 파이프라인(조인 5종·USING 병합, 집계·GROUP BY·HAVING, DISTINCT, 집합 연산, 정렬, 행 수 제한), 상관 서브쿼리 5종, INSERT·UPDATE·DELETE·TRUNCATE와 NOT NULL·PK·FK·참조동작, 갱신 가능 뷰 DML, 내장 함수 전체와 NVL·TO_CHAR·TO_DATE, 파라미터 바인딩, 규칙 기반 인덱스 선택을 구현했다. 오류 번호 5000 ~ 5011 을 배정했다. `npm test` 273개, bun 222개 통과.

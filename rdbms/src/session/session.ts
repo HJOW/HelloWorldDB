@@ -12,26 +12,18 @@
  * 5 ~ 8단계의 테스트가 이 API 로 SQL 을 실행한다.
  *
  * 관련 사양 : AGENTS.md 상세 0, 9, 10
- * 구현 단계 : 5단계(실행 입구), 7단계(트랜잭션 상태)
+ * 구현 단계 : 5단계(실행 입구), 6단계(질의와 DML 연결), 7단계(트랜잭션 상태)
  */
 
 import { DbError, ERROR_CODES, unsupportedFeature } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
 import { parseStatement } from "../sql/parser.js";
-import type { ObjectName, Query, Select } from "../sql/ast.js";
-import { varcharType, integerType } from "../types/dataType.js";
+import type { Query } from "../sql/ast.js";
 import type { DataType } from "../types/dataType.js";
-import { resolveTimeZone } from "../types/datetime.js";
+import { currentUtcMicros, resolveTimeZone } from "../types/datetime.js";
+import type { TypeContext } from "../types/cast.js";
 import type { SqlValue } from "../types/value.js";
-import { DateValue, TimeValue, TimestampValue, IntervalValue } from "../types/datetime.js";
-import { Decimal } from "../types/numeric.js";
 import { ensureSystemTablespace } from "../catalog/bootstrap.js";
-import type { TablespaceManager } from "../catalog/tablespaceManager.js";
-import {
-  getDictionaryColumns,
-  getDictionaryRows,
-  isDictionaryView,
-} from "../catalog/dictionaryViews.js";
 import {
   executeAlterTable,
   executeCreateIndex,
@@ -40,8 +32,10 @@ import {
   executeDropIndex,
   executeDropTable,
   executeDropView,
-  executeTruncateTable,
 } from "../exec/ddl.js";
+import { executeQuery } from "../exec/executor.js";
+import type { QueryContext } from "../exec/executor.js";
+import { executeDelete, executeInsert, executeTruncate, executeUpdate } from "../exec/dml.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -51,9 +45,9 @@ function fail(sqlState: string, code: number, message: string, position?: Source
   throw new DbError(sqlState, code, message);
 }
 
-/** 실행 결과이다. 5단계에서는 DDL 과 딕셔너리 조회만 돌려준다. */
+/** 실행 결과이다. DML은 영향받은 행 수를 함께 돌려준다. */
 export type ExecuteResult =
-  | { kind: "ok"; message: string }
+  | { kind: "ok"; message: string; rowCount?: number }
   | { kind: "select"; columns: { name: string; dataType: DataType }[]; rows: SqlValue[][] };
 
 export interface DatabaseOptions {
@@ -111,9 +105,11 @@ export class Database {
   }
 }
 
+import type { TablespaceManager } from "../catalog/tablespaceManager.js";
+
 /**
  * 접속 하나의 실행 단위이다. 한 번에 문장 하나씩 순서대로 처리한다.
- * 5단계에서는 DDL 과 세션 문장, 딕셔너리 조회만 실행한다. DML 과 권한은 뒤 단계이다.
+ * 6단계에서는 DDL 과 세션 문장, 질의 실행과 DML을 처리한다. 권한은 뒤 단계이다.
  */
 export class Session {
   autocommit = true;
@@ -135,20 +131,42 @@ export class Session {
     return this.timeZoneSpec;
   }
 
+  /** 문장 실행용 질의 문맥을 만든다. 한 문장 안에서 현재 시각은 같은 값이다. */
+  private queryContext(params: readonly SqlValue[]): QueryContext {
+    return {
+      manager: this.database.manager,
+      currentTablespace: this.currentTablespace,
+      currentUser: this.user,
+      typeCtx: {
+        timeZone: resolveTimeZone(this.timeZoneSpec),
+        currentUtcMicros: currentUtcMicros(),
+      } as TypeContext,
+      params,
+      outerScopes: [],
+      viewStack: [],
+    };
+  }
+
   /** SQL 문장 하나를 실행한다. 한 번의 요청에는 문장 하나만 둔다. */
   execute(sql: string, params: SqlValue[] = []): ExecuteResult {
     const parsed = parseStatement(sql);
     if (parsed.parameterCount !== params.length) {
       fail(
         "07001",
-        ERROR_CODES.INTERNAL_ERROR,
+        ERROR_CODES.PARAM_COUNT_MISMATCH,
         `Parameter count does not match: expected ${parsed.parameterCount}, got ${params.length}.`,
       );
     }
-    if (parsed.parameterCount > 0) {
-      throw unsupportedFeature("Parameters are supported for DML in a later step.");
+    try {
+      return this.executeParsed(parsed.statement, params);
+    } catch (error) {
+      // DbError가 아니면 내부 오류로 바꾸어 응답한다. (파서의 견고성과 같은 규칙)
+      if (error instanceof DbError) throw error;
+      throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, `Internal error: ${error instanceof Error ? error.message : String(error)}.`);
     }
-    const stmt = parsed.statement;
+  }
+
+  private executeParsed(stmt: import("../sql/ast.js").Statement, params: SqlValue[]): ExecuteResult {
     const manager = this.database.manager;
     switch (stmt.kind) {
       case "CreateTablespace": {
@@ -168,9 +186,10 @@ export class Session {
       case "DropTable":
         executeDropTable(manager, this.currentTablespace, stmt);
         return { kind: "ok", message: `Table "${stmt.name.name}" dropped.` };
-      case "TruncateTable":
-        executeTruncateTable(manager, this.currentTablespace, stmt);
-        return { kind: "ok", message: `Table "${stmt.name.name}" truncated.` };
+      case "TruncateTable": {
+        const count = executeTruncate(manager, this.currentTablespace, this.queryContext(params), stmt);
+        return { kind: "ok", message: `Table "${stmt.name.name}" truncated.`, rowCount: count };
+      }
       case "CreateView":
         executeCreateView(manager, this.currentTablespace, this.user, stmt);
         return { kind: "ok", message: `View "${stmt.name.name}" created.` };
@@ -213,11 +232,19 @@ export class Session {
         // 트랜잭션의 실제 동작은 7단계이다. 지금은 순서만 받는다.
         return { kind: "ok", message: "Transaction statement accepted." };
       case "Query":
-        return this.executeQuery(stmt);
-      case "Insert":
-      case "Update":
-      case "Delete":
-        throw unsupportedFeature("DML is supported in a later step.");
+        return this.executeQuery(stmt, params);
+      case "Insert": {
+        const count = executeInsert(manager, this.currentTablespace, this.queryContext(params), stmt);
+        return { kind: "ok", message: `INSERT ${count}`, rowCount: count };
+      }
+      case "Update": {
+        const count = executeUpdate(manager, this.currentTablespace, this.queryContext(params), stmt);
+        return { kind: "ok", message: `UPDATE ${count}`, rowCount: count };
+      }
+      case "Delete": {
+        const count = executeDelete(manager, this.currentTablespace, this.queryContext(params), stmt);
+        return { kind: "ok", message: `DELETE ${count}`, rowCount: count };
+      }
       case "CreateUser":
       case "AlterUser":
       case "DropUser":
@@ -233,277 +260,13 @@ export class Session {
     }
   }
 
-  private executeQuery(query: Query): ExecuteResult {
-    // 5단계의 조회는 딕셔너리 뷰와 DUAL, FROM 없는 리터럴만 받는다. 나머지는 6단계이다.
-    const body = query.body;
-    if (query.forUpdate) {
-      throw unsupportedFeature("SELECT ... FOR UPDATE is supported in a later step.");
-    }
-    if (query.offset !== null || query.fetch !== null) {
-      // 행 수 제한이 딸린 딕셔너리 조회는 6단계에서 받는다.
-      throw unsupportedFeature("Row limiting for dictionary views is supported in a later step.");
-    }
-    if (query.orderBy.length > 0) {
-      throw unsupportedFeature("ORDER BY for dictionary views is supported in a later step.");
-    }
-    if (body.kind === "SetOperation") {
-      throw unsupportedFeature("Set operations are supported in a later step.");
-    }
-    const unwrapped: Query["body"] = body.kind === "Query" ? body.body : body;
-    if (unwrapped.kind !== "Select") {
-      throw unsupportedFeature("Query execution is supported in a later step.");
-    }
-    const select = unwrapped as Select;
-    if (select.groupBy.length > 0 || select.having !== null || select.distinct) {
-      throw unsupportedFeature("Grouped queries are supported in a later step.");
-    }
-    if (select.where !== null) {
-      throw unsupportedFeature("Filtered dictionary queries are supported in a later step.");
-    }
-    if (select.from.length === 0) {
-      return this.executeBareSelect(select);
-    }
-    if (select.from.length !== 1) {
-      throw unsupportedFeature("Joins are supported in a later step.");
-    }
-    const reference = select.from[0] as import("../sql/ast.js").TableReference;
-    if (reference.kind !== "Table") {
-      throw unsupportedFeature("Derived tables are supported in a later step.");
-    }
-    return this.executeSingleTableSelect(select, reference.name);
-  }
-
-  /** FROM 없는 SELECT. 리터럴만으로 된 한 행을 돌려준다. */
-  private executeBareSelect(select: Select): ExecuteResult {
-    const columns: { name: string; dataType: DataType }[] = [];
-    const row: SqlValue[] = [];
-    select.items.forEach((item, index) => {
-      if (item.kind === "Star") {
-        fail("42P01", ERROR_CODES.TABLE_NOT_FOUND, "SELECT * without FROM is not valid.");
-      }
-      const { value, dataType, name } = literalResult(item.expression, item.alias ?? `COL${index + 1}`);
-      columns.push({ name, dataType });
-      row.push(value);
-    });
-    return { kind: "select", columns, rows: [row] };
-  }
-
-  /** 테이블 하나만 참조하는 SELECT. 딕셔너리 뷰와 DUAL 만 받는다. */
-  private executeSingleTableSelect(select: Select, name: ObjectName): ExecuteResult {
-    const manager = this.database.manager;
-    const resolved = resolveDictionaryName(manager, name, this.currentTablespace);
-    if (resolved === null) {
-      throw unsupportedFeature("Querying user tables is supported in a later step.");
-    }
-    if (resolved.kind === "Dual") {
-      return this.executeDualSelect(select);
-    }
-    const columns = getDictionaryColumns(resolved.view);
-    const allRows = getDictionaryRows(manager, resolved.view);
-    // 선택 목록을 해석한다. * 또는 컬럼 이름과 별칭만 받는다.
-    const wanted: { index: number; alias: string }[] = [];
-    for (const item of select.items) {
-      if (item.kind === "Star") {
-        if (item.qualifier.length > 0) {
-          throw unsupportedFeature("Qualified * for dictionary views is supported in a later step.");
-        }
-        columns.forEach((column, index) => wanted.push({ index, alias: column.name }));
-        continue;
-      }
-      const expr = item.expression;
-      if (expr.kind !== "Column" || expr.qualifier.length > 0) {
-        // 딕셔너리 조회에서도 식은 6단계이다. 리터럴만 예외로 받는다.
-        try {
-          const literal = literalResult(expr, item.alias ?? "COL");
-          void literal;
-        } catch {
-          throw unsupportedFeature("Expressions in dictionary queries are supported in a later step.");
-        }
-        throw unsupportedFeature("Expressions in dictionary queries are supported in a later step.");
-      }
-      const columnName: string = expr.name;
-      const found = columns.findIndex((column) => column.name === columnName);
-      if (found < 0) {
-        fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, `Column does not exist: "${columnName}".`);
-      }
-      wanted.push({ index: found, alias: item.alias ?? columns[found]!.name });
-    }
-    const outputColumns = wanted.map((entry) => ({
-      name: entry.alias,
-      dataType: columns[entry.index]!.dataType,
-    }));
-    const rows = allRows.map((source) => wanted.map((entry) => source[entry.index] as SqlValue));
-    return { kind: "select", columns: outputColumns, rows };
-  }
-
-  /** DUAL 조회. 한 행짜리 가상의 테이블이다. */
-  private executeDualSelect(select: Select): ExecuteResult {
-    const dummyType = varcharType(1);
-    const dummyColumns = [{ name: "DUMMY", dataType: dummyType as DataType }];
-    const dummyRow: SqlValue[] = ["X"];
-    if (select.items.length === 1 && select.items[0]?.kind === "Star") {
-      return { kind: "select", columns: dummyColumns, rows: [dummyRow] };
-    }
-    // DUMMY 컬럼과 리터럴만 받는다.
-    const columns: { name: string; dataType: DataType }[] = [];
-    const row: SqlValue[] = [];
-    select.items.forEach((item, index) => {
-      if (item.kind === "Star") {
-        columns.push({ name: "DUMMY", dataType: dummyType });
-        row.push("X");
-        return;
-      }
-      if (item.expression.kind === "Column") {
-        if (item.expression.qualifier.length === 0 && item.expression.name === "DUMMY") {
-          columns.push({ name: item.alias ?? "DUMMY", dataType: dummyType });
-          row.push("X");
-          return;
-        }
-        fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, `Column does not exist: "${item.expression.name}".`);
-      }
-      const literal = literalResult(item.expression, item.alias ?? `COL${index + 1}`);
-      columns.push({ name: literal.name, dataType: literal.dataType });
-      row.push(literal.value);
-    });
-    return { kind: "select", columns, rows: [row] };
+  private executeQuery(query: Query, params: SqlValue[]): ExecuteResult {
+    // SELECT ... FOR UPDATE는 6단계에서 잠금 없이 읽는다. (잠금은 7단계)
+    const result = executeQuery(query, this.queryContext(params));
+    return {
+      kind: "select",
+      columns: result.columns.map((column) => ({ name: column.name, dataType: column.type })),
+      rows: result.rows,
+    };
   }
 }
-
-/** 딕셔너리 이름 해석. SYS_ 뷰와 DUAL 은 SYSTEM 에서 찾는다. */
-function resolveDictionaryName(
-  manager: TablespaceManager,
-  name: ObjectName,
-  current: string,
-): { kind: "Dictionary"; view: string } | { kind: "Dual" } | null {
-  const tablespace = name.tablespace ?? current;
-  const objectName = name.name;
-  // 사용자 객체가 먼저이다. 현재 테이블스페이스에 같은 이름의 테이블이나 뷰가 있으면 그것을 가리킨다.
-  // SYSTEM 에서는 SYS_ 와 DUAL 이 예약이므로 사용자 객체가 있을 수 없다.
-  if (name.tablespace === null || tablespace === current) {
-    try {
-      const currentCatalog = manager.requireCatalog(current);
-      if (currentCatalog.data.tables[objectName] !== undefined || currentCatalog.data.views[objectName] !== undefined) {
-        return null;
-      }
-    } catch {
-      // 사용 불가 상태에서는 딕셔너리로 풀어 상태를 보여 줄 수 있게 한다.
-    }
-  } else {
-    try {
-      const explicit = manager.requireCatalog(tablespace);
-      if (explicit.data.tables[objectName] !== undefined || explicit.data.views[objectName] !== undefined) {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-  }
-  if (objectName === "DUAL") {
-    // DUAL 은 어느 테이블스페이스에서 적어도 SYSTEM.DUAL 을 가리킨다.
-    return { kind: "Dual" };
-  }
-  if (isDictionaryView(objectName)) {
-    // SYSTEM 또는 생략된 이름은 딕셔너리로 본다. 다른 테이블스페이스에서 붙여 적어도 SYSTEM 것만 본다.
-    if (tablespace === "SYSTEM" || name.tablespace === null) {
-      return { kind: "Dictionary", view: objectName };
-    }
-    return null;
-  }
-  return null;
-}
-
-/** 리터럴 식을 값과 타입으로 바꾼다. FROM 없는 SELECT 와 DUAL 에서 쓴다. */
-function literalResult(
-  expression: import("../sql/ast.js").Expression,
-  fallbackName: string,
-): { value: SqlValue; dataType: DataType; name: string } {
-  switch (expression.kind) {
-    case "Literal": {
-      switch (expression.type) {
-        case "NULL":
-          return { value: null, dataType: varcharType(1), name: fallbackName };
-        case "BOOLEAN":
-          return { value: expression.value, dataType: { kind: "BOOLEAN", name: "BOOLEAN" }, name: fallbackName };
-        case "STRING":
-          return { value: expression.value, dataType: varcharType(Math.max(1, [...expression.value].length)), name: fallbackName };
-        case "BINARY": {
-          const bytes = Buffer.from(expression.hex, "hex");
-          return {
-            value: bytes,
-            dataType: { kind: "VARBINARY", name: "VARBINARY", length: Math.max(1, bytes.length) },
-            name: fallbackName,
-          };
-        }
-        case "INTEGER": {
-          const text = expression.text;
-          try {
-            const value = BigInt(text);
-            const dataType: DataType =
-              value >= -(2n ** 31n) && value <= 2n ** 31n - 1n
-                ? { kind: "INTEGER", name: "INTEGER", bits: 32 }
-                : { kind: "INTEGER", name: "BIGINT", bits: 64 };
-            return { value, dataType, name: fallbackName };
-          } catch {
-            const decimal = Decimal.parse(text);
-            return {
-              value: decimal,
-              dataType: { kind: "DECIMAL", name: "DECIMAL", precision: 10, scale: 0 },
-              name: fallbackName,
-            };
-          }
-        }
-        case "DECIMAL": {
-          const decimal = Decimal.parse(expression.text);
-          const parts = expression.text.replace(/^[+-]/, "").split(".");
-          const precision = (parts[0]?.replace(/^0+/, "").length ?? 0) + (parts[1]?.length ?? 0);
-          const scale = parts[1]?.length ?? 0;
-          return {
-            value: decimal,
-            dataType: { kind: "DECIMAL", name: "DECIMAL", precision: Math.max(1, precision), scale },
-            name: fallbackName,
-          };
-        }
-        case "FLOAT":
-          return {
-            value: Number(expression.text),
-            dataType: { kind: "FLOAT", name: "DOUBLE PRECISION", bits: 64 },
-            name: fallbackName,
-          };
-        case "DATE":
-          return {
-            value: new DateValue(0),
-            dataType: { kind: "DATE", name: "DATE" },
-            name: fallbackName,
-          };
-        case "TIME":
-          return {
-            value: new TimeValue(0, expression.withTimeZone === true ? 0 : null),
-            dataType: expression.withTimeZone === true
-              ? { kind: "TIME", name: "TIME WITH TIME ZONE", fractionalPrecision: 0, withTimeZone: true }
-              : { kind: "TIME", name: "TIME", fractionalPrecision: 0, withTimeZone: false },
-            name: fallbackName,
-          };
-        case "TIMESTAMP":
-          return {
-            value: new TimestampValue(0n, expression.withTimeZone === true ? 0 : null),
-            dataType: expression.withTimeZone === true
-              ? { kind: "TIMESTAMP", name: "TIMESTAMP WITH TIME ZONE", fractionalPrecision: 6, withTimeZone: true }
-              : { kind: "TIMESTAMP", name: "TIMESTAMP", fractionalPrecision: 6, withTimeZone: false },
-            name: fallbackName,
-          };
-        case "INTERVAL":
-          return {
-            value: IntervalValue.yearMonth(0),
-            dataType: { kind: "INTERVAL", name: "INTERVAL", startField: "YEAR", endField: "MONTH", leadingPrecision: 2, fractionalPrecision: null },
-            name: fallbackName,
-          };
-      }
-      break;
-    }
-    default:
-      break;
-  }
-  throw unsupportedFeature("Expressions in this query are supported in a later step.");
-}
-
-void integerType;

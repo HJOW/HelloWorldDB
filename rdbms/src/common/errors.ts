@@ -111,6 +111,26 @@ export const ERROR_CODES = {
   INVALID_VIEW_DEFINITION: 4016,
   /** 인덱스 정의가 잘못됨. SQLSTATE 42P16. */
   INVALID_INDEX_DEFINITION: 4017,
+  /** 컬럼 참조가 모호함. SQLSTATE 42702. */
+  AMBIGUOUS_COLUMN: 5000,
+  /** 정의되지 않은 함수. SQLSTATE 42883. */
+  UNDEFINED_FUNCTION: 5001,
+  /** 스칼라 서브쿼리가 2행 이상을 돌려줌. SQLSTATE 21000. */
+  CARDINALITY_VIOLATION: 5002,
+  /** NOT NULL 위반. SQLSTATE 23502. */
+  NOT_NULL_VIOLATION: 5003,
+  /** 외래 키 위반. SQLSTATE 23503. */
+  FOREIGN_KEY_VIOLATION: 5004,
+  /** 함수 인자의 개수나 형태가 틀림. SQLSTATE 42883. */
+  INVALID_FUNCTION_ARGUMENT: 5005,
+  /** GROUP BY 위반. SQLSTATE 42803. */
+  GROUPING_ERROR: 5006,
+  /** 파라미터 개수 불일치. SQLSTATE 07001. */
+  PARAM_COUNT_MISMATCH: 5008,
+  /** INSERT 값 개수 불일치. SQLSTATE 42601. */
+  INSERT_VALUE_MISMATCH: 5011,
+  /** 집합 연산의 컬럼 개수 불일치. SQLSTATE 42804. */
+  SET_OPERATION_MISMATCH: 5010,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */

@@ -56,6 +56,9 @@ import type {
 import { serializeCatalog } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
 import type { StorageBatch } from "../storage/format/format.js";
+import { decodeRow, encodeKey, encodeRow } from "../types/codec.js";
+import type { SqlValue } from "../types/value.js";
+import { isNotDistinct } from "../types/value.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -470,7 +473,7 @@ export function executeAlterTable(
   const action = stmt.action;
   switch (action.kind) {
     case "AddColumn": {
-      addColumn(manager, catalog, tablespace, name, action.column);
+      addColumn(manager, catalog, tablespace, name, action.column, stmt.name.position);
       return;
     }
     case "DropColumn": {
@@ -510,12 +513,14 @@ function addColumn(
   tablespace: string,
   tableName: string,
   columnDef: import("../sql/ast.js").ColumnDefinition,
+  position?: SourcePosition,
 ): void {
+  const columnPosition = position;
   const table = catalog.requireTable(tableName);
   if (table.columns.some((column) => column.name === columnDef.name)) {
-    fail("42701", ERROR_CODES.COLUMN_EXISTS, `Duplicate column name: "${columnDef.name}".`);
+    fail("42701", ERROR_CODES.COLUMN_EXISTS, `Duplicate column name: "${columnDef.name}".`, columnPosition);
   }
-  assertNotReserved(tablespace, columnDef.name);
+  assertNotReserved(tablespace, columnDef.name, columnPosition);
   const next: StoredColumn[] = [
     ...table.columns,
     {
@@ -526,14 +531,17 @@ function addColumn(
       notNull: columnDef.notNull,
     },
   ];
-  assertColumnLimit(next.length);
+  assertColumnLimit(next.length, columnPosition);
   // 컬럼에 붙은 PK 와 FK 는 ADD CONSTRAINT 와 같이 처리한다.
   if (columnDef.primaryKey !== null) {
     if (table.pkName !== null) {
-      fail("42P16", ERROR_CODES.INVALID_TABLE_DEFINITION, "A table cannot have more than one primary key.");
+      fail("42P16", ERROR_CODES.INVALID_TABLE_DEFINITION, "A table cannot have more than one primary key.", columnPosition);
     }
-    // 기존 행이 없으므로(5단계) 바로 추가한다. 6단계에서 기존 데이터 검사를 붙인다.
-    const pkName = catalog.resolveConstraintName(columnDef.primaryKey.name, "PRIMARY KEY", tableName);
+    // 새로 넣는 PK 컬럼은 NOT NULL이므로 기존 행이 있으면 위반이다.
+    if (catalog.space.heap(table.heapRoot).scan().length > 0) {
+      fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${columnDef.name}".`, columnPosition);
+    }
+    const pkName = catalog.resolveConstraintName(columnDef.primaryKey.name, "PRIMARY KEY", tableName, columnPosition);
     const space = catalog.space;
     const batch = space.begin();
     try {
@@ -567,11 +575,21 @@ function addColumn(
     return;
   }
   if (columnDef.references !== null) {
-    fail(
-      "0A000",
-      ERROR_CODES.FEATURE_NOT_SUPPORTED,
-      "Adding a column with REFERENCES needs constraint validation in a later step.",
-    );
+    // 새로 넣는 컬럼은 기존 행에서 NULL 로 읽히므로 FK 검사를 건너뛴다.
+    table.columns = next;
+    assertColumnLimit(table.columns.length);
+    addConstraint(_manager, catalog, tablespace, tableName, {
+      kind: "ForeignKey",
+      name: columnDef.references.name,
+      columns: [columnDef.name],
+      reference: {
+        table: columnDef.references.table,
+        columns: columnDef.references.columns,
+        onDelete: columnDef.references.onDelete,
+        onUpdate: columnDef.references.onUpdate,
+      },
+    }, columnPosition);
+    return;
   }
   table.columns = next;
   persistCatalog(catalog);
@@ -609,8 +627,87 @@ function dropColumn(
       position,
     );
   }
-  table.columns.splice(index, 1);
-  persistCatalog(catalog);
+  // 행이 있으면 그 컬럼 값을 빼고 힙을 다시 쓴다. 행 식별자가 바뀌므로 인덱스도 함께 만든다.
+  // surviving 검사를 앞에서 했으므로 남은 인덱스는 이 컬럼을 쓰지 않는다.
+  const oldTypes = table.columns.map((column) => column.dataType);
+  const stored = catalog.space.heap(table.heapRoot).scan();
+  if (stored.length === 0) {
+    table.columns.splice(index, 1);
+    persistCatalog(catalog);
+    return;
+  }
+  const newTypes = [...oldTypes.slice(0, index), ...oldTypes.slice(index + 1)];
+  const space = catalog.space;
+  const tableIndexes = Object.values(catalog.data.indexes).filter((entry) => entry.table === tableName);
+  const savedHeapRoot = table.heapRoot;
+  const savedPkRoot = table.pkIndexRoot;
+  const savedIndexRoots = new Map(tableIndexes.map((entry) => [entry.name, entry.indexRoot]));
+  const batch = space.begin();
+  try {
+    batch.dropHeap(table.heapRoot);
+    for (const entry of tableIndexes) batch.dropIndex(entry.indexRoot);
+    if (table.pkIndexRoot !== null) batch.dropIndex(table.pkIndexRoot);
+    const heapRoot = batch.createHeap();
+    const newIds: import("../storage/format/format.js").RowId[] = [];
+    const newRows: SqlValue[][] = [];
+    for (const row of stored) {
+      const values = decodeRow(row.data, oldTypes);
+      values.splice(index, 1);
+      newIds.push(batch.heap(heapRoot).insert(encodeRow(values, newTypes)));
+      newRows.push(values);
+    }
+    table.heapRoot = heapRoot;
+    table.columns.splice(index, 1);
+    if (savedPkRoot !== null) {
+      const pkRoot = batch.createIndex({ unique: true });
+      table.pkIndexRoot = pkRoot;
+      if (table.pkName !== null) {
+        const constraint = catalog.data.constraints[table.pkName];
+        if (constraint !== undefined) constraint.indexRoot = pkRoot;
+      }
+      const keyColumns = (table.pkColumns as string[]).map((columnName) => {
+        const found = table.columns.find((column) => column.name === columnName);
+        return { type: (found as StoredColumn).dataType, descending: false };
+      });
+      newRows.forEach((values, position) => {
+        const keyValues = (table.pkColumns as string[]).map((columnName) => {
+          const at = table.columns.findIndex((column) => column.name === columnName);
+          return (values[at] ?? null) as SqlValue;
+        });
+        batch.index(pkRoot).insert(encodeKey(keyValues, keyColumns), newIds[position] as import("../storage/format/format.js").RowId);
+      });
+    }
+    for (const entry of tableIndexes) {
+      const root = batch.createIndex({ unique: false });
+      entry.indexRoot = root;
+      const keyColumns = entry.columns.map((column) => {
+        const found = table.columns.find((entryColumn) => entryColumn.name === column.name);
+        return { type: (found as StoredColumn).dataType, descending: column.descending };
+      });
+      newRows.forEach((values, position) => {
+        const keyValues = entry.columns.map((column) => {
+          const at = table.columns.findIndex((entryColumn) => entryColumn.name === column.name);
+          return (values[at] ?? null) as SqlValue;
+        });
+        batch.index(root).insert(encodeKey(keyValues, keyColumns), newIds[position] as import("../storage/format/format.js").RowId);
+      });
+    }
+    batch.setCatalog(serializeCatalog(catalog.data));
+    batch.commit();
+  } catch (error) {
+    table.heapRoot = savedHeapRoot;
+    table.pkIndexRoot = savedPkRoot;
+    for (const entry of tableIndexes) {
+      const saved = savedIndexRoots.get(entry.name);
+      if (saved !== undefined) entry.indexRoot = saved;
+    }
+    try {
+      batch.rollback();
+    } catch {
+      // 원래 오류를 유지한다.
+    }
+    throw error;
+  }
 }
 
 function alterColumn(
@@ -637,10 +734,19 @@ function alterColumn(
       target.defaultText = null;
       target.defaultExpr = null;
       break;
-    case "SetNotNull":
-      // 기존 데이터 검사는 6단계에서 붙인다. 지금은 행이 없으므로 바로 둔다.
+    case "SetNotNull": {
+      // 기존 행에 NULL이 있으면 실패한다.
+      const columnIndex = table.columns.findIndex((entry) => entry.name === columnName);
+      const types = table.columns.map((entry) => entry.dataType);
+      for (const row of catalog.space.heap(table.heapRoot).scan()) {
+        const values = decodeRow(row.data, types);
+        if ((values[columnIndex] ?? null) === null) {
+          fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${columnName}".`, position);
+        }
+      }
       target.notNull = true;
       break;
+    }
     case "DropNotNull": {
       if (table.pkColumns.includes(columnName)) {
         fail(
@@ -730,6 +836,89 @@ function renameTable(
   persistCatalog(catalog);
 }
 
+/** 기존 행이 PK 조건(NULL 없음, 중복 없음)을 만족하는지 본다. */
+function checkRowsForPrimaryKey(
+  catalog: CatalogStore,
+  table: StoredTable,
+  pkColumns: string[],
+  position?: SourcePosition,
+): void {
+  const types = table.columns.map((column) => column.dataType);
+  const pkTypes = pkColumns.map((columnName) => {
+    const found = table.columns.find((column) => column.name === columnName);
+    return (found as StoredColumn).dataType;
+  });
+  const seen: SqlValue[][] = [];
+  for (const stored of catalog.space.heap(table.heapRoot).scan()) {
+    const values = decodeRow(stored.data, types);
+    const key = pkColumns.map((columnName) => {
+      const index = table.columns.findIndex((column) => column.name === columnName);
+      return (values[index] ?? null) as SqlValue;
+    });
+    if (key.some((value) => value === null)) {
+      fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, "NULL violates NOT NULL of a primary key column.", position);
+    }
+    for (const other of seen) {
+      let same = true;
+      for (let index = 0; index < key.length; index++) {
+        const type = pkTypes[index] as DataType;
+        if (!isNotDistinct(key[index] as SqlValue, other[index] as SqlValue, { ignoreTrailingSpaces: type.kind === "CHAR" })) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${table.name}".`, position);
+      }
+    }
+    seen.push(key);
+  }
+}
+
+/** 기존 행이 FK를 어기지 않는지 본다. NULL이 섞인 행은 건너뛴다. */
+function checkRowsForForeignKey(
+  catalog: CatalogStore,
+  table: StoredTable,
+  fkColumns: string[],
+  refTable: StoredTable,
+  refColumns: string[],
+  position?: SourcePosition,
+): void {
+  const types = table.columns.map((column) => column.dataType);
+  const refTypes = refTable.columns.map((column) => column.dataType);
+  const parentKeys = catalog.space.heap(refTable.heapRoot).scan().map((stored) => {
+    const values = decodeRow(stored.data, refTypes);
+    return refColumns.map((columnName) => {
+      const index = refTable.columns.findIndex((column) => column.name === columnName);
+      return (values[index] ?? null) as SqlValue;
+    });
+  });
+  const parentTypes = refColumns.map((columnName) => {
+    const found = refTable.columns.find((column) => column.name === columnName);
+    return (found as StoredColumn).dataType;
+  });
+  for (const stored of catalog.space.heap(table.heapRoot).scan()) {
+    const values = decodeRow(stored.data, types);
+    const key = fkColumns.map((columnName) => {
+      const index = table.columns.findIndex((column) => column.name === columnName);
+      return (values[index] ?? null) as SqlValue;
+    });
+    if (key.some((value) => value === null)) continue;
+    const found = parentKeys.some((parentKey) => {
+      for (let index = 0; index < key.length; index++) {
+        const type = parentTypes[index] as DataType;
+        if (!isNotDistinct(key[index] as SqlValue, parentKey[index] as SqlValue, { ignoreTrailingSpaces: type.kind === "CHAR" })) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (!found) {
+      fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, "Existing rows violate the foreign key.", position);
+    }
+  }
+}
+
 function addConstraint(
   _manager: TablespaceManager,
   catalog: CatalogStore,
@@ -751,11 +940,26 @@ function addConstraint(
     assertUniqueColumns(constraint.columns, position);
     const pkName = catalog.resolveConstraintName(constraint.name, "PRIMARY KEY", tableName, position);
     assertNotReserved(tablespace, pkName, position);
+    // 기존 행을 검사한다. NULL이 있으면 23502, 중복이면 23505이다.
+    checkRowsForPrimaryKey(catalog, table, constraint.columns, position);
     const space = catalog.space;
     const batch = space.begin();
     try {
       const indexRoot = batch.createIndex({ unique: true });
-      // 기존 데이터 검사는 6단계에서 붙인다. 지금은 행이 없으므로 바로 둔다.
+      // 유일 인덱스에 기존 키를 넣는다. 겹치면 저장 계층이 23505로 막는다.
+      const keyColumns = constraint.columns.map((columnName) => {
+        const found = table.columns.find((column) => column.name === columnName);
+        return { type: (found as StoredColumn).dataType, descending: false };
+      });
+      const types = table.columns.map((column) => column.dataType);
+      for (const stored of space.heap(table.heapRoot).scan()) {
+        const values = decodeRow(stored.data, types);
+        const keyValues = constraint.columns.map((columnName) => {
+          const index = table.columns.findIndex((column) => column.name === columnName);
+          return (values[index] ?? null) as import("../types/value.js").SqlValue;
+        });
+        batch.index(indexRoot).insert(encodeKey(keyValues, keyColumns), stored.id);
+      }
       table.pkName = pkName;
       table.pkColumns = [...constraint.columns];
       table.pkIndexRoot = indexRoot;
@@ -837,6 +1041,8 @@ function addConstraint(
   }
   const fkName = catalog.resolveConstraintName(constraint.name, "FOREIGN KEY", tableName, position);
   assertNotReserved(tablespace, fkName, position);
+  // 기존 행이 참조 무결성을 어기면 실패한다. NULL이 섞인 행은 건너뛴다.
+  checkRowsForForeignKey(catalog, table, constraint.columns, refTable, resolved.columns, position);
   catalog.data.constraints[fkName] = {
     name: fkName,
     table: tableName,
@@ -1452,6 +1658,20 @@ export function executeCreateIndex(
       indexRoot,
       unique: false,
     };
+    // 기존 행을 새 인덱스에 넣는다.
+    const types = target.columns.map((column) => column.dataType);
+    const keyColumns = stored.columns.map((column) => {
+      const found = target.columns.find((entry) => entry.name === column.name);
+      return { type: (found as StoredColumn).dataType, descending: column.descending };
+    });
+    for (const row of batch.heap(target.heapRoot).scan()) {
+      const values = decodeRow(row.data, types);
+      const keyValues = stored.columns.map((column) => {
+        const position = target.columns.findIndex((entry) => entry.name === column.name);
+        return (values[position] ?? null) as SqlValue;
+      });
+      batch.index(indexRoot).insert(encodeKey(keyValues, keyColumns), row.id);
+    }
     catalog.data.indexes[indexName] = stored;
     batch.setCatalog(serializeCatalog(catalog.data));
     batch.commit();
