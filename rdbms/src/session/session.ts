@@ -163,8 +163,11 @@ export class Database {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 /** 세션이 끝난 이유이다. 통신 계층이 클라이언트에 알릴 때 쓴다. */
 export type SessionCloseReason = "closed" | "idle" | "shutdown";
+=======
+>>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 =======
 >>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 
@@ -644,6 +647,10 @@ export class Session {
           fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${stmt.tablespace}".`);
         }
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+        // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
+>>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 =======
         // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
 >>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
@@ -656,6 +663,7 @@ export class Session {
         this.timeZoneSpec = stmt.zone;
         return { kind: "ok", message: `Time zone is "${stmt.zone}".` };
       }
+<<<<<<< HEAD
 <<<<<<< HEAD
       case "SetAutocommit": {
         // 켜는 순간 진행 중인 트랜잭션은 커밋한다. (MySQL 과 같은 규칙)
@@ -672,6 +680,8 @@ export class Session {
         this.txn = new Transaction(this.database.nextTransactionId(), true);
         return { kind: "ok", message: "Transaction started." };
 =======
+=======
+>>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
       case "SetAutocommit":
         // 7단계 전에는 문장마다 바로 커밋되므로 자동 커밋을 끌 수 없다. 켜는 것은 지금 동작과 같다.
         if (!stmt.value) {

@@ -46,10 +46,14 @@ import { atInnerLevel } from "./expression.js";
 
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
 <<<<<<< HEAD
+<<<<<<< HEAD
 import { executeTruncateTable } from "./ddl.js";
 import { lockConflict, pkLockKey, rowLockKey } from "../txn/lockManager.js";
 import { overlayKey, pkKeyHex, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
+=======
+import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
+>>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 =======
 import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 >>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
