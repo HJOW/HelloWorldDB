@@ -43,20 +43,11 @@ import { dataHandlers, executeQuery, readTableRows, scanTableForDml, typeHandler
 import type { QueryContext } from "./executor.js";
 import { evaluateExpression } from "./expression.js";
 import { atInnerLevel } from "./expression.js";
-
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
-<<<<<<< HEAD
-<<<<<<< HEAD
-import { executeTruncateTable } from "./ddl.js";
+import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 import { lockConflict, pkLockKey, rowLockKey } from "../txn/lockManager.js";
 import { overlayKey, pkKeyHex, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
-=======
-import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
-=======
-import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -746,7 +737,7 @@ function collectLockKeys(image: TableImage, keys: string[]): void {
     }
     if (row.original === null) continue;
     if (row.id !== null) keys.push(rowLockKey(image.tablespace, image.table.name, row.id));
-    if (pkTypes !== null && !pkEquals(pkOf(image.table, row.original), pkOf(image.table, row.values), pkTypes)) {
+    if (pkTypes !== null && tupleKey(pkOf(image.table, row.original), pkTypes) !== tupleKey(pkOf(image.table, row.values), pkTypes)) {
       lockPk(row.values);
     }
   }

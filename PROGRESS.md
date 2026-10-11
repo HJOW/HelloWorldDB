@@ -5,13 +5,14 @@
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-10
+- 최종 갱신 : 2026-10-11
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
-- `rdbms` 는 1 ~ 6단계(프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL, 질의 실행)를 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스까지 내부 세션 API 로 실행된다.
+- `rdbms` 는 1 ~ 7단계 구현을 마쳤다(7단계는 남은 마무리가 있다). Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지)까지 내부 세션 API 로 실행된다.
 - 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `rdbms` 7단계 트랜잭션과 동시성 (세션 상태, 커밋·롤백·세이브포인트, 행 잠금과 교착 감지, READ COMMITTED, 10개 세션 동시성)
-- 6단계 구현을 점검하여 결함 7건(INTERVAL 단일 필드 리터럴, DML 의 서브쿼리 값 대입, ADD COLUMN, 트랜잭션 문장의 거짓 성공, 딕셔너리 객체 변경, 자기 조인 한정 이름, 제약 검사 성능)을 고쳤다. 7단계에서는 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀고 DML 을 행 단위 접근으로 바꾼다. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 282개, Bun 1.3.14에서 231개 통과.
+- 다음 작업 : `rdbms` 7단계 남은 마무리(`SYS_SESSIONS` 연결, 문서 작성)를 처리한 뒤 8단계(계정과 권한)에 착수한다. DML 의 행 단위 접근 여부는 사용자 확인이 필요하다.
+- 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML 의 행 단위 접근은 하지 않았다. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
+- 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 `session.ts`, `dml.ts` 에 충돌 마커가 커밋되어 빌드가 깨져 있었다. 7단계 쪽을 기준으로 정리했고, 병합 중 빠진 6단계 점검 보완 기록을 `rdbms/PROGRESS.md` 에 다시 넣었다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 331개 통과. Bun 1.3.14 에서 `bun test --timeout 120000 dist/test/` 330개 통과(`node:test` 의 `t.mock` 을 쓰는 1개 제외).
 
 ## 프로젝트별 상태
 
@@ -19,7 +20,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 6단계 완료, 7단계 착수 전 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 7단계 구현 완료(남은 마무리), 8단계 착수 전 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
@@ -36,7 +37,7 @@
 - `rdbms` 의 CLI 는 `nodejsDriver` 보다 먼저 만들어지므로 자체 클라이언트 코드를 가진다. `nodejsDriver` 는 그 코드를 출발점으로 삼을 수 있다.
 - 타입스크립트 코드는 타입스크립트 6 에서 컴파일되어야 한다 (AGENTS.md 지켜야 할 사항 7). 그래서 `rdbms` 의 개발 의존성은 타입스크립트 6 으로 묶어 두었다. 7 로 올리지 않는다.
 - SYSTEM 계정은 CONNECT 없이 만들어지므로 처음에는 로컬에서만 접속된다. 설치 후 관리자가 서버 장비에서 `hwdb` 로 접속해 초기 암호를 바꾸는 것이 표준 절차이다.
-- 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계에서 마쳤고, SQL 트랜잭션과 행 잠금은 7단계이다.
+- 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계에서 마쳤고, SQL 트랜잭션과 행 잠금은 7단계에서 구현했다(설계 요약은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 결정 사항).
 - v1 고정 바이너리와 해시 검증 테스트를 보관했다. 개요 3의 1.0 출시 전 포맷 변경 예외는 적용 가능하며, 변경 시 포맷 문서와 테스트 자료도 의도적으로 갱신한다.
 - 변경된 타입 정책은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md)에 정리했다. VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이며 DECIMAL/DEC/NUMERIC의 인자 전체 생략은 (10,3), 정밀도만 지정한 `(p)`는 (p,0)이다. 드라이버와 DB툴은 실제 컬럼 인자를 서버 메타데이터에서 읽는다.
 - 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 현재 검증 환경은 Windows, Node.js 24.21.0, TypeScript 6.0.3, bun 1.4.2이다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
@@ -47,6 +48,7 @@
 ## 사용자 확인이 필요한 사항
 
 - `rdbms` : `hwdb` 가 화면에 내는 사용법과 안내 문구의 언어. DB 오류 메시지는 영문으로 정해져 있고, 그 밖의 문구는 지금 영문으로 적어 두었다. 10단계 전에 정하면 된다.
+- `rdbms` : DML 의 행 단위 접근 여부. 7단계 계획에 있었으나 구현하지 않았고 메모리 이미지 방식이 남아 있다. 8단계 전에 할지 정한다. 자세한 내용은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 미결 사항.
 
 보류한 프로젝트의 확인 사항(자바 빌드와 시험 환경, UI 프레임워크 등)은 각 PROGRESS.md 의 "미결 사항" 에 있으며, 보류를 풀 때 확인한다.
 
@@ -64,3 +66,5 @@
 - 2026-10-10 : `rdbms` 5단계(카탈로그와 DDL) 완료. 내부 세션 API, SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL과 PK·FK·NOT NULL, 딕셔너리 12개 뷰와 DUAL, 데몬 구동 때 테이블스페이스 열기를 구현했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.
 - 2026-10-10 : `rdbms` 6단계 점검 보완. 기존 구현을 점검하여 결함을 고치고 회귀 테스트 9개를 더했다. 7단계 전에는 `BEGIN`·`ROLLBACK`·`SAVEPOINT`·`SET AUTOCOMMIT OFF` 가 `0A000` 이다. `npm test` 282개, bun 231개 통과.
 - 2026-10-10 : `rdbms` 6단계(질의 실행) 완료. 식 계산과 3값 논리, 조회 파이프라인(조인·집계·집합·정렬·제한), 상관 서브쿼리, DML과 제약·참조동작, 갱신 가능 뷰 DML, 내장 함수와 NVL·TO_CHAR·TO_DATE, 파라미터, 규칙 기반 인덱스를 구현했다. `npm test` 273개, bun 222개 통과.
+- 2026-10-11 : `rdbms` 7단계(트랜잭션과 동시성) 구현. 세션 상태, 오버레이 방식의 트랜잭션, 커밋·롤백·세이브포인트, 행·PK·객체 잠금과 교착 감지, 10개 세션 동시성 테스트를 구현했다. 6단계 점검 보완에서 막아 둔 트랜잭션 문장(`0A000`)을 풀었다. 남은 마무리는 `rdbms/PROGRESS.md` 의 "7단계 남은 마무리".
+- 2026-10-11 : 병합 점검. 원격 커밋(`f39583f`)과 병합한 커밋(`9d50f23`)에 충돌 마커가 남아 빌드가 깨져 있었다. `session.ts`, `dml.ts` 를 7단계 쪽으로 정리하고 `npm test` 331개 통과를 확인했다. 병합 중 빠진 `rdbms/PROGRESS.md` 의 6단계 점검 보완 기록을 복구했다. 커밋은 하지 않았다.

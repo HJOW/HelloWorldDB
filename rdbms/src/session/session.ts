@@ -162,14 +162,8 @@ export class Database {
   }
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 /** 세션이 끝난 이유이다. 통신 계층이 클라이언트에 알릴 때 쓴다. */
 export type SessionCloseReason = "closed" | "idle" | "shutdown";
-=======
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
-=======
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
 
 /**
  * 접속 하나의 실행 단위이다. 한 번에 문장 하나씩 순서대로 처리한다.
@@ -607,9 +601,11 @@ export class Session {
       case "CreateTable":
         executeCreateTable(manager, this.currentTablespace, this.user, stmt);
         return { kind: "ok", message: `Table "${stmt.name.name}" created.` };
-      case "AlterTable":
-        executeAlterTable(manager, this.currentTablespace, this.user, stmt, this.queryContext(params));
+      case "AlterTable": {
+        const ctx = this.queryContext(params, new Transaction(owner, false));
+        executeAlterTable(manager, this.currentTablespace, this.user, stmt, ctx);
         return { kind: "ok", message: `Table "${stmt.name.name}" altered.` };
+      }
       case "DropTable":
         executeDropTable(manager, this.currentTablespace, stmt);
         return { kind: "ok", message: `Table "${stmt.name.name}" dropped.` };
@@ -646,14 +642,7 @@ export class Session {
         if (!manager.has(stmt.tablespace)) {
           fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${stmt.tablespace}".`);
         }
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
         // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
-=======
-        // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
         manager.requireCatalog(stmt.tablespace);
         this.currentTablespace = stmt.tablespace;
         return { kind: "ok", message: `Current tablespace is "${stmt.tablespace}".` };
@@ -663,8 +652,6 @@ export class Session {
         this.timeZoneSpec = stmt.zone;
         return { kind: "ok", message: `Time zone is "${stmt.zone}".` };
       }
-<<<<<<< HEAD
-<<<<<<< HEAD
       case "SetAutocommit": {
         // 켜는 순간 진행 중인 트랜잭션은 커밋한다. (MySQL 과 같은 규칙)
         if (stmt.value && this.txn !== null) this.commitTransaction(this.txn);
@@ -679,33 +666,6 @@ export class Session {
         }
         this.txn = new Transaction(this.database.nextTransactionId(), true);
         return { kind: "ok", message: "Transaction started." };
-=======
-=======
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
-      case "SetAutocommit":
-        // 7단계 전에는 문장마다 바로 커밋되므로 자동 커밋을 끌 수 없다. 켜는 것은 지금 동작과 같다.
-        if (!stmt.value) {
-          throw unsupportedFeature("SET AUTOCOMMIT OFF is supported together with transactions in a later step.");
-        }
-        return { kind: "ok", message: "Autocommit is ON." };
-      case "Commit":
-        // 문장마다 이미 커밋되어 있으므로 커밋할 것이 없다.
-        return { kind: "ok", message: "Nothing to commit; every statement is committed immediately." };
-      case "SetTransaction":
-        // 지원하는 격리 수준은 READ COMMITTED 하나뿐이고 파서가 그 밖의 값을 거른다.
-        return { kind: "ok", message: "Isolation level is READ COMMITTED." };
-      case "Begin":
-      case "Rollback":
-      case "Savepoint":
-      case "ReleaseSavepoint":
-        // 되돌릴 수 없는 채로 성공을 알리면 데이터가 남아 버린다. 트랜잭션은 7단계에서 구현한다.
-        throw unsupportedFeature("Explicit transactions, ROLLBACK and SAVEPOINT are supported in a later step.");
-      case "Query":
-        return this.executeQuery(stmt, params);
-      case "Insert": {
-        const count = executeInsert(manager, this.currentTablespace, this.queryContext(params), stmt);
-        return { kind: "ok", message: `INSERT ${count}`, rowCount: count };
->>>>>>> f39583f8c0f24cbcd6f1adc5564b06463a18e427
       }
       case "Commit": {
         if (this.txn === null) return { kind: "ok", message: "No transaction in progress." };

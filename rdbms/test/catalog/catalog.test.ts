@@ -270,14 +270,14 @@ test("TRUNCATE 와 세션 문장이 동작한다", (t) => {
     assert.throws(() => session.execute("USE MISSING"), state("3D000"));
     session.execute("SET TIME ZONE '+09:00'");
     assert.throws(() => session.execute("SET TIME ZONE 'BAD/Zone'"), state("22009"));
-    // 트랜잭션은 7단계이다. 되돌릴 수 없는 채로 성공을 알리지 않고 0A000 으로 알린다.
+    // 자동 커밋 전환은 7단계에서 트랜잭션과 함께 구현되었다. 트랜잭션 문장의 세부 동작은 test/txn 에서 본다.
     session.execute("SET AUTOCOMMIT ON");
     assert.equal(session.autocommit, true);
-    assert.throws(() => session.execute("SET AUTOCOMMIT OFF"), state("0A000"));
+    session.execute("SET AUTOCOMMIT OFF");
+    assert.equal(session.autocommit, false);
+    session.execute("ROLLBACK");
+    session.execute("SET AUTOCOMMIT ON");
     assert.equal(session.autocommit, true);
-    for (const sql of ["BEGIN", "START TRANSACTION", "ROLLBACK", "SAVEPOINT S1", "ROLLBACK TO S1", "RELEASE SAVEPOINT S1"]) {
-      assert.throws(() => session.execute(sql), state("0A000"), sql);
-    }
     session.execute("COMMIT");
     session.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
   } finally {

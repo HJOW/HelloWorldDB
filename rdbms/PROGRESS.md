@@ -10,14 +10,16 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 진행 단계 : 1 ~ 6단계 완료. 7단계(트랜잭션과 동시성)는 구현과 테스트를 마쳤고 완료 기준(10개 세션 동시성 테스트)을 채웠다. 아래 "7단계 남은 마무리"가 남아 있어 단계를 닫지는 않았다.
 - 착수 조건 : 없음
 - 다음 작업 : "7단계 남은 마무리"를 처리한 뒤 8단계(계정과 권한)에 착수한다. 7단계 설계의 요약은 "결정 사항"의 7단계 항목, 코드를 이어받을 때의 주의는 "인수인계 사항"의 7단계 항목에 있다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 322개 통과(6단계의 273개 + 7단계 49개). 빌드에 오류와 경고가 없다.
-  Bun 은 6단계 시점(222개)에 확인했고 7단계 코드로는 아직 돌려 보지 않았다. (남은 마무리에 포함)
+- 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. 7단계 착수 전에 "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
+- 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 331개 통과(6단계 점검 보완의 회귀 9개 포함). 빌드에 오류와 경고가 없다.
+  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 330개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다. `test/storage/runtime-smoke.mjs` 는 Node.js 와 bun 양쪽에서 통과.
 
 ### 7단계 남은 마무리
 
 8단계 착수 전에 처리한다. 모두 작은 작업이며 구조를 바꾸지 않는다.
 
-- [ ] bun 확인 : `bun test dist/test/txn/ dist/test/exec/ dist/test/catalog/ dist/test/daemon/` 가 통과하는지 본다. 동시성 테스트는 `setTimeout`, `setImmediate`, Promise 순서에 기대므로 bun 에서 따로 확인해야 한다.
+- [x] bun 확인 (2026-10-11) : `bun test --timeout 120000 dist/test/` 는 330개 통과. 1개는 `t.mock` 미구현으로 실패한다(인수인계 사항 참고). 동시성 테스트(`setTimeout`, `setImmediate`, Promise 순서에 기대는 것)도 bun 에서 통과했다.
 - [ ] `SYS_SESSIONS` 연결을 끝낸다. `catalog/dictionaryViews.ts` 는 컬럼(`SESSION_ID`, `USER_NAME`, `TABLESPACE_NAME`, `AUTOCOMMIT`, `IN_TRANSACTION`)과 `getDictionaryRows(manager, view, { sessions })` 의 세 번째 인자까지 받도록 고쳐 두었다.
   남은 일은 두 가지이다. `QueryContext` 에 `sessions?: () => readonly SessionInfo[]` 를 추가해 `Session.queryContext` 가 `this.database.sessions.list()` 를 넘기게 하고,
   `exec/executor.ts` 에서 행을 만드는 `case "dictionary"`(`getDictionaryRows(ctx.manager, bound.view)` 를 부르는 곳 하나)가 `{ sessions: ctx.sessions?.() }` 를 넘기게 한다. 열 정보만 쓰는 `typeScopesOf` 쪽은 고칠 필요가 없다.
@@ -37,7 +39,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 잠금은 전부 배타 잠금이다. FK 의 부모 행을 읽는 것만으로는 잠그지 않고, 대신 커밋 직전에 FK 를 다시 확인한다. (`exec/dml.ts` 의 `revalidateReferences`)
   그래서 부모를 지우는 트랜잭션과 자식을 넣는 트랜잭션이 겹치면 한쪽이 커밋에서 `23503` 으로 실패한다. 기다리게 하는 방식이 아니다.
 - 테이블스페이스를 둘 이상 건드린 트랜잭션의 커밋은 테이블스페이스마다 배치 하나씩이며 서로 원자적이지 않다. (사양 12 의 "커밋 도중 중단" 범위. WAL 이 없다)
-- 한 문장이 읽고 쓰는 테이블 전체를 메모리 이미지로 읽는다. (6단계부터의 방식) 큰 테이블에서는 느리다. 성능 개선은 계획에 없다.
+- 한 문장이 읽고 쓰는 테이블 전체를 메모리 이미지로 읽는다. (6단계부터의 방식) 큰 테이블에서는 느리다. 성능 개선은 미결 사항(행 단위 접근)에 남긴다.
 - 동기 `Session.execute` 와 비동기 `Session.executeAsync` 를 같은 세션에서 섞어 쓰면 안 된다. 비동기 문장이 기다리는 동안의 동기 호출은 막지 않는다.
 - 트랜잭션 크기는 메모리에 제한된다. (사양 10 이 인정한 제한)
 
@@ -115,6 +117,7 @@ rdbms/
     smoke.test.ts          프로젝트 구성 확인용
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
+                           regression.test.ts 는 6단계 점검에서 찾은 결함의 회귀 테스트이다
     txn/                   트랜잭션 테스트. lockManager(잠금 단위), transaction(커밋·롤백·세이브포인트·가시성·동기 잠금 충돌·DDL),
                            concurrency(비동기 대기·제한 시간·교착, 10개 세션 동시성). exec/helpers.ts 를 함께 쓴다
     daemon/                server.test.ts 에 정상 종료 때의 트랜잭션 롤백 테스트가 있다
@@ -252,7 +255,9 @@ rdbms/
 - [x] DDL 과 진행 중인 트랜잭션이 같은 객체에서 만났을 때의 처리
 - [x] 10개 세션 동시성 테스트 (상세 9)
 - [x] 세션 목록, 유휴 세션 종료(`session.idleTimeoutMs`), 세션을 닫을 때의 롤백, 데몬 정상 종료 때의 롤백
-- [ ] 남은 마무리 : 현재 상태 절의 "7단계 남은 마무리" 참고 (bun 확인, `SYS_SESSIONS` 연결, 문서)
+- [x] 6단계 점검 보완에서 `0A000` 으로 막아 둔 문장을 풀었다 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF`. `regression.test.ts` 와 `catalog.test.ts` 의 단언을 7단계 동작으로 바꾸었다
+- [ ] DML 행 단위 접근 (7단계 계획의 "DML 구조 재설계") : 하지 않았다. 메모리 이미지 방식이 남아 있다. 사용자 확인 필요 (미결 사항, 인수인계 사항 참고)
+- [ ] 남은 마무리 : 현재 상태 절의 "7단계 남은 마무리" 참고 (`SYS_SESSIONS` 연결, 문서)
 - 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과. (충족)
   (`test/txn` 48개 + 데몬 1개. 잠금 관리자 단위 11개, 트랜잭션 시나리오 24개, 비동기 대기·제한 시간·교착·세션 종료 중 대기 12개, 10개 세션 동시성 1개.
   동시성 테스트는 세션 10개가 각각 15회 이체 트랜잭션(두 계좌 갱신 + 카운터 + 로그 삽입)을 하고 매번 합계 조회를 하며, 계좌 1·2 를 서로 반대 방향으로 오가게 해 교착을 부추긴다.
@@ -336,6 +341,8 @@ SQL 접속 (상세 14-2)
 - 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 8단계 이후에 정한다.
 - 잠금 생성 가드(`helloworlddb.lock.acquire`) 안에서 강제 종료되어 가드가 남는 경우의 정리(10단계). 현재는 동시 점유 방지를 위해 구동에 실패시킨다. 관리자가 관련 데몬이 없는지 확인한 뒤 빈 가드 디렉토리를 제거해야 한다. 일반 구동 후 남은 잠금 파일은 죽은 PID를 확인해 재사용한다.
 
+- DML 행 단위 접근 여부 (사용자 확인 필요). 7단계 계획에는 "DML 구조 재설계"가 있었으나 구현하지 않았다. 메모리 이미지 방식을 남긴 채 8단계로 갈지, 8단계 전에 행 단위로 바꿀지 정해야 한다. 인수인계 사항의 "DML 구조와 성능" 참고.
+
 ## 결정 사항
 
 - ES 모듈로 작성한다. `package.json` 에 `"type": "module"`, `tsconfig.json` 에 `module: NodeNext` 를 두었다.
@@ -404,6 +411,14 @@ SQL 접속 (상세 14-2)
   - 실행 오류 번호 5000 ~ 5011 을 배정했다. `42702` 모호한 열, `42883` 정의되지 않은 함수·잘못된 인자, `21000` 스칼라 서브쿼리 행 수, `23502` NOT NULL, `23503` FK, `42803` GROUP BY, `07001` 파라미터, `42601` INSERT 값 개수(5011), `42804` 집합 연산 불일치(5010)이다. TO_DATE 형식 불일치는 `22007`이다.
   - `SELECT ... FOR UPDATE`는 6단계에서 잠금 없이 읽었고 7단계에서 실제 잠금을 건다. `UNION ALL` 사슬은 왼쪽부터 재귀로 풀며, 구문 트리 한도(1,000) 안에서는 스택이 넘치지 않는다.
   - DbError가 아닌 예외는 세션 입구에서 내부 오류(`XX000`)로 바꾸어 응답한다.
+- 6단계 점검 보완에서 정한 사항이다. (2026-10-10, 다른 AI 가 만든 6단계 구현을 점검하며 직접 실행하여 찾은 결함)
+  - `INTERVAL '1' DAY` 처럼 끝 필드가 없는 단일 필드 리터럴을 받는다. 선행 정밀도를 적지 않은 리터럴만 값에 맞추어 9까지 넓히며, 적어 둔 정밀도(`DAY(2)`)는 지킨다.
+  - INSERT 의 VALUES 와 DEFAULT, UPDATE 의 SET 은 `toColumnValue`(암묵적 형변환, 길이·범위 검사)를 거친다. 계열이 다르면 `42804` 이다. DML 이 따로 가졌던 서브쿼리 핸들러(타입 쪽은 항상 INTEGER 를 돌려주던 것)를 버리고 `executor.ts` 의 `dataHandlers`·`typeHandlers` 를 같이 쓴다.
+  - `ADD COLUMN` : DEFAULT 가 있으면 한 번 계산하여 기존 행을 `rewriteTableRows`(DROP COLUMN 과 같은 함수)로 다시 쓰고, 실패하면 카탈로그를 원래대로 되돌린다. 행이 있는 테이블에 DEFAULT 없는 NOT NULL 컬럼을 넣으면 `23502`, 행이 있는 테이블의 `REFERENCES` + NULL 이 아닌 DEFAULT 조합은 `0A000` 이다. `executeAlterTable` 이 `QueryContext` 를 받는다.
+  - 딕셔너리 뷰와 `DUAL` 을 바꾸는 DML·DDL 은 `42809`(내부 번호 4018, `READ_ONLY_OBJECT`)이다. 이전에는 "없는 객체"로 보였다. SYSTEM 이 아닌 테이블스페이스에서는 같은 이름의 사용자 객체가 없을 때만 딕셔너리 객체로 본다(`assertNotDictionaryObject`).
+  - 별칭을 준 FROM 출처는 별칭으로만 한정해 부른다. 이전에는 테이블 이름도 맞아서 `K LEFT JOIN K k2` 에서 `K.A` 가 `42702` 였다.
+  - PK 유일성, FK 존재, TRUNCATE 의 참조 검사, `ADD PRIMARY KEY`·`ADD FOREIGN KEY` 의 기존 행 검사를 쌍마다 견주던 O(n²) 방식에서, 인덱스 키와 같은 인코딩의 문자열 집합(`tupleKey`) 방식으로 바꾸었다. CHAR 의 뒤쪽 공백을 무시하는 규칙은 인코딩이 그대로 보장한다. 7단계의 잠금 키 계산(`collectLockKeys`)도 같은 방식이다.
+  - 7단계 전의 트랜잭션 문장은 `0A000` 이었다. 되돌리지 못하면서 성공을 알리던 것을 막기 위함이었고, 7단계에서 구현하며 풀렸다.
 - 7단계에서 정한 사항이다. 구조는 코드의 머리 주석(`txn/transaction.ts`, `txn/lockManager.ts`, `session/session.ts`, `exec/dml.ts`)에도 있다.
   - 미커밋 변경은 데이터 파일에 쓰지 않고 트랜잭션이 메모리에 가진 오버레이(테이블마다 새로 넣은 행, 바꾼 커밋 행, 지운 커밋 행)에만 둔다. 읽을 때 커밋 값에 자기 오버레이를 덮어 보이고(READ COMMITTED, `readMergedRows`), 커밋할 때 짧은 저장 배치로 쓴다.
     쓰는 순간에는 다른 문장이 끼어들 수 없어(한 스레드, 동기 실행) 저장 배치의 `40001` 충돌이 생기지 않는다. 사양 상세 10 의 "커밋되지 않은 변경은 데이터 파일에 쓰지 않는다" 와 같다.
@@ -445,6 +460,11 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
+- **DML 구조와 성능** (6단계 점검 보완에서 기록, 7단계 이후에도 유효). `exec/dml.ts` 는 INSERT·UPDATE·DELETE 마다 대상 테이블(과 FK 로 얽힌 테이블)의 모든 행을 `readTableRows` 로 메모리 이미지에 올리고, 제약을 검사한 뒤 바뀐 행을 되쓴다. 7단계도 이 방식을 그대로 두고 결과를 트랜잭션 오버레이에 접는다. 행 단위 접근은 하지 않았다.
+  - 16,384행 테이블에서 1건 INSERT 가 약 26ms, `INSERT ... SELECT` 로 8,192행을 더 넣는 데 약 17초가 걸린다. (6단계 점검 보완 시점의 측정)
+  - CPU 프로파일에서 `v1/index.ts` 의 `checkedPage` 와 `v1/pages.ts` 의 `checksum` 이 상위였다. 페이지를 읽을 때마다 CRC-32 를 검증하므로, 디스크에서 올릴 때 한 번만 검증하는 쪽으로 바꾸면 줄어든다. 체크섬은 손상 감지 규칙(상세 3, 12)이므로 바꿀 때 `storage.test.ts` 의 손상 감지 테스트를 유지한다.
+  - 행 단위 접근(7단계 계획의 "DML 구조 재설계")은 하지 않았다. 10개 세션 테스트 규모에서는 견디지만, 큰 테이블에서 잠금 대기가 길어질 수 있다. 할지 여부는 사용자 확인이 필요하다 (미결 사항).
+- **bun 에서의 테스트** (2026-10-11 확인). `node:test` 의 `t.mock` 은 bun 에서 구현되지 않아 `test/storage/storage.test.ts` 의 fsync 실패 테스트가 bun 에서만 실패한다. 이 테스트를 bun 에서도 돌리려면 `t.mock` 대신 메서드를 직접 바꾸고 `finally` 로 되돌리는 방식으로 고쳐야 한다. B+Tree 스트레스 테스트는 bun 기본 제한 시간(5초)을 넘으므로 `bun test --timeout 120000 dist/test/` 로 돌린다. `runtime-smoke.mjs` 는 Node.js 와 bun 양쪽에서 통과한다.
 - 7단계는 구현과 테스트를 마쳤고 "7단계 남은 마무리"만 남았다. 이어받을 때 알아 둘 점이다.
   - 작업을 중단한 시점의 코드는 컴파일에 오류가 없고 `npm test` 322개가 모두 통과한다. 반쯤 고친 파일은 없다. 다만 `catalog/dictionaryViews.ts` 가 `SYS_SESSIONS` 용 인자와 컬럼을 받도록 먼저 고쳐져 있어, 연결을 끝내기 전에는 그 뷰가 빈 결과이다. (해가 없는 상태)
   - SQL 을 실행하는 방법이 둘이다. 단위 테스트와 CLI 단순 실행은 `session.execute(sql, params)`(동기, 잠금 충돌 즉시 `55P03`)를 쓰고, 통신 계층(9단계)과 동시성 테스트는 `await session.executeAsync(sql, params)` 를 써야 기다림과 교착 감지가 동작한다. 두 방식은 같은 문장 실행 코드를 쓴다.
@@ -500,9 +520,11 @@ SQL 접속 (상세 14-2)
 - 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
 - 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.
 - 2026-10-10 : 5단계 완료. 내부 세션 API(`Database`, `Session`), SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL(RESTRICT·CASCADE, PK·FK·NOT NULL, 자동 이름), `USE`와 딕셔너리 12개 뷰·`DUAL`, 데몬 구동 때 테이블스페이스 열기를 구현했다. 오류 번호 4000 ~ 4017 을 배정했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.
+- 2026-10-10 : 6단계 완료. 식 계산과 3값 논리, 전체 조회 파이프라인(조인 5종·USING 병합, 집계·GROUP BY·HAVING, DISTINCT, 집합 연산, 정렬, 행 수 제한), 상관 서브쿼리 5종, INSERT·UPDATE·DELETE·TRUNCATE와 NOT NULL·PK·FK·참조동작, 갱신 가능 뷰 DML, 내장 함수 전체와 NVL·TO_CHAR·TO_DATE, 파라미터 바인딩, 규칙 기반 인덱스 선택을 구현했다. 오류 번호 5000 ~ 5011 을 배정했다. `npm test` 273개, bun 222개 통과.
+- 2026-10-10 : 6단계 점검 보완. 다른 AI 가 만든 구현을 읽고 직접 실행하여 결함을 찾아 고쳤다. (1) 단일 필드 INTERVAL 리터럴 전부 실패 (2) INSERT·UPDATE 의 스칼라 서브쿼리 값이 `XX000` (3) `ADD COLUMN` 의 DEFAULT 가 기존 행에 반영되지 않고 NOT NULL 컬럼이 행이 있는 테이블에 추가됨 (4) `BEGIN`·`ROLLBACK` 이 성공으로 답하면서 되돌리지 않음 (5) 딕셔너리 뷰·`DUAL` 변경 시 "없는 객체" 오류 (6) 자기 조인의 한정 이름이 모호함 (7) PK·FK 검사의 O(n²). 회귀 테스트 9개(`test/exec/regression.test.ts`)를 더했고, 그중 6개는 수정 전 코드에서 실패함을 확인했다. `npm test` 282개(Node.js 24.21.0), bun 1.3.14 에서 231개와 `runtime-smoke.mjs` 통과. 내용은 "결정 사항" 의 "6단계 점검 보완".
 - 2026-10-11 : 7단계 구현 완료(남은 마무리 있음). 이전 작업이 오류로 중단된 지점(잠금 관리자·트랜잭션 파일이 반쯤 쓰이고 빌드가 깨진 상태)에서 이어받아 오버레이 방식의 트랜잭션을 완성했다.
   `txn/lockManager.ts`(행·PK·객체 배타 잠금, 대기열, 제한 시간, 교착 감지), `txn/transaction.ts`(오버레이, 되돌리기, 세이브포인트, 합쳐 읽기), `session/session.ts`(동기·비동기 실행, 트랜잭션·DDL 자동 커밋 규칙, 세션 닫기),
   `session/sessionManager.ts`(세션 목록, 유휴 종료), `exec/dml.ts`(잠금 후 오버레이에 접기, 커밋 때 쓰기와 FK 재확인, 인덱스 지우기 우선 쓰기), `exec/executor.ts`(FOR UPDATE 잠금과 제한), `daemon/server.ts`(Database 연결, 종료 때 롤백)를 구현했다.
   오류 번호 6000 ~ 6006 을 배정했다. 테스트 49개(`test/txn` 48개, 데몬 1개)를 추가해 `npm test` 322개(Node.js 24.21.0) 통과. 10개 세션 동시성 테스트(약 1.5 ~ 2초)를 포함한다.
   bun 확인, `SYS_SESSIONS` 연결, 설계 문서는 남아 있다. (현재 상태의 "7단계 남은 마무리")
-- 2026-10-10 : 6단계 완료. 식 계산과 3값 논리, 전체 조회 파이프라인(조인 5종·USING 병합, 집계·GROUP BY·HAVING, DISTINCT, 집합 연산, 정렬, 행 수 제한), 상관 서브쿼리 5종, INSERT·UPDATE·DELETE·TRUNCATE와 NOT NULL·PK·FK·참조동작, 갱신 가능 뷰 DML, 내장 함수 전체와 NVL·TO_CHAR·TO_DATE, 파라미터 바인딩, 규칙 기반 인덱스 선택을 구현했다. 오류 번호 5000 ~ 5011 을 배정했다. `npm test` 273개, bun 222개 통과.
+- 2026-10-11 : 병합 점검. 원격 커밋(`f39583f`)과 병합한 커밋(`9d50f23`)에 충돌 마커가 남아 빌드가 깨져 있었다. `session.ts`·`dml.ts` 의 충돌을 7단계 쪽으로 정리하고, `AlterTable` 의 컨텍스트 전달을 7단계 시그니처(`queryContext(params, txn)`)에 맞추었다. `dml.ts` 의 `pkEquals` 호출은 `tupleKey` 비교로 바꿨다. 이 문서의 6단계 점검 보완 기록이 병합 중 빠져 있어 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개를 7단계 동작으로 바꿨다. `npm test` 331개 통과, bun 330개 통과(`t.mock` 1개 제외).

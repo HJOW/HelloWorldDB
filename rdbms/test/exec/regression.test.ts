@@ -1,9 +1,9 @@
 /**
  * 6단계 점검에서 찾은 결함의 회귀 테스트.
  * INTERVAL 단일 필드 리터럴, DML 의 서브쿼리 값 대입, ALTER TABLE ADD COLUMN 의 DEFAULT·NOT NULL,
- * 7단계 전의 트랜잭션 문장, 읽기 전용 딕셔너리 객체, 자기 조인의 한정 이름, 집합 기반 제약 검사를 본다.
+ * 트랜잭션 문장이 성공을 알린 만큼 되돌리는지, 읽기 전용 딕셔너리 객체, 자기 조인의 한정 이름, 집합 기반 제약 검사를 본다.
  * 관련 사양 : AGENTS.md 상세 0, 1-1, 1-3, 1-4, 3, 10, 11
- * 구현 단계 : 6단계(점검 보완)
+ * 구현 단계 : 6단계(점검 보완), 7단계(트랜잭션 문장 연동)
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -134,20 +134,26 @@ test("DROP COLUMN 은 행과 인덱스를 다시 쓰고 실패하면 원래대�
   }
 });
 
-test("7단계 전에는 되돌릴 수 없는 트랜잭션 문장을 성공으로 알리지 않는다", (t) => {
+test("트랜잭션 문장은 성공을 알린 만큼 실제로 되돌리거나 커밋한다", (t) => {
   const { db, session } = setupApp(t);
   try {
     session.execute("CREATE TABLE T (A INTEGER)");
-    for (const sql of ["BEGIN", "START TRANSACTION", "ROLLBACK", "SAVEPOINT S1", "ROLLBACK TO S1", "RELEASE SAVEPOINT S1", "SET AUTOCOMMIT OFF"]) {
-      assert.throws(() => session.execute(sql), state("0A000"), sql);
-    }
-    assert.equal(session.autocommit, true);
-    // 문장마다 바로 커밋되므로 COMMIT 은 할 일이 없고, 자동 커밋과 READ COMMITTED 설정은 그대로 받는다.
+    // 자동 커밋을 끈 채 쓴 행은 ROLLBACK 으로 사라진다.
+    session.execute("SET AUTOCOMMIT OFF");
+    assert.equal(session.autocommit, false);
     session.execute("INSERT INTO T VALUES (1)");
-    session.execute("COMMIT");
+    session.execute("ROLLBACK");
+    assert.deepEqual(selectStrings(session.execute("SELECT COUNT(*) FROM T")).rows, [["0"]]);
+    // BEGIN 으로 연 트랜잭션에서는 세이브포인트 뒤의 변경만 되돌린다.
     session.execute("SET AUTOCOMMIT ON");
+    session.execute("BEGIN");
+    session.execute("INSERT INTO T VALUES (2)");
+    session.execute("SAVEPOINT S1");
+    session.execute("INSERT INTO T VALUES (3)");
+    session.execute("ROLLBACK TO S1");
+    session.execute("COMMIT");
+    assert.deepEqual(selectStrings(session.execute("SELECT A FROM T")).rows, [["2"]]);
     session.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-    assert.deepEqual(selectStrings(session.execute("SELECT COUNT(*) FROM T")).rows, [["1"]]);
   } finally {
     db.close();
   }
