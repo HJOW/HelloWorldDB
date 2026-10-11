@@ -11,11 +11,13 @@
  *  - 결과를 한꺼번에 만들지 않고, 요청하는 만큼씩 꺼내 갈 수 있게 한다.
  *
  * 식의 계산은 expression.ts, 함수는 functions.ts 에 맡긴다.
- * 6단계에서는 자동 커밋의 커밋된 데이터만 읽고 잠금은 걸지 않는다. (잠금은 7단계)
+ * 읽기는 커밋된 값에 자기 트랜잭션의 변경을 합쳐 본다. (READ COMMITTED, txn/transaction.ts)
+ * 잠금은 기다리지 않고 충돌하면 오류를 던진다. 기다림은 세션이 맡는다. (session/session.ts)
+ * FOR UPDATE 는 기반 테이블만 읽는 단순 SELECT 에서 쓸 수 있다. 그 밖은 0A000 이다.
  * 실행 계획은 규칙 기반이다. 앞쪽 컬럼의 동등·범위 조건에 인덱스를 쓴다.
  *
- * 관련 사양 : AGENTS.md 상세 1-4
- * 구현 단계 : 6단계
+ * 관련 사양 : AGENTS.md 상세 1-4, 10
+ * 구현 단계 : 6단계, 7단계(트랜잭션 연동)
  */
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
@@ -46,6 +48,10 @@ import type { IndexChoice } from "./planner.js";
 import { atInnerLevel, containsAggregate, evaluateCondition, evaluateExpression } from "./expression.js";
 import type { EvalContext, RowScope } from "./expression.js";
 import type { TypedValue } from "./functions.js";
+import type { Transaction } from "../txn/transaction.js";
+import { readMergedRows } from "../txn/transaction.js";
+import { lockConflict, rowLockKey } from "../txn/lockManager.js";
+import type { LockSink } from "../txn/lockManager.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -65,6 +71,13 @@ export interface QueryContext {
   readonly outerScopes: RowScope[];
   /** 뷰 전개의 순환을 막는다. */
   readonly viewStack: readonly string[];
+  /**
+   * 문장이 속한 트랜잭션이다. 자기 변경을 합쳐 읽고, 변경은 여기에 쌓는다.
+   * 자동 커밋 문장도 문장 하나짜리 트랜잭션 안에서 실행하며, 번호가 잠금 소유자를 겸한다.
+   */
+  readonly txn: Transaction;
+  /** 잠금 걸기이다. 실행기는 기다리지 않는다. 충돌하면 오류를 던지고 세션이 기다렸다가 문장을 다시 시도한다. */
+  readonly locker: LockSink;
 }
 
 /** 질의 결과이다. 값과 함께 열 이름과 타입을 돌려준다. */
@@ -87,16 +100,14 @@ interface OutputColumn {
 // 테이블 행 읽기
 // ---------------------------------------------------------------------------
 
-/** 테이블의 커밋된 행을 모두 읽는다. */
+/** 테이블의 행을 모두 읽는다. 트랜잭션이 있으면 커밋 값에 자기 변경을 합친다. */
 export function readTableRows(
   catalog: CatalogStore,
   table: StoredTable,
-): { id: RowId; values: SqlValue[] }[] {
-  const types = table.columns.map((column) => column.dataType);
-  return catalog.space.heap(table.heapRoot).scan().map((stored) => ({
-    id: stored.id,
-    values: decodeRow(stored.data, types),
-  }));
+  txn: Transaction | null = null,
+  tablespace = "",
+): { id: RowId | null; tempId: string | null; values: SqlValue[] }[] {
+  return readMergedRows(catalog, tablespace, table, txn);
 }
 
 /** 테이블의 컬럼 타입을 정의 순서대로 돌려준다. */
@@ -195,6 +206,7 @@ function executeScalar(query: Query, scopes: RowScope[], ctx: QueryContext): Typ
 
 /** 질의 하나를 실행한다. */
 export function executeQuery(query: Query, ctx: QueryContext): QueryResult {
+  if (query.forUpdate) checkForUpdateAllowed(query, ctx);
   const bodyResult = executeBody(query.body, ctx);
   const ordered = applyOrderAndLimit(
     bodyResult.columns,
@@ -205,7 +217,55 @@ export function executeQuery(query: Query, ctx: QueryContext): QueryResult {
     query.fetch,
     ctx,
   );
+  if (query.forUpdate) lockSelectedRows(ordered.sources, ctx);
   return { columns: ordered.columns, rows: ordered.rows };
+}
+
+/**
+ * FOR UPDATE 로 잠글 수 있는 질의인지 확인한다.
+ * 행을 그대로 돌려주지 않는 질의(집합 연산, DISTINCT, 집계)와 기반 테이블이 아닌 출처(뷰, 인라인 뷰)는
+ * 잠글 행을 정할 수 없으므로 조용히 넘기지 않고 0A000 으로 거부한다.
+ */
+function checkForUpdateAllowed(query: Query, ctx: QueryContext): void {
+  const body = query.body;
+  const reject = (what: string): never =>
+    fail("0A000", ERROR_CODES.FEATURE_NOT_SUPPORTED, `FOR UPDATE is not supported with ${what}.`);
+  if (body.kind !== "Select") return reject("set operations or parenthesized queries");
+  if (body.distinct) return reject("DISTINCT");
+  const hasAggregate = body.items.some((item) => item.kind === "Expression" && containsAggregate(item.expression)) ||
+    (body.having !== null && containsAggregate(body.having));
+  if (body.groupBy.length > 0 || hasAggregate) return reject("GROUP BY or aggregate functions");
+  const onlyTables = (source: BoundSource): boolean => {
+    switch (source.kind) {
+      case "table":
+      case "dual":
+      case "bare":
+        return true;
+      case "join":
+        return onlyTables(source.left) && onlyTables(source.right);
+      default:
+        return false;
+    }
+  };
+  for (const reference of body.from) {
+    const bound = bindSource(ctx.manager, reference, ctx.currentTablespace, ctx.viewStack);
+    if (!onlyTables(bound)) return reject("views, inline views or dictionary views");
+  }
+}
+
+/** 질의가 돌려주는 행이 읽은 저장 행을 모두 잠근다. 충돌하면 아무것도 잠그지 않고 오류를 던진다. */
+function lockSelectedRows(sources: CombinedRow[], ctx: QueryContext): void {
+  const keys: string[] = [];
+  for (const combined of sources) {
+    for (const scope of combined) {
+      if (scope.lockRef !== undefined) {
+        keys.push(rowLockKey(scope.lockRef.tablespace, scope.lockRef.table, scope.lockRef.rowId));
+      }
+    }
+  }
+  if (keys.length === 0) return;
+  const result = ctx.locker.tryAcquireAll(ctx.txn.id, keys);
+  if (!result.ok) throw lockConflict(result.key);
 }
 
 interface BodyResult {
@@ -517,26 +577,31 @@ function scanTable(
 ): RowScope[][] {
   const table = bound.def;
   const types = table.columns.map((column) => column.dataType);
-  // 상수 평가는 바깥 범위만으로 한다. 행의 열이 섞이면 null 로 보고 pushdown하지 않는다.
-  const choice = chooseIndex(bound.catalog, table, bound.alias ?? bound.table, where, (expression) => {
-    try {
-      return evaluateExpression(expression, evalContextFor([], ctx, true));
-    } catch {
-      return null;
-    }
-  });
-  if (choice !== null) {
-    try {
-      return scanWithIndex(bound, choice, types, ctx);
-    } catch {
-      // 인덱스 스캔에 실패하면 전체 스캔으로 돌아간다.
+  // 트랜잭션이 건드린 테이블은 인덱스를 타지 않고 합친 값으로 훑는다.
+  const touched = ctx.txn !== null && ctx.txn.touches(bound.tablespace, bound.table);
+  if (!touched) {
+    // 상수 평가는 바깥 범위만으로 한다. 행의 열이 섞이면 null 로 보고 pushdown하지 않는다.
+    const choice = chooseIndex(bound.catalog, table, bound.alias ?? bound.table, where, (expression) => {
+      try {
+        return evaluateExpression(expression, evalContextFor([], ctx, true));
+      } catch {
+        return null;
+      }
+    });
+    if (choice !== null) {
+      try {
+        return scanWithIndex(bound, choice, types, ctx);
+      } catch {
+        // 인덱스 스캔에 실패하면 전체 스캔으로 돌아간다.
+      }
     }
   }
-  return readTableRows(bound.catalog, table).map((stored) => [
+  return readTableRows(bound.catalog, table, ctx.txn, bound.tablespace).map((stored) => [
     {
       tablespace: bound.tablespace,
       table: bound.table,
       alias: bound.alias,
+      lockRef: stored.id === null ? undefined : { tablespace: bound.tablespace, table: bound.table, rowId: stored.id },
       slots: table.columns.map((column, index) => ({
         column: column.name,
         value: (stored.values[index] ?? null) as SqlValue,
@@ -615,6 +680,7 @@ function scanWithIndex(
         tablespace: bound.tablespace,
         table: bound.table,
         alias: bound.alias,
+        lockRef: { tablespace: bound.tablespace, table: bound.table, rowId: entry.rowId },
         slots: table.columns.map((column, index) => ({
           column: column.name,
           value: (values[index] ?? null) as SqlValue,
@@ -906,11 +972,13 @@ function applyOrderAndLimit(
   offset: Query["offset"],
   fetch: Query["fetch"],
   ctx: QueryContext,
-): { columns: { name: string; type: DataType }[]; rows: SqlValue[][] } {
+): { columns: { name: string; type: DataType }[]; rows: SqlValue[][]; sources: CombinedRow[] } {
   let orderedRows = rows;
+  let orderedSources = rowSources;
   if (orderBy.length > 0) {
     const keys = rows.map((row, index) => ({
       row,
+      source: (rowSources[index] ?? []) as CombinedRow,
       keys: orderBy.map((item) => evaluateOrderKey(item, columns, row, (rowSources[index] ?? []) as CombinedRow, ctx)),
     }));
     keys.sort((left, right) => {
@@ -928,6 +996,7 @@ function applyOrderAndLimit(
       return 0;
     });
     orderedRows = keys.map((entry) => entry.row);
+    orderedSources = keys.map((entry) => entry.source);
   }
   const offsetCount = offset === null ? 0n : limitValue(offset, ctx);
   if (offsetCount < 0n) {
@@ -938,10 +1007,13 @@ function applyOrderAndLimit(
     fail("22023", ERROR_CODES.TYPE_PARAMETER_INVALID, "FETCH count must not be negative.");
   }
   // LIMIT는 파서가 fetch로 바꾸어 둔다. (sql-syntax.md)
-  const limited = fetchCount === null
-    ? orderedRows.slice(Number(offsetCount))
-    : orderedRows.slice(Number(offsetCount), Number(offsetCount + fetchCount));
-  return { columns, rows: limited };
+  const from = Number(offsetCount);
+  const to = fetchCount === null ? undefined : Number(offsetCount + fetchCount);
+  return {
+    columns,
+    rows: orderedRows.slice(from, to),
+    sources: orderedSources.slice(from, to),
+  };
 }
 
 /** ORDER BY 식을 한 행에 적용한다. 출력 별칭이 출처 열보다 먼저이다. */
@@ -1138,9 +1210,9 @@ export function scanTableForDml(
   alias: string | null,
   where: Expression | null,
   ctx: QueryContext,
-): { id: RowId; values: SqlValue[]; scopes: RowScope[] }[] {
-  const stored = readTableRows(catalog, table);
-  const out: { id: RowId; values: SqlValue[]; scopes: RowScope[] }[] = [];
+): { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] {
+  const stored = readTableRows(catalog, table, ctx.txn, tablespace);
+  const out: { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] = [];
   for (const row of stored) {
     const scopes: RowScope[] = [{
       tablespace,
@@ -1155,7 +1227,7 @@ export function scanTableForDml(
     if (where !== null && evaluateCondition(where, evalContextFor(scopes, ctx, false)) !== true) {
       continue;
     }
-    out.push({ id: row.id, values: row.values, scopes });
+    out.push({ id: row.id, tempId: row.tempId, values: row.values, scopes });
   }
   return out;
 }

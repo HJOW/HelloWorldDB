@@ -23,6 +23,7 @@ import type {
   IntervalQualifier,
   Query,
 } from "../sql/ast.js";
+import type { RowId } from "../storage/format/format.js";
 import type { DataType } from "../types/dataType.js";
 import {
   BIGINT_TYPE,
@@ -85,6 +86,8 @@ export interface RowScope {
   readonly hidden?: readonly string[];
   /** 상관 서브쿼리의 바깥쪽과 안쪽을 구분한다. 클수록 안쪽이다. */
   readonly level?: number;
+  /** 저장된 커밋 행에서 온 범위이면 그 행의 위치이다. FOR UPDATE 가 잠글 대상을 찾는 데 쓴다. */
+  readonly lockRef?: { readonly tablespace: string; readonly table: string; readonly rowId: RowId };
 }
 
 /** 범위 안에서 보이는 열 하나이다. */

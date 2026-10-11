@@ -11,13 +11,14 @@
  *  - `SYS_` 로 시작하는 이름과 `DUAL` 은 SYSTEM 테이블스페이스에서 예약한다.
  *
  * 관련 사양 : AGENTS.md 상세 3
- * 구현 단계 : 5단계(뷰 제공), 8단계(권한에 따른 행 가시성)
+ * 구현 단계 : 5단계(뷰 제공), 7단계(SYS_SESSIONS), 8단계(권한에 따른 행 가시성)
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
 import { formatDataType, varcharType, integerType } from "../types/dataType.js";
 import type { DataType } from "../types/dataType.js";
 import type { SqlValue } from "../types/value.js";
+import type { SessionInfo } from "../session/sessionManager.js";
 import type { TablespaceManager } from "./tablespaceManager.js";
 
 /** 딕셔너리 뷰의 이름 목록이다. */
@@ -140,6 +141,8 @@ export function getDictionaryColumns(viewName: string): DictionaryColumn[] {
         { name: "SESSION_ID", dataType: integer() },
         { name: "USER_NAME", dataType: varchar(128) },
         { name: "TABLESPACE_NAME", dataType: varchar(128) },
+        { name: "AUTOCOMMIT", dataType: varchar(3) },
+        { name: "IN_TRANSACTION", dataType: varchar(3) },
       ];
     default:
       throw new DbError("42P01", ERROR_CODES.TABLE_NOT_FOUND, `Dictionary view does not exist: "${viewName}".`);
@@ -151,12 +154,22 @@ export function isDictionaryView(name: string): boolean {
   return (DICTIONARY_VIEW_NAMES as readonly string[]).includes(name);
 }
 
+/** 테이블스페이스 카탈로그 밖에서 오는 딕셔너리 뷰의 원천이다. */
+export interface DictionarySources {
+  /** SYS_SESSIONS 에 보일 세션 현황이다. */
+  sessions?: readonly SessionInfo[];
+}
+
 /**
  * 딕셔너리 뷰의 행을 만든다.
  * 5단계에서는 권한 가시성을 적용하지 않고 모두 보여 준다. (8단계에서 좁힌다)
- * 사용자와 권한, 세션 뷰는 아직 비어 있다.
+ * 사용자와 권한 뷰는 아직 비어 있다.
  */
-export function getDictionaryRows(manager: TablespaceManager, viewName: string): SqlValue[][] {
+export function getDictionaryRows(
+  manager: TablespaceManager,
+  viewName: string,
+  sources: DictionarySources = {},
+): SqlValue[][] {
   switch (viewName) {
     case "SYS_TABLESPACES": {
       return manager.listStatus().map((status) => [
@@ -319,10 +332,19 @@ export function getDictionaryRows(manager: TablespaceManager, viewName: string):
       rows.sort(compareRows);
       return rows;
     }
-    case "SYS_PRIVILEGES":
-    case "SYS_GROUP_GRANTS":
     case "SYS_SESSIONS": {
-      // 8단계(권한)와 9단계(세션)에서 채운다.
+      // 현재 접속 중인 세션이다. 권한에 따른 가시성은 8단계에서 좁힌다.
+      return (sources.sessions ?? []).map((session) => [
+        BigInt(session.id),
+        session.user,
+        session.tablespace,
+        session.autocommit ? "YES" : "NO",
+        session.inTransaction ? "YES" : "NO",
+      ]);
+    }
+    case "SYS_PRIVILEGES":
+    case "SYS_GROUP_GRANTS": {
+      // 8단계(권한)에서 채운다.
       return [];
     }
     default:

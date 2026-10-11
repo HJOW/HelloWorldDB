@@ -24,7 +24,7 @@ import { RDBMS_VERSION } from "../common/instance.js";
 import type { Logger } from "../common/logger.js";
 import { acquireLock, readLockFile, releaseLock } from "./lockFile.js";
 import type { LockFileContent } from "./lockFile.js";
-import { TablespaceManager } from "../catalog/tablespaceManager.js";
+import { Database } from "../session/session.js";
 
 /** 상태 조회에 답할 정보이다. 세션 수는 통신(9단계)이 붙기 전에는 0이다. */
 export interface ServerStatus {
@@ -50,7 +50,7 @@ export class Server {
   private running = false;
   private startedAt = "";
   private lock: LockFileContent | undefined;
-  private tablespaces: TablespaceManager | undefined;
+  private database: Database | undefined;
 
   constructor(config: ResolvedConfig, logger: Logger) {
     this.config = config;
@@ -78,8 +78,11 @@ export class Server {
       // SYSTEM 이 없으면 새로 만들고, 있으면 열어 목록의 나머지를 함께 연다.
       // SYSTEM 이 손상되었으면 구동에 실패한다. 나머지는 사용 불가로 두고 구동한다.
       try {
-        this.tablespaces = TablespaceManager.open(this.config.dataDir, {
+        this.database = Database.open(this.config.dataDir, {
           onWarning: (message) => this.logger.warn(message),
+          timeZone: this.config.timeZone,
+          lockTimeoutMs: this.config.transaction.lockTimeoutMs,
+          idleTimeoutMs: this.config.session.idleTimeoutMs,
         });
       } catch (error) {
         throw error instanceof StartupError || error instanceof Error
@@ -94,11 +97,11 @@ export class Server {
       );
     } catch (error) {
       try {
-        this.tablespaces?.close();
+        this.database?.close();
       } catch {
         // 닫기 오류는 원래 오류를 가리지 않는다.
       }
-      this.tablespaces = undefined;
+      this.database = undefined;
       releaseLock(this.config.dataDir, this.lock);
       this.lock = undefined;
       this.running = false;
@@ -116,15 +119,15 @@ export class Server {
     }
     try { this.logger.info("Shutting down the server."); }
     finally {
-      // 저장소/세션을 연결한 뒤 : 새 접속 차단 → 진행 중인 트랜잭션 롤백
-      //                          → 데이터 파일 반영(fsync) → 정상 종료 표시 기록.
-      // 5단계에서는 테이블스페이스를 닫아 정상 종료 표시를 쓴다.
+      // 새 접속 차단 → 진행 중인 트랜잭션 롤백 → 데이터 파일 반영(fsync) → 정상 종료 표시 기록.
+      // Database.close 가 세션을 모두 닫아(커밋하지 않은 변경은 롤백) 새 세션을 막은 뒤
+      // 테이블스페이스를 닫아 정상 종료 표시를 쓴다. 통신(9단계)은 이 앞에서 접속 수신을 먼저 닫는다.
       try {
-        this.tablespaces?.close();
+        this.database?.close();
       } catch {
         // 닫기 중 하나의 실패가 잠금 해제를 막지 않는다.
       }
-      this.tablespaces = undefined;
+      this.database = undefined;
       releaseLock(this.config.dataDir, this.lock);
       this.lock = undefined;
       this.running = false;
@@ -143,8 +146,13 @@ export class Server {
       dataDir: this.config.dataDir,
       tcpEnabled: this.config.tcp.enabled,
       udpEnabled: this.config.udp.enabled,
-      sessionCount: 0,
+      sessionCount: this.database?.sessions.count ?? 0,
     };
+  }
+
+  /** 구동 중인 데이터베이스이다. 통신 계층(9단계)이 세션을 만들 때 쓴다. 구동 중이 아니면 undefined 이다. */
+  getDatabase(): Database | undefined {
+    return this.database;
   }
 
   /** 구동 중인지 확인한다. */

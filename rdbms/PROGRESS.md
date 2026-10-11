@@ -6,11 +6,40 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-10
-- 진행 단계 : 1 ~ 6단계 완료. (프로젝트 기반, 저장 엔진, 타입 시스템, SQL 파서, 카탈로그와 DDL, 질의 실행)
+- 최종 갱신 : 2026-10-11
+- 진행 단계 : 1 ~ 6단계 완료. 7단계(트랜잭션과 동시성)는 구현과 테스트를 마쳤고 완료 기준(10개 세션 동시성 테스트)을 채웠다. 아래 "7단계 남은 마무리"가 남아 있어 단계를 닫지는 않았다.
 - 착수 조건 : 없음
-- 다음 작업 : 7단계 트랜잭션과 동시성. 세션 상태와 커밋·롤백·세이브포인트, 행 잠금과 교착 감지, READ COMMITTED, 10개 세션 동시성 테스트를 붙인다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 273개 통과, Bun 1.4.2에서 222개(`bun test dist/test/exec/ dist/test/types/ dist/test/sql/ dist/test/catalog/`) 통과. 저장 엔진의 `test/storage/runtime-smoke.mjs`도 Node.js/bun 양쪽에서 다시 통과했다.
+- 다음 작업 : "7단계 남은 마무리"를 처리한 뒤 8단계(계정과 권한)에 착수한다. 7단계 설계의 요약은 "결정 사항"의 7단계 항목, 코드를 이어받을 때의 주의는 "인수인계 사항"의 7단계 항목에 있다.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 322개 통과(6단계의 273개 + 7단계 49개). 빌드에 오류와 경고가 없다.
+  Bun 은 6단계 시점(222개)에 확인했고 7단계 코드로는 아직 돌려 보지 않았다. (남은 마무리에 포함)
+
+### 7단계 남은 마무리
+
+8단계 착수 전에 처리한다. 모두 작은 작업이며 구조를 바꾸지 않는다.
+
+- [ ] bun 확인 : `bun test dist/test/txn/ dist/test/exec/ dist/test/catalog/ dist/test/daemon/` 가 통과하는지 본다. 동시성 테스트는 `setTimeout`, `setImmediate`, Promise 순서에 기대므로 bun 에서 따로 확인해야 한다.
+- [ ] `SYS_SESSIONS` 연결을 끝낸다. `catalog/dictionaryViews.ts` 는 컬럼(`SESSION_ID`, `USER_NAME`, `TABLESPACE_NAME`, `AUTOCOMMIT`, `IN_TRANSACTION`)과 `getDictionaryRows(manager, view, { sessions })` 의 세 번째 인자까지 받도록 고쳐 두었다.
+  남은 일은 두 가지이다. `QueryContext` 에 `sessions?: () => readonly SessionInfo[]` 를 추가해 `Session.queryContext` 가 `this.database.sessions.list()` 를 넘기게 하고,
+  `exec/executor.ts` 에서 행을 만드는 `case "dictionary"`(`getDictionaryRows(ctx.manager, bound.view)` 를 부르는 곳 하나)가 `{ sessions: ctx.sessions?.() }` 를 넘기게 한다. 열 정보만 쓰는 `typeScopesOf` 쪽은 고칠 필요가 없다.
+  그 뒤 `SELECT * FROM SYSTEM.SYS_SESSIONS` 로 세션 수와 `IN_TRANSACTION` 이 맞는지 보는 테스트를 `test/txn/` 에 추가한다. 지금은 이 뷰가 빈 결과이며 컬럼만 늘어난 상태이다.
+- [ ] `exec/executor.ts` 의 `scanTable` 에 남은 `ctx.txn !== null &&` 는 `txn` 이 항상 있으므로 불필요하다. 지운다.
+- [ ] `test/exec/query.test.ts` 의 "FOR UPDATE는 잠금 없이 읽는다" 는 제목이 이제 맞지 않는다. "자동 커밋에서 FOR UPDATE 는 읽고 바로 푼다" 로 바꾼다. (동작은 통과한다)
+- [ ] `docs/transactions.md` 를 쓴다. 지금은 설계가 `txn/transaction.ts`, `txn/lockManager.ts`, `session/session.ts`, `exec/dml.ts` 의 머리 주석과 이 문서의 "결정 사항"에만 있다. 오버레이 구조, 잠금 키 종류, 커밋 순서, 기다림의 처리를 한 문서로 모은다.
+- [ ] `docs/storage-v1.md` 의 "7단계 SQL 트랜잭션은 행 변경을 보관했다가 커밋 직전 최신 페이지 위에 적용해야 한다" 항목에 "7단계에서 오버레이 방식으로 구현했다" 를 덧붙인다.
+- [ ] 아래 "알려진 한계"를 읽고 8단계 이후에 손볼 것이 있는지 정한다.
+
+### 7단계 알려진 한계
+
+사양을 어기는 것은 없다. 단순함을 위해 보수적으로 동작하는 부분이다.
+
+- 삭제 중인 행의 PK 를 다른 트랜잭션이 다시 넣으려 하면 기다리지 않고 바로 `23505` 가 난다. (삭제가 커밋되기 전에는 커밋된 행이 아직 보이므로)
+- `ROLLBACK TO SAVEPOINT` 는 변경은 되돌리지만 그 뒤에 얻은 행 잠금은 트랜잭션이 끝날 때까지 쥐고 있다.
+- 잠금은 전부 배타 잠금이다. FK 의 부모 행을 읽는 것만으로는 잠그지 않고, 대신 커밋 직전에 FK 를 다시 확인한다. (`exec/dml.ts` 의 `revalidateReferences`)
+  그래서 부모를 지우는 트랜잭션과 자식을 넣는 트랜잭션이 겹치면 한쪽이 커밋에서 `23503` 으로 실패한다. 기다리게 하는 방식이 아니다.
+- 테이블스페이스를 둘 이상 건드린 트랜잭션의 커밋은 테이블스페이스마다 배치 하나씩이며 서로 원자적이지 않다. (사양 12 의 "커밋 도중 중단" 범위. WAL 이 없다)
+- 한 문장이 읽고 쓰는 테이블 전체를 메모리 이미지로 읽는다. (6단계부터의 방식) 큰 테이블에서는 느리다. 성능 개선은 계획에 없다.
+- 동기 `Session.execute` 와 비동기 `Session.executeAsync` 를 같은 세션에서 섞어 쓰면 안 된다. 비동기 문장이 기다리는 동안의 동기 호출은 막지 않는다.
+- 트랜잭션 크기는 메모리에 제한된다. (사양 10 이 인정한 제한)
 
 ## 작업 규칙
 
@@ -21,7 +50,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을 붙었다. 인증, 통신, 트랜잭션은 아직 뼈대이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를 붙였다. 인증, 통신은 아직 뼈대이다.
 
 ```
 rdbms/
@@ -72,11 +101,13 @@ rdbms/
       parser.ts            구문 분석. parseStatement, 예약어 목록, 깊이 한도
     catalog/             catalog.ts(정의 저장과 의존 추적), tablespaceManager.ts(목록과 파일 관리),
                          bootstrap.ts(SYSTEM 최초 생성), dictionaryViews.ts(12개 뷰와 컬럼 정의)
-    session/             session.ts(SQL 실행의 입구, Database 와 Session), sessionManager.ts(9단계용 뼈대)
+    session/             session.ts(SQL 실행의 입구, Database 와 Session, 동기 execute 와 비동기 executeAsync, 트랜잭션 문장),
+                         sessionManager.ts(세션 목록, 유휴 세션 종료, 전체 종료. 접속 수 제한과 로컬 판정은 9단계)
     exec/                ddl.ts(테이블·뷰·인덱스 DDL 실행), analyzer.ts(이름 해석과 뷰 전개, 갱신 가능 판정),
                          planner.ts(규칙 기반 인덱스 선택), expression.ts(식 계산과 3값 논리),
                          functions.ts(내장 함수와 집계), executor.ts(조회 실행), dml.ts(INSERT·UPDATE·DELETE·TRUNCATE)
-    txn/                 transaction.ts, lockManager.ts
+    txn/                 transaction.ts(트랜잭션의 미커밋 변경 오버레이, 되돌리기 기록, 세이브포인트, 커밋 값과 합쳐 읽기),
+                         lockManager.ts(행·PK·객체 배타 잠금, 대기열, 제한 시간, 교착 감지)
     auth/                scram.ts, users.ts, privileges.ts
     net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
                          tcpServer.ts, udpServer.ts, localChannelServer.ts
@@ -84,6 +115,9 @@ rdbms/
     smoke.test.ts          프로젝트 구성 확인용
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
+    txn/                   트랜잭션 테스트. lockManager(잠금 단위), transaction(커밋·롤백·세이브포인트·가시성·동기 잠금 충돌·DDL),
+                           concurrency(비동기 대기·제한 시간·교착, 10개 세션 동시성). exec/helpers.ts 를 함께 쓴다
+    daemon/                server.test.ts 에 정상 종료 때의 트랜잭션 롤백 테스트가 있다
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
@@ -209,15 +243,21 @@ rdbms/
 
 ### 7단계. 트랜잭션과 동시성
 
-- [ ] 세션 상태 : 자동 커밋, 진행 중인 트랜잭션, 현재 테이블스페이스, 타임존
-- [ ] 커밋, 롤백, 세이브포인트, 실패한 문장만 되돌리기 (상세 10)
-- [ ] DDL 등 자동 커밋되는 문장 처리
-- [ ] 행 잠금, `SELECT ... FOR UPDATE`, 잠금 대기 제한, 교착 감지
-- [ ] READ COMMITTED : 커밋된 값과 자기 변경만 읽는다. 조회와 변경이 서로를 기다리게 하지 않는다
-- [ ] 커밋 시 디스크 반영(fsync) 후 응답
-- [ ] DDL 과 진행 중인 트랜잭션이 같은 객체에서 만났을 때의 처리
-- [ ] 10개 세션 동시성 테스트 (상세 9)
-- 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과.
+- [x] 세션 상태 : 자동 커밋, 진행 중인 트랜잭션, 현재 테이블스페이스, 타임존
+- [x] 커밋, 롤백, 세이브포인트, 실패한 문장만 되돌리기 (상세 10)
+- [x] DDL 등 자동 커밋되는 문장 처리
+- [x] 행 잠금, `SELECT ... FOR UPDATE`, 잠금 대기 제한, 교착 감지
+- [x] READ COMMITTED : 커밋된 값과 자기 변경만 읽는다. 조회와 변경이 서로를 기다리게 하지 않는다
+- [x] 커밋 시 디스크 반영(fsync) 후 응답 (저장 배치 커밋이 fsync 를 마친 뒤 돌아온다)
+- [x] DDL 과 진행 중인 트랜잭션이 같은 객체에서 만났을 때의 처리
+- [x] 10개 세션 동시성 테스트 (상세 9)
+- [x] 세션 목록, 유휴 세션 종료(`session.idleTimeoutMs`), 세션을 닫을 때의 롤백, 데몬 정상 종료 때의 롤백
+- [ ] 남은 마무리 : 현재 상태 절의 "7단계 남은 마무리" 참고 (bun 확인, `SYS_SESSIONS` 연결, 문서)
+- 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과. (충족)
+  (`test/txn` 48개 + 데몬 1개. 잠금 관리자 단위 11개, 트랜잭션 시나리오 24개, 비동기 대기·제한 시간·교착·세션 종료 중 대기 12개, 10개 세션 동시성 1개.
+  동시성 테스트는 세션 10개가 각각 15회 이체 트랜잭션(두 계좌 갱신 + 카운터 + 로그 삽입)을 하고 매번 합계 조회를 하며, 계좌 1·2 를 서로 반대 방향으로 오가게 해 교착을 부추긴다.
+  교착이나 대기 초과가 나면 롤백하고 다시 한다. 끝난 뒤 계좌 합계, 카운터, 로그 건수, "같은 키를 모든 세션이 차지하려 해도 한 세션만 성공" 을 확인하고, 대기와 잠금이 남지 않은 것과 재구동 뒤 값이 같은 것을 본다.
+  이 테스트는 세션을 프로세스 안에서 직접 쓰므로 네트워크를 거친 동시성은 11단계에서 다시 본다.)
 
 ### 8단계. 계정과 권한
 
@@ -292,6 +332,8 @@ SQL 접속 (상세 14-2)
 - bun 에서 프로세스를 분리해 띄우는 동작이 Node.js 와 같은지 (10단계에서 실제로 확인)
 - 잠금 파일에 적힌 PID 를 운영체제가 다른 프로세스에 다시 쓴 경우의 처리 (10단계). PID 만 보면 구동 중으로 잘못 판단하므로 로컬 전용 채널 응답도 함께 확인해야 한다.
 - 구버전 TLS 허용 (9단계). 최신 Node.js 의 OpenSSL 은 TLS 1.0 을 쓰려면 최소 버전 외에 보안 수준 설정도 낮춰야 할 수 있다. 실제 자바 5, 6 클라이언트 접속 확인은 `jdbc5` 단계에서 한다.
+- 동시 접속 부하에서의 교착 감지 확인 (11단계). 7단계 동시성 테스트는 한 프로세스 안의 비동기 세션이며, 같은 테이블의 두 계좌를 반대 방향으로 갱신하는 교착 시나리오는 별도 테스트와 임시 점검(150건 중 교착 5건, 합계 유지)으로만 보았다. 10개 세션 테스트가 교착을 매번 만들어 내지는 않는다.
+- 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 8단계 이후에 정한다.
 - 잠금 생성 가드(`helloworlddb.lock.acquire`) 안에서 강제 종료되어 가드가 남는 경우의 정리(10단계). 현재는 동시 점유 방지를 위해 구동에 실패시킨다. 관리자가 관련 데몬이 없는지 확인한 뒤 빈 가드 디렉토리를 제거해야 한다. 일반 구동 후 남은 잠금 파일은 죽은 PID를 확인해 재사용한다.
 
 ## 결정 사항
@@ -343,7 +385,7 @@ SQL 접속 (상세 14-2)
   - `ADD COLUMN`은 기존 행을 다시 쓰지 않는다. 행 형식에 컬럼 수를 앞에 두므로 저장된 컬럼이 적으면 뒤쪽을 NULL 로 읽는다. 기본값이 있는 컬럼을 추가해도 기존 행에는 NULL 로 보이며, 6단계의 조회가 DEFAULT 를 채울 때 함께 정한다. `DROP COLUMN`의 행 다시 쓰기도 6단계이다.
   - FK 타입 일치는 `formatDataType` 표기가 같은지로 본다. 같은 테이블스페이스의 PK 만 참조할 수 있으며 컬럼 수와 순서가 맞아야 한다.
   - `SYS_` 와 `DUAL` 예약은 SYSTEM 에서만 막는다. 다른 테이블스페이스에서는 같은 이름의 사용자 객체가 먼저이며, 없을 때만 딕셔너리·DUAL 로 푼다.
-  - 딕셔너리 12개 뷰의 컬럼은 `catalog/dictionaryViews.ts`에 고정했다. `SYS_USERS`, `SYS_PRIVILEGES`, `SYS_GROUP_GRANTS`, `SYS_SESSIONS`는 8~9단계까지 비어 있다. `DUAL`은 저장하지 않는 가상 한 행(`DUMMY VARCHAR(1) = 'X'`)이다.
+  - 딕셔너리 12개 뷰의 컬럼은 `catalog/dictionaryViews.ts`에 고정했다. `SYS_USERS`, `SYS_PRIVILEGES`, `SYS_GROUP_GRANTS`는 8단계까지 비어 있다. `SYS_SESSIONS`는 7단계에서 컬럼을 5개로 늘렸고(아래 7단계 항목) 내용 연결은 "7단계 남은 마무리"에 있다. `DUAL`은 저장하지 않는 가상 한 행(`DUMMY VARCHAR(1) = 'X'`)이다.
   - DDL 오류 번호 4000 ~ 4017 을 배정했다. `3D000` 테이블스페이스 없음, `42P06` 중복, `42P07` 중복 테이블·뷰, `42P01` 없음, `42701`·`42703` 컬럼 중복·없음, `42710`·`42704` 제약·인덱스 중복·없음, `42P16`·`42P17` 잘못된 정의, `55006` 사용 중, `42602` 예약 이름, `54011` 컬럼 초과이다.
   - 세션의 SELECT 는 5단계에서 딕셔너리·DUAL·FROM 없는 리터럴만 받는다. `WHERE`, `ORDER BY`, 행 수 제한, 조인, 집합 연산은 `0A000`으로 알리고 6단계에서 푼다.
   - 데몬(`daemon/server.ts`)은 구동 때 `TablespaceManager.open`으로 SYSTEM 과 목록을 함께 열고, 종료 때 닫아 정상 종료 표시를 쓴다. SYSTEM 이 손상되면 구동에 실패하고 나머지는 사용 불가로 두고 구동한다.
@@ -353,15 +395,44 @@ SQL 접속 (상세 14-2)
   - 범위에는 깊이를 둔다. 안쪽이 바깥을 가리고 같은 깊이에 둘이면 `42702`이다. USING 병합 열은 오른쪽에서 가리고, 바깥 조인에서 비는 쪽의 병합 열은 살아 있는 쪽 값으로 채운다.
   - 뷰 안의 생략된 이름은 뷰의 테이블스페이스에서 찾는다. 뷰 순환은 `42P17`이다.
   - GROUP BY 검사는 집계 없는 식 전체가 GROUP BY 식과 같거나(예 : `GROUP BY SUBSTRING`의 그 식), 집계 안의 바깥 열이 GROUP BY에 있어야 한다. 상수는 항상 된다.
-  - DML은 문장 단위 메모리 이미지로 NOT NULL·PK·FK를 검사하고 CASCADE·SET NULL을 끝까지 적용한 뒤 테이블스페이스마다 배치 하나로 쓴다. 한 배치를 여러 이미지가 공유하여 저장 충돌(`40001`)이 나지 않게 한다.
+  - DML은 문장 단위 메모리 이미지로 NOT NULL·PK·FK를 검사하고 CASCADE·SET NULL을 끝까지 적용한다. (6단계에서는 이어서 테이블스페이스마다 배치 하나로 바로 썼고, 7단계부터는 트랜잭션 오버레이에 접은 뒤 커밋 때 쓴다. 한 배치를 여러 이미지가 공유하여 저장 충돌(`40001`)이 나지 않게 하는 점은 같다)
   - TRUNCATE는 참조하는 자식 행이 있으면 `23503`이다. `ALTER ... SET NOT NULL`과 PK·FK 추가, `DROP COLUMN`(힙 다시 쓰기와 인덱스 재구축)은 기존 행을 검사한다.
   - 인덱스 선택은 앞쪽 컬럼의 동등 묶음에 범위 하나이며, DESC 컬럼의 하한·상한을 뒤집는다. `CREATE INDEX`와 PK 추가는 기존 행을 백필한다.
   - 함수 결과 타입 : `POWER`·`SQRT`는 DOUBLE, `AVG`는 DECIMAL(38,6)·DOUBLE, `TO_CHAR`는 VARCHAR(4000), `TO_DATE`는 TIMESTAMP(0), `ROUND`는 소수 자릿수에 맞춘다. 날짜 요소(YYYY, YY, MM, DD, HH24, HH12, HH, MI, SS, FF1~FF6, AM, PM, 큰따옴표 고정 문자열)와 숫자 요소(9, 0, ., ,, FM)를 받으며, 넘치면 `#`으로 적는다. `YY`는 2000년대로 읽는다.
   - `LIKE`는 코드 포인트 단위로 견주며, `SUBSTR`의 음수 시작은 뒤에서 센다.
   - `?`는 문자열이면 문맥 타입으로, 아니면 `assignValue`로 맞춘다. 개수 불일치는 `07001`(5008)이다. DML 결과에 `rowCount`를 함께 둔다.
   - 실행 오류 번호 5000 ~ 5011 을 배정했다. `42702` 모호한 열, `42883` 정의되지 않은 함수·잘못된 인자, `21000` 스칼라 서브쿼리 행 수, `23502` NOT NULL, `23503` FK, `42803` GROUP BY, `07001` 파라미터, `42601` INSERT 값 개수(5011), `42804` 집합 연산 불일치(5010)이다. TO_DATE 형식 불일치는 `22007`이다.
-  - `SELECT ... FOR UPDATE`는 6단계에서 잠금 없이 읽는다. `UNION ALL` 사슬은 왼쪽부터 재귀로 풀며, 구문 트리 한도(1,000) 안에서는 스택이 넘치지 않는다.
+  - `SELECT ... FOR UPDATE`는 6단계에서 잠금 없이 읽었고 7단계에서 실제 잠금을 건다. `UNION ALL` 사슬은 왼쪽부터 재귀로 풀며, 구문 트리 한도(1,000) 안에서는 스택이 넘치지 않는다.
   - DbError가 아닌 예외는 세션 입구에서 내부 오류(`XX000`)로 바꾸어 응답한다.
+- 7단계에서 정한 사항이다. 구조는 코드의 머리 주석(`txn/transaction.ts`, `txn/lockManager.ts`, `session/session.ts`, `exec/dml.ts`)에도 있다.
+  - 미커밋 변경은 데이터 파일에 쓰지 않고 트랜잭션이 메모리에 가진 오버레이(테이블마다 새로 넣은 행, 바꾼 커밋 행, 지운 커밋 행)에만 둔다. 읽을 때 커밋 값에 자기 오버레이를 덮어 보이고(READ COMMITTED, `readMergedRows`), 커밋할 때 짧은 저장 배치로 쓴다.
+    쓰는 순간에는 다른 문장이 끼어들 수 없어(한 스레드, 동기 실행) 저장 배치의 `40001` 충돌이 생기지 않는다. 사양 상세 10 의 "커밋되지 않은 변경은 데이터 파일에 쓰지 않는다" 와 같다.
+  - 자동 커밋 문장도 문장 하나짜리 트랜잭션 안에서 실행하고 문장 직후 커밋한다. 데이터 문장(SELECT·INSERT·UPDATE·DELETE)은 같은 경로를 쓰므로 `QueryContext.txn` 은 항상 있다.
+  - 문장은 처음부터 끝까지 한 번에(동기로) 실행하고, 기다림은 문장과 문장 사이에서만 한다. 문장이 잠금 충돌을 만나면 그 문장의 변경을 되돌리고 충돌 오류(`55P03`, 충돌한 키를 담은 `LockConflictError`)를 던진다.
+    `Session.execute`(동기)는 그대로 실패하고, `Session.executeAsync`(비동기)는 `lockTimeoutMs` 까지 그 키가 풀리기를 기다렸다가 **문장을 처음부터 다시 실행**한다. 그래서 기다린 쪽은 커밋된 새 값을 읽는다.
+    한 문장은 일관된 커밋 상태에서 읽고 쓰므로 읽은 값과 건 잠금 사이에 다른 트랜잭션이 끼어들지 않는다. 잠금은 문장 끝에서 대상 행 전부를 한꺼번에 걸고(전부 걸리거나 하나도 안 걸림), 그 뒤 오버레이에 접는다.
+  - 잠금 키는 세 종류이다. `R` 행(저장된 커밋 행을 바꾸거나 지우거나 FOR UPDATE 할 때), `K` PK 값(새 행을 넣거나 PK 를 바꿀 때. 같은 PK 를 동시에 넣으려는 쪽끼리 순서가 정해진다), `O` 객체(DDL 이 테이블 하나에 건다).
+    객체 잠금은 같은 테이블의 행·PK 잠금과 서로 충돌한다. 모든 잠금은 배타이고 같은 소유자는 다시 걸 수 있다. 소유자는 트랜잭션 번호이며 DDL 문장도 자기 번호를 받는다.
+  - 교착은 대기열에 들 때 대기 그래프(잠금 보유자와 같은 대기열에서 앞선 대기자)를 따라 고리를 찾아 감지한다. 고리를 닫은 쪽(방금 기다리려던 쪽)이 희생자이며, 그 트랜잭션을 통째로 롤백하고 `40P01` 을 알린다. 대기 초과는 `55P03` 이고 그 문장만 실패한다.
+  - 읽은 값은 잠그지 않는다. 일반 SELECT 는 기다리지 않는다. `SELECT ... FOR UPDATE` 는 돌려주는 행(ORDER BY·OFFSET·FETCH 적용 뒤)의 저장 행에 행 잠금을 건다. 자동 커밋에서는 문장이 끝나면 풀린다.
+    행을 그대로 돌려주지 않거나 기반 테이블이 아닌 출처를 쓰는 질의(DISTINCT, GROUP BY, 집계, 집합 연산, 괄호 질의, 뷰, 인라인 뷰, 딕셔너리 뷰)의 FOR UPDATE 는 조용히 넘기지 않고 `0A000` 이다. 기반 테이블끼리의 조인은 된다.
+  - 자기 트랜잭션이 건드린 테이블은 인덱스를 타지 않고 합친 행을 전체 스캔한다. 커밋 때 인덱스까지 함께 쓰므로 커밋 뒤에는 인덱스 조회도 새 값을 본다. 인덱스 항목은 커밋 때 지운 행과 바꾸기 전 값을 먼저 모두 지운 뒤 새 항목을 넣는다.
+    (같은 PK 를 지우고 다시 넣거나 PK 값을 맞바꾸어도 유일 인덱스에서 부딪치지 않는다)
+  - 커밋 때의 검사 두 가지. 1) 오버레이를 만들 때 적어 둔 테이블 정의 서명(컬럼 이름·타입, 힙 루트)이 지금과 같은지 본다. 다르거나 테이블이 없으면 `40001` 이고 트랜잭션은 롤백된다. PK 가 없는 테이블의 삽입은 잠금이 없어 DDL 과 부딪치지 않으므로 이 검사가 막는다.
+    2) 여러 문장 트랜잭션(명시적 트랜잭션, 자동 커밋 OFF)에서 FK 로 엮인 테이블의 FK 를 커밋 값 + 자기 변경 기준으로 다시 확인한다. 어기면 `23503` 이고 롤백된다. 문장 하나짜리 트랜잭션은 문장과 커밋 사이에 끼어들 틈이 없어 생략한다.
+  - 트랜잭션 문장의 규칙 : `BEGIN` 은 이미 트랜잭션이 있으면 `25001`, 없는 곳에서 `SAVEPOINT`·`ROLLBACK TO`·`RELEASE` 는 `25P01`(단, 자동 커밋 OFF 이면 `SAVEPOINT` 가 트랜잭션을 시작한다), 없는 세이브포인트는 `3B001`.
+    `COMMIT`·`ROLLBACK` 은 트랜잭션이 없어도 오류가 아니다. `SET AUTOCOMMIT ON` 은 진행 중인 트랜잭션을 커밋한다(MySQL 과 같음). `ROLLBACK TO` 는 세이브포인트를 남기고 그 뒤의 세이브포인트만 지운다.
+    SELECT 도 자동 커밋 OFF 에서는 트랜잭션을 시작한다. `SET TRANSACTION ISOLATION LEVEL` 은 READ COMMITTED 만 받는다. (파서 단계 규칙)
+  - DDL(테이블스페이스·테이블·뷰·인덱스·TRUNCATE)은 실행 전에 진행 중인 트랜잭션을 커밋하고(커밋이 실패하면 DDL 은 실행하지 않는다), 대상 테이블과 FK 로 엮인 테이블에 객체 잠금을 걸어 실행한 뒤 푼다.
+    다른 트랜잭션이 그 테이블의 행을 잠그고 있으면 동기 실행은 `55P03`, 비동기 실행은 기다린다. `DROP TABLESPACE` 는 그 안의 모든 테이블에 건다. 새로 만드는 객체는 잠그지 않는다. 실패한 DDL 도 앞선 커밋은 되돌리지 않는다.
+  - 세션 : 번호(`id`)와 `lastActivity` 를 가지며 `Session.close(reason)` 이 커밋하지 않은 변경을 롤백하고 잠금을 풀고 대기를 취소(`08003`)한다. 닫힌 세션의 `execute` 는 `08003`.
+    `SessionManager` 가 세션 목록과 유휴 세션 종료(`sweepIdle`, `idleTimeoutMs` > 0 이면 주기 타이머, `unref`)와 `closeAll` 을 맡는다. `Database.close()` 는 세션을 모두 닫고(이유 `shutdown`) 새 세션을 막은 뒤(`57P01`) 테이블스페이스를 닫는다.
+    같은 세션의 비동기 문장은 호출 순서대로 하나씩 처리한다. (줄 세우기) 그래서 문장이 잠금을 기다리는 동안 같은 세션의 다음 문장도 기다린다. 다른 세션으로 조회해야 한다.
+  - 데몬(`daemon/server.ts`)은 이제 `TablespaceManager` 대신 `Database` 를 연다. `config.json` 의 `timeZone`, `transaction.lockTimeoutMs`, `session.idleTimeoutMs` 를 넘기고, `stop()` 은 `Database.close()` 로 트랜잭션을 롤백한 뒤 정상 종료 표시를 쓴다. `getDatabase()` 를 9단계가 쓴다. 상태 조회의 세션 수는 `sessions.count` 이다.
+  - 오류 번호 6000 ~ 6006 을 배정했다. 6000 `55P03` 잠금 대기 초과·충돌, 6001 `40P01` 교착, 6002 `3B001` 세이브포인트 없음, 6003 `08003`(`57P01` 도 이 번호) 세션 닫힘, 6004 `25001` 이미 트랜잭션 중, 6005 `25P01` 트랜잭션 없음, 6006 `40001` 커밋 때 전제가 깨짐.
+    `withPosition` 이 잠금 충돌 오류의 `conflictKey` 를 잃지 않게 고쳤다.
+  - `SYS_SESSIONS` 컬럼을 `SESSION_ID`, `USER_NAME`, `TABLESPACE_NAME`, `AUTOCOMMIT`(YES/NO), `IN_TRANSACTION`(YES/NO) 로 정했다. `SessionManager.list()` 가 원천이다. (연결은 남은 마무리)
+  - 행 쓰기 도중 `heap.update` 가 RowId 를 바꾸지 않는다는 6단계의 가정을 그대로 쓴다. 바뀌는 구현이 되면 오버레이의 `pageId:slotId` 키 방식을 다시 봐야 한다.
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -374,6 +445,14 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
+- 7단계는 구현과 테스트를 마쳤고 "7단계 남은 마무리"만 남았다. 이어받을 때 알아 둘 점이다.
+  - 작업을 중단한 시점의 코드는 컴파일에 오류가 없고 `npm test` 322개가 모두 통과한다. 반쯤 고친 파일은 없다. 다만 `catalog/dictionaryViews.ts` 가 `SYS_SESSIONS` 용 인자와 컬럼을 받도록 먼저 고쳐져 있어, 연결을 끝내기 전에는 그 뷰가 빈 결과이다. (해가 없는 상태)
+  - SQL 을 실행하는 방법이 둘이다. 단위 테스트와 CLI 단순 실행은 `session.execute(sql, params)`(동기, 잠금 충돌 즉시 `55P03`)를 쓰고, 통신 계층(9단계)과 동시성 테스트는 `await session.executeAsync(sql, params)` 를 써야 기다림과 교착 감지가 동작한다. 두 방식은 같은 문장 실행 코드를 쓴다.
+  - 9단계는 접속마다 `server.getDatabase().createSession(...)` 으로 세션을 만들고, 연결이 끊기면 `session.close()`, 접속 수 제한은 `database.sessions.count` 로 센다. 세션 종료 알림은 `session.onClose(listener)` 로 받는다. 로컬 판정과 `maxConnections`, CONNECT 검사는 아직 `SessionManager` 에 없다.
+  - 8단계는 사용자와 권한 검사를 `Session` 의 문장 실행 앞(`executeStatementSync`/`executeStatementAsync` 의 분기 앞)에 넣으면 된다. `Database.createSession` 은 지금 인증 없이 `user` 문자열만 받는다. 문장 종류는 `session.ts` 맨 아래 `statementClass` 가 `data` / `ddl` / `control` / `unsupported` 로 나누며, 사용자·권한 문장은 현재 `unsupported`(`0A000`)이다. 구현하면서 `ddl` 쪽으로 옮기면 실행 전후의 자동 커밋이 그대로 적용된다.
+  - 데이터 문장을 새로 추가하거나 DML 의 쓰기 경로를 고칠 때는 `exec/dml.ts` 의 `applyToTransaction`(잠금 + 오버레이에 접기)과 `commitTransaction`(커밋 때 쓰기)을 거치게 해야 한다. 저장 배치를 문장에서 직접 열어 쓰면 트랜잭션 격리가 깨진다. (DDL 은 예외이며 `ddl.ts` 가 배치를 직접 연다)
+  - 오버레이를 쓰는 읽기는 `readTableRows(catalog, table, txn, tablespace)` 하나를 거친다. 힙을 직접 `scan()` 하는 곳(`exec/ddl.ts` 의 백필·검증)은 DDL 이 이미 트랜잭션을 커밋한 뒤 도므로 괜찮지만, 새로 데이터를 읽는 코드가 힙을 직접 읽으면 자기 변경이 안 보인다.
+  - 테스트에서 같은 세션으로 `executeAsync` 두 개를 동시에 걸어 두면 뒤의 문장은 앞의 문장이 끝날 때까지 기다린다. 잠금을 기다리는 문장이 있을 때 확인용 조회는 다른 세션으로 해야 한다. (`test/txn/concurrency.test.ts` 가 그렇게 한다)
 - 6단계까지 마쳤다. 조회와 DML을 내부 세션 API로 실행한다. (실제 호출 예는 `test/exec/query.test.ts`, `dml.test.ts`, `functions.test.ts`)
   - `Database.open(데이터디렉토리)`로 열고 `createSession({ user, tablespace })`으로 세션을 만든다. `session.execute(sql, params)`가 구문 분석부터 실행까지 맡는다.
   - 질의는 `exec/executor.ts`의 `executeQuery`가 맡는다. FROM 묶기 → WHERE → GROUP BY·HAVING → 투영 → DISTINCT → 집합 연산 → ORDER BY → 행 수 제한 순서이다.
@@ -421,4 +500,9 @@ SQL 접속 (상세 14-2)
 - 2026-10-09 : 3단계 완료. `Decimal`(10진 정확 연산), 날짜시간·타임존·INTERVAL, 값 맞춤과 비교, 형변환, 연산 결과 타입, 행/인덱스 키 코덱을 구현하고 타입 문서와 저장 포맷 문서에 규칙과 바이트 형식을 적었다. `npm test` 153개(Node.js 24.21.0), bun 타입 테스트 102개 통과.
 - 2026-10-09 : 4단계 완료. 어휘 분석, 구문 트리, 구문 분석(질의, DML, DDL, 테이블스페이스·사용자·권한, 트랜잭션·세션 문장)을 구현하고 [docs/sql-syntax.md](docs/sql-syntax.md)를 작성했다. 검토 중에 겹친 괄호의 되돌려 읽기가 지수적으로 느려지는 문제와 깊은 재귀의 스택 넘침을 발견하여, 한 번에 판정하는 방식과 깊이 한도(`54001`)로 고쳤다. `npm test` 233개, bun 타입·SQL 테스트 182개 통과. 저장 엔진의 `runtime-smoke.mjs`도 Node.js와 bun에서 다시 확인했다.
 - 2026-10-10 : 5단계 완료. 내부 세션 API(`Database`, `Session`), SYSTEM 최초 생성과 테이블스페이스 관리, 테이블·뷰·인덱스 DDL(RESTRICT·CASCADE, PK·FK·NOT NULL, 자동 이름), `USE`와 딕셔너리 12개 뷰·`DUAL`, 데몬 구동 때 테이블스페이스 열기를 구현했다. 오류 번호 4000 ~ 4017 을 배정했다. `npm test` 246개, bun 타입·SQL 182개와 카탈로그 13개 통과.
+- 2026-10-11 : 7단계 구현 완료(남은 마무리 있음). 이전 작업이 오류로 중단된 지점(잠금 관리자·트랜잭션 파일이 반쯤 쓰이고 빌드가 깨진 상태)에서 이어받아 오버레이 방식의 트랜잭션을 완성했다.
+  `txn/lockManager.ts`(행·PK·객체 배타 잠금, 대기열, 제한 시간, 교착 감지), `txn/transaction.ts`(오버레이, 되돌리기, 세이브포인트, 합쳐 읽기), `session/session.ts`(동기·비동기 실행, 트랜잭션·DDL 자동 커밋 규칙, 세션 닫기),
+  `session/sessionManager.ts`(세션 목록, 유휴 종료), `exec/dml.ts`(잠금 후 오버레이에 접기, 커밋 때 쓰기와 FK 재확인, 인덱스 지우기 우선 쓰기), `exec/executor.ts`(FOR UPDATE 잠금과 제한), `daemon/server.ts`(Database 연결, 종료 때 롤백)를 구현했다.
+  오류 번호 6000 ~ 6006 을 배정했다. 테스트 49개(`test/txn` 48개, 데몬 1개)를 추가해 `npm test` 322개(Node.js 24.21.0) 통과. 10개 세션 동시성 테스트(약 1.5 ~ 2초)를 포함한다.
+  bun 확인, `SYS_SESSIONS` 연결, 설계 문서는 남아 있다. (현재 상태의 "7단계 남은 마무리")
 - 2026-10-10 : 6단계 완료. 식 계산과 3값 논리, 전체 조회 파이프라인(조인 5종·USING 병합, 집계·GROUP BY·HAVING, DISTINCT, 집합 연산, 정렬, 행 수 제한), 상관 서브쿼리 5종, INSERT·UPDATE·DELETE·TRUNCATE와 NOT NULL·PK·FK·참조동작, 갱신 가능 뷰 DML, 내장 함수 전체와 NVL·TO_CHAR·TO_DATE, 파라미터 바인딩, 규칙 기반 인덱스 선택을 구현했다. 오류 번호 5000 ~ 5011 을 배정했다. `npm test` 273개, bun 222개 통과.

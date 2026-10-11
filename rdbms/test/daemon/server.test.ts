@@ -72,6 +72,36 @@ test("config.json 으로 구동되고 정상 종료된다", async () => {
   assert.equal(isRunning(config.dataDir), false);
 });
 
+test("정상 종료는 진행 중인 트랜잭션을 롤백하고 세션을 모두 끝낸다 (7단계)", async (t) => {
+  const installDir = makeTempDir();
+  t.after(() => fs.rmSync(installDir, { recursive: true, force: true }));
+  const server = await startWithInstallDir(installDir);
+  const { config } = loadConfig(installDir);
+  const database = server.getDatabase();
+  assert.ok(database !== undefined);
+  const session = (database as NonNullable<typeof database>).createSession({});
+  session.execute("CREATE TABLE KEPT (ID INTEGER PRIMARY KEY)");
+  session.execute("INSERT INTO KEPT VALUES (1)");
+  session.execute("BEGIN");
+  session.execute("INSERT INTO KEPT VALUES (2)");
+  assert.equal(server.getStatus().sessionCount, 1);
+  await server.stop();
+  assert.equal(session.isClosed, true);
+  assert.equal(server.getDatabase(), undefined);
+  assert.equal(server.getStatus().sessionCount, 0);
+
+  // 다시 구동하면 커밋한 행만 남아 있다.
+  const restarted = await startWithInstallDir(installDir);
+  try {
+    const check = (restarted.getDatabase() as NonNullable<ReturnType<Server["getDatabase"]>>).createSession({});
+    const result = check.execute("SELECT ID FROM KEPT ORDER BY ID");
+    assert.deepEqual(result.kind === "select" ? result.rows.map((row) => String(row[0])) : [], ["1"]);
+  } finally {
+    await restarted.stop();
+  }
+  assert.equal(isRunning(config.dataDir), false);
+});
+
 test("이미 구동 중이면 두 번째 구동에 실패한다", async () => {
   const installDir = makeTempDir();
   const first = await startWithInstallDir(installDir);

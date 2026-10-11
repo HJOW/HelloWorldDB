@@ -131,6 +131,20 @@ export const ERROR_CODES = {
   INSERT_VALUE_MISMATCH: 5011,
   /** 집합 연산의 컬럼 개수 불일치. SQLSTATE 42804. */
   SET_OPERATION_MISMATCH: 5010,
+  /** 잠금 대기 제한 시간 초과. SQLSTATE 55P03. */
+  LOCK_TIMEOUT: 6000,
+  /** 교착 상태 감지로 트랜잭션을 롤백함. SQLSTATE 40P01. */
+  DEADLOCK_DETECTED: 6001,
+  /** 세이브포인트가 없음. SQLSTATE 3B001. */
+  INVALID_SAVEPOINT: 6002,
+  /** 세션이 이미 닫혔거나 닫히는 중임. SQLSTATE 08003. */
+  SESSION_CLOSED: 6003,
+  /** 진행 중인 트랜잭션이 있는데 BEGIN 을 시도함. SQLSTATE 25001. */
+  ACTIVE_TRANSACTION: 6004,
+  /** 트랜잭션 밖에서 SAVEPOINT 계열을 사용함. SQLSTATE 25P01. */
+  NO_ACTIVE_TRANSACTION: 6005,
+  /** 커밋 시점에 트랜잭션의 전제가 깨짐 (객체 정의 변경, 참조 무결성). SQLSTATE 40001. */
+  TRANSACTION_CONFLICT: 6006,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */
@@ -199,10 +213,14 @@ export function formatDbError(error: DbError): string {
 export function withPosition(error: DbError, position: SourcePosition): DbError {
   if (error.position !== undefined) return error;
   const text = error.message.replace(/\.$/, "");
-  return new DbError(
+  const wrapped = new DbError(
     error.sqlState,
     error.code,
     `${text} (line ${position.line}, column ${position.column}).`,
     { cause: error.cause, position },
   );
+  // 잠금 충돌 오류는 기다릴 키를 들고 있다. 위치를 붙여도 잃지 않는다.
+  const conflictKey = (error as { conflictKey?: unknown }).conflictKey;
+  if (typeof conflictKey === "string") (wrapped as { conflictKey?: string }).conflictKey = conflictKey;
+  return wrapped;
 }
