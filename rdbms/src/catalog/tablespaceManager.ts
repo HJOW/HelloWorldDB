@@ -35,16 +35,11 @@ import {
 import type { CatalogData, TablespaceRecord } from "./catalog.js";
 
 function catalogError(sqlState: string, code: number, message: string, position?: SourcePosition): DbError {
-  const error = new DbError(sqlState, code, message);
-  if (position !== undefined) {
-    const { withPosition } = { withPosition: undefined as unknown as (e: DbError, p: SourcePosition) => DbError };
-    void withPosition;
-    // 순환 import 를 피하려고 withPosition 을 직접 쓰지 않고 위치를 붙인다.
-    return new DbError(sqlState, code, `${message.replace(/\.$/, "")} (line ${position.line}, column ${position.column}).`, {
-      position,
-    });
-  }
-  return error;
+  if (position === undefined) return new DbError(sqlState, code, message);
+  // 위치는 메시지 끝에도 적는다. (errors.ts 의 withPosition 과 같은 모양이다)
+  return new DbError(sqlState, code, `${message.replace(/\.$/, "")} (line ${position.line}, column ${position.column}).`, {
+    position,
+  });
 }
 
 export interface TablespaceStatus {
@@ -383,12 +378,8 @@ export class TablespaceManager {
     this.catalogs.delete(name);
     this.unavailable.delete(name);
     this.registry.delete(name);
-    try {
-      this.saveRegistry();
-    } catch (error) {
-      // 레지스트리 저장 실패는 삭제를 되돌리지 않고 알린다.
-      throw error;
-    }
+    // 레지스트리 저장 실패는 삭제를 되돌리지 않고 그대로 알린다.
+    this.saveRegistry();
     try {
       fs.rmSync(filePath, { force: true });
     } catch {

@@ -17,7 +17,7 @@
  * 구현 단계 : 5단계
  */
 
-import { DbError, ERROR_CODES } from "../common/errors.js";
+import { DbError, ERROR_CODES, unsupportedFeature } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
 import type {
   AlterTableStatement,
@@ -58,7 +58,11 @@ import type { TablespaceManager } from "../catalog/tablespaceManager.js";
 import type { StorageBatch } from "../storage/format/format.js";
 import { decodeRow, encodeKey, encodeRow } from "../types/codec.js";
 import type { SqlValue } from "../types/value.js";
-import { isNotDistinct } from "../types/value.js";
+import { isDictionaryView } from "../catalog/dictionaryViews.js";
+import { assignValue, isImplicitlyConvertible } from "../types/cast.js";
+import { evaluateExpression } from "./expression.js";
+import { dataHandlers, typeHandlers } from "./executor.js";
+import type { QueryContext } from "./executor.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -79,6 +83,26 @@ export function resolveTablespace(
     fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${tablespace}".`, name.position);
   }
   return { tablespace, name: name.name };
+}
+
+/**
+ * 딕셔너리 뷰와 DUAL 은 읽기 전용이다. DDL 과 DML 로 고치려 하면 막는다. (상세 3)
+ * SYSTEM 이 아닌 테이블스페이스에서는 같은 이름의 사용자 객체가 없을 때만 딕셔너리 객체를 가리킨다.
+ * 존재하지 않는 `SYS_` 이름은 지나가서 "없음" 오류가 난다.
+ */
+export function assertNotDictionaryObject(
+  manager: TablespaceManager,
+  tablespace: string,
+  name: string,
+  position?: SourcePosition,
+): void {
+  if (name !== "DUAL" && !isDictionaryView(name)) return;
+  if (tablespace !== "SYSTEM") {
+    if (!manager.has(tablespace)) return;
+    const catalog = manager.requireCatalog(tablespace);
+    if (catalog.data.tables[name] !== undefined || catalog.data.views[name] !== undefined) return;
+  }
+  fail("42809", ERROR_CODES.READ_ONLY_OBJECT, `"${name}" is a read-only dictionary object and cannot be changed.`, position);
 }
 
 /** 테이블스페이스가 사용 가능한지 확인하고 카탈로그를 돌려준다. */
@@ -467,13 +491,15 @@ export function executeAlterTable(
   currentTablespace: string,
   _owner: string,
   stmt: AlterTableStatement,
+  ctx: QueryContext,
 ): void {
   const { tablespace, name } = resolveTablespace(manager, stmt.name, currentTablespace);
+  assertNotDictionaryObject(manager, tablespace, name, stmt.name.position);
   const catalog = requireCatalog(manager, tablespace, stmt.name.position);
   const action = stmt.action;
   switch (action.kind) {
     case "AddColumn": {
-      addColumn(manager, catalog, tablespace, name, action.column, stmt.name.position);
+      addColumn(manager, catalog, tablespace, name, action.column, ctx, stmt.name.position);
       return;
     }
     case "DropColumn": {
@@ -507,12 +533,122 @@ function persistCatalog(catalog: CatalogStore): void {
   catalog.save();
 }
 
+/**
+ * 기존 행을 모두 새 모양으로 다시 쓴다. 힙을 새로 만들고 PK 와 인덱스를 다시 쌓는다.
+ * 행 식별자가 바뀌므로 인덱스도 함께 만든다. 실패하면 메모리의 카탈로그를 원래대로 돌린다.
+ * 컬럼 삭제와 DEFAULT 가 있는 컬럼 추가가 쓴다.
+ */
+function rewriteTableRows(
+  catalog: CatalogStore,
+  table: StoredTable,
+  nextColumns: StoredColumn[],
+  stored: { id: import("../storage/format/format.js").RowId; data: Buffer }[],
+  transform: (values: SqlValue[]) => SqlValue[],
+): void {
+  const oldColumns = table.columns;
+  const oldTypes = oldColumns.map((column) => column.dataType);
+  const newTypes = nextColumns.map((column) => column.dataType);
+  const tableIndexes = Object.values(catalog.data.indexes).filter((entry) => entry.table === table.name);
+  const savedHeapRoot = table.heapRoot;
+  const savedPkRoot = table.pkIndexRoot;
+  const savedIndexRoots = new Map(tableIndexes.map((entry) => [entry.name, entry.indexRoot]));
+  const batch = catalog.space.begin();
+  try {
+    batch.dropHeap(table.heapRoot);
+    for (const entry of tableIndexes) batch.dropIndex(entry.indexRoot);
+    if (table.pkIndexRoot !== null) batch.dropIndex(table.pkIndexRoot);
+    const heapRoot = batch.createHeap();
+    const newIds: import("../storage/format/format.js").RowId[] = [];
+    const newRows: SqlValue[][] = [];
+    for (const row of stored) {
+      const values = transform(decodeRow(row.data, oldTypes));
+      newIds.push(batch.heap(heapRoot).insert(encodeRow(values, newTypes)));
+      newRows.push(values);
+    }
+    table.heapRoot = heapRoot;
+    table.columns = nextColumns;
+    const keyOf = (values: SqlValue[], columns: { name: string; descending: boolean }[]): Buffer => {
+      const keyColumns = columns.map((column) => {
+        const found = nextColumns.find((entry) => entry.name === column.name);
+        return { type: (found as StoredColumn).dataType, descending: column.descending };
+      });
+      const keyValues = columns.map((column) => {
+        const at = nextColumns.findIndex((entry) => entry.name === column.name);
+        return (values[at] ?? null) as SqlValue;
+      });
+      return encodeKey(keyValues, keyColumns);
+    };
+    if (savedPkRoot !== null) {
+      const pkRoot = batch.createIndex({ unique: true });
+      table.pkIndexRoot = pkRoot;
+      if (table.pkName !== null) {
+        const constraint = catalog.data.constraints[table.pkName];
+        if (constraint !== undefined) constraint.indexRoot = pkRoot;
+      }
+      const pkColumns = (table.pkColumns as string[]).map((name) => ({ name, descending: false }));
+      newRows.forEach((values, position) => {
+        batch.index(pkRoot).insert(keyOf(values, pkColumns), newIds[position] as import("../storage/format/format.js").RowId);
+      });
+    }
+    for (const entry of tableIndexes) {
+      const root = batch.createIndex({ unique: false });
+      entry.indexRoot = root;
+      newRows.forEach((values, position) => {
+        batch.index(root).insert(keyOf(values, entry.columns), newIds[position] as import("../storage/format/format.js").RowId);
+      });
+    }
+    batch.setCatalog(serializeCatalog(catalog.data));
+    batch.commit();
+  } catch (error) {
+    table.heapRoot = savedHeapRoot;
+    table.pkIndexRoot = savedPkRoot;
+    table.columns = oldColumns;
+    if (table.pkName !== null) {
+      const constraint = catalog.data.constraints[table.pkName];
+      if (constraint !== undefined) constraint.indexRoot = savedPkRoot;
+    }
+    for (const entry of tableIndexes) {
+      const saved = savedIndexRoots.get(entry.name);
+      if (saved !== undefined) entry.indexRoot = saved;
+    }
+    try {
+      batch.rollback();
+    } catch {
+      // 원래 오류를 유지한다.
+    }
+    throw error;
+  }
+}
+
+/** ADD COLUMN 의 DEFAULT 를 한 번 계산한다. 기존 행은 모두 이 값으로 채운다. 없으면 NULL 이다. */
+function evaluateAddedColumnDefault(column: StoredColumn, ctx: QueryContext, position?: SourcePosition): SqlValue {
+  if (column.defaultExpr === null) return null;
+  const bound = evaluateExpression(
+    column.defaultExpr,
+    {
+      typeCtx: ctx.typeCtx,
+      params: ctx.params,
+      scopes: [...ctx.outerScopes],
+      currentUser: ctx.currentUser,
+      subqueries: dataHandlers([], ctx),
+      typeSubqueries: typeHandlers(ctx),
+    },
+    column.dataType,
+  );
+  if (bound.value === null) return null;
+  if (!isImplicitlyConvertible(bound.type, column.dataType)) {
+    fail("42804", 2011, `Cannot convert ${bound.type.name} to ${column.dataType.name} implicitly; use CAST.`, position);
+  }
+  return assignValue(bound.value, bound.type, column.dataType, ctx.typeCtx);
+}
+
 function addColumn(
   _manager: TablespaceManager,
   catalog: CatalogStore,
   tablespace: string,
   tableName: string,
   columnDef: import("../sql/ast.js").ColumnDefinition,
+  ctx: QueryContext,
   position?: SourcePosition,
 ): void {
   const columnPosition = position;
@@ -521,33 +657,34 @@ function addColumn(
     fail("42701", ERROR_CODES.COLUMN_EXISTS, `Duplicate column name: "${columnDef.name}".`, columnPosition);
   }
   assertNotReserved(tablespace, columnDef.name, columnPosition);
-  const next: StoredColumn[] = [
-    ...table.columns,
-    {
-      name: columnDef.name,
-      dataType: columnDef.dataType,
-      defaultText: columnDef.default === null ? null : expressionText(columnDef.default),
-      defaultExpr: columnDef.default,
-      notNull: columnDef.notNull,
-    },
-  ];
+  const added: StoredColumn = {
+    name: columnDef.name,
+    dataType: columnDef.dataType,
+    defaultText: columnDef.default === null ? null : expressionText(columnDef.default),
+    defaultExpr: columnDef.default,
+    notNull: columnDef.notNull,
+  };
+  const next: StoredColumn[] = [...table.columns, added];
   assertColumnLimit(next.length, columnPosition);
+  const stored = catalog.space.heap(table.heapRoot).scan();
+  const hasRows = stored.length > 0;
   // 컬럼에 붙은 PK 와 FK 는 ADD CONSTRAINT 와 같이 처리한다.
   if (columnDef.primaryKey !== null) {
     if (table.pkName !== null) {
       fail("42P16", ERROR_CODES.INVALID_TABLE_DEFINITION, "A table cannot have more than one primary key.", columnPosition);
     }
     // 새로 넣는 PK 컬럼은 NOT NULL이므로 기존 행이 있으면 위반이다.
-    if (catalog.space.heap(table.heapRoot).scan().length > 0) {
+    if (hasRows) {
       fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${columnDef.name}".`, columnPosition);
     }
     const pkName = catalog.resolveConstraintName(columnDef.primaryKey.name, "PRIMARY KEY", tableName, columnPosition);
     const space = catalog.space;
     const batch = space.begin();
+    const savedColumns = table.columns;
     try {
       const indexRoot = batch.createIndex({ unique: true });
       table.columns = next;
-      table.columns.find((column) => column.name === columnDef.name)!.notNull = true;
+      added.notNull = true;
       table.pkName = pkName;
       table.pkColumns = [columnDef.name];
       table.pkIndexRoot = indexRoot;
@@ -565,6 +702,11 @@ function addColumn(
       batch.setCatalog(serializeCatalog(catalog.data));
       batch.commit();
     } catch (error) {
+      table.columns = savedColumns;
+      table.pkName = null;
+      table.pkColumns = [];
+      table.pkIndexRoot = null;
+      delete catalog.data.constraints[pkName];
       try {
         batch.rollback();
       } catch {
@@ -574,25 +716,53 @@ function addColumn(
     }
     return;
   }
+  // 기존 행에 채울 값이다. DEFAULT 는 한 번 계산해 모든 기존 행에 같은 값을 넣는다.
+  const fill = hasRows ? evaluateAddedColumnDefault(added, ctx, columnPosition) : null;
+  if (hasRows && columnDef.notNull && fill === null) {
+    fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${columnDef.name}".`, columnPosition);
+  }
   if (columnDef.references !== null) {
+    if (fill !== null) {
+      throw unsupportedFeature("ADD COLUMN with REFERENCES and a non-NULL DEFAULT is not supported on a table that has rows.");
+    }
     // 새로 넣는 컬럼은 기존 행에서 NULL 로 읽히므로 FK 검사를 건너뛴다.
+    const savedColumns = table.columns;
     table.columns = next;
-    assertColumnLimit(table.columns.length);
-    addConstraint(_manager, catalog, tablespace, tableName, {
-      kind: "ForeignKey",
-      name: columnDef.references.name,
-      columns: [columnDef.name],
-      reference: {
-        table: columnDef.references.table,
-        columns: columnDef.references.columns,
-        onDelete: columnDef.references.onDelete,
-        onUpdate: columnDef.references.onUpdate,
-      },
-    }, columnPosition);
+    try {
+      addConstraint(_manager, catalog, tablespace, tableName, {
+        kind: "ForeignKey",
+        name: columnDef.references.name,
+        columns: [columnDef.name],
+        reference: {
+          table: columnDef.references.table,
+          columns: columnDef.references.columns,
+          onDelete: columnDef.references.onDelete,
+          onUpdate: columnDef.references.onUpdate,
+        },
+      }, columnPosition);
+    } catch (error) {
+      table.columns = savedColumns;
+      throw error;
+    }
     return;
   }
+  if (fill !== null) {
+    // 기존 행에도 DEFAULT 값이 보이도록 행을 다시 쓴다.
+    rewriteTableRows(catalog, table, next, stored, (values) => {
+      const widened = [...values];
+      widened.push(fill);
+      return widened;
+    });
+    return;
+  }
+  const savedColumns = table.columns;
   table.columns = next;
-  persistCatalog(catalog);
+  try {
+    persistCatalog(catalog);
+  } catch (error) {
+    table.columns = savedColumns;
+    throw error;
+  }
 }
 
 function dropColumn(
@@ -617,7 +787,7 @@ function dropColumn(
       position,
     );
   }
-  // 뷰가 이 테이블을 참조하면 보수적으로 막는다. (컬럼 단위 추적은 6단계)
+  // 뷰가 이 테이블을 참조하면 보수적으로 막는다. (컬럼 단위 추적은 하지 않는다)
   const dependentViews = findDependentViews(manager, tablespace, tableName);
   if (dependentViews.length > 0) {
     fail(
@@ -627,87 +797,25 @@ function dropColumn(
       position,
     );
   }
-  // 행이 있으면 그 컬럼 값을 빼고 힙을 다시 쓴다. 행 식별자가 바뀌므로 인덱스도 함께 만든다.
-  // surviving 검사를 앞에서 했으므로 남은 인덱스는 이 컬럼을 쓰지 않는다.
-  const oldTypes = table.columns.map((column) => column.dataType);
+  // 행이 있으면 그 컬럼 값을 빼고 힙을 다시 쓴다. 남은 인덱스는 이 컬럼을 쓰지 않는다.
+  const nextColumns = table.columns.filter((_, at) => at !== index);
   const stored = catalog.space.heap(table.heapRoot).scan();
   if (stored.length === 0) {
-    table.columns.splice(index, 1);
-    persistCatalog(catalog);
+    const savedColumns = table.columns;
+    table.columns = nextColumns;
+    try {
+      persistCatalog(catalog);
+    } catch (error) {
+      table.columns = savedColumns;
+      throw error;
+    }
     return;
   }
-  const newTypes = [...oldTypes.slice(0, index), ...oldTypes.slice(index + 1)];
-  const space = catalog.space;
-  const tableIndexes = Object.values(catalog.data.indexes).filter((entry) => entry.table === tableName);
-  const savedHeapRoot = table.heapRoot;
-  const savedPkRoot = table.pkIndexRoot;
-  const savedIndexRoots = new Map(tableIndexes.map((entry) => [entry.name, entry.indexRoot]));
-  const batch = space.begin();
-  try {
-    batch.dropHeap(table.heapRoot);
-    for (const entry of tableIndexes) batch.dropIndex(entry.indexRoot);
-    if (table.pkIndexRoot !== null) batch.dropIndex(table.pkIndexRoot);
-    const heapRoot = batch.createHeap();
-    const newIds: import("../storage/format/format.js").RowId[] = [];
-    const newRows: SqlValue[][] = [];
-    for (const row of stored) {
-      const values = decodeRow(row.data, oldTypes);
-      values.splice(index, 1);
-      newIds.push(batch.heap(heapRoot).insert(encodeRow(values, newTypes)));
-      newRows.push(values);
-    }
-    table.heapRoot = heapRoot;
-    table.columns.splice(index, 1);
-    if (savedPkRoot !== null) {
-      const pkRoot = batch.createIndex({ unique: true });
-      table.pkIndexRoot = pkRoot;
-      if (table.pkName !== null) {
-        const constraint = catalog.data.constraints[table.pkName];
-        if (constraint !== undefined) constraint.indexRoot = pkRoot;
-      }
-      const keyColumns = (table.pkColumns as string[]).map((columnName) => {
-        const found = table.columns.find((column) => column.name === columnName);
-        return { type: (found as StoredColumn).dataType, descending: false };
-      });
-      newRows.forEach((values, position) => {
-        const keyValues = (table.pkColumns as string[]).map((columnName) => {
-          const at = table.columns.findIndex((column) => column.name === columnName);
-          return (values[at] ?? null) as SqlValue;
-        });
-        batch.index(pkRoot).insert(encodeKey(keyValues, keyColumns), newIds[position] as import("../storage/format/format.js").RowId);
-      });
-    }
-    for (const entry of tableIndexes) {
-      const root = batch.createIndex({ unique: false });
-      entry.indexRoot = root;
-      const keyColumns = entry.columns.map((column) => {
-        const found = table.columns.find((entryColumn) => entryColumn.name === column.name);
-        return { type: (found as StoredColumn).dataType, descending: column.descending };
-      });
-      newRows.forEach((values, position) => {
-        const keyValues = entry.columns.map((column) => {
-          const at = table.columns.findIndex((entryColumn) => entryColumn.name === column.name);
-          return (values[at] ?? null) as SqlValue;
-        });
-        batch.index(root).insert(encodeKey(keyValues, keyColumns), newIds[position] as import("../storage/format/format.js").RowId);
-      });
-    }
-    batch.setCatalog(serializeCatalog(catalog.data));
-    batch.commit();
-  } catch (error) {
-    table.heapRoot = savedHeapRoot;
-    table.pkIndexRoot = savedPkRoot;
-    for (const entry of tableIndexes) {
-      const saved = savedIndexRoots.get(entry.name);
-      if (saved !== undefined) entry.indexRoot = saved;
-    }
-    try {
-      batch.rollback();
-    } catch {
-      // 원래 오류를 유지한다.
-    }
-    throw error;
-  }
+  rewriteTableRows(catalog, table, nextColumns, stored, (values) => {
+    const narrowed = [...values];
+    narrowed.splice(index, 1);
+    return narrowed;
+  });
 }
 
 function alterColumn(
@@ -836,6 +944,11 @@ function renameTable(
   persistCatalog(catalog);
 }
 
+/** 값 묶음을 비교용 문자열로 바꾼다. 인덱스 키와 같은 인코딩이라 CHAR 의 뒤쪽 공백은 무시한다. */
+function tupleKeyText(values: SqlValue[], types: DataType[]): string {
+  return encodeKey(values, types.map((type) => ({ type, descending: false }))).toString("latin1");
+}
+
 /** 기존 행이 PK 조건(NULL 없음, 중복 없음)을 만족하는지 본다. */
 function checkRowsForPrimaryKey(
   catalog: CatalogStore,
@@ -848,7 +961,7 @@ function checkRowsForPrimaryKey(
     const found = table.columns.find((column) => column.name === columnName);
     return (found as StoredColumn).dataType;
   });
-  const seen: SqlValue[][] = [];
+  const seen = new Set<string>();
   for (const stored of catalog.space.heap(table.heapRoot).scan()) {
     const values = decodeRow(stored.data, types);
     const key = pkColumns.map((columnName) => {
@@ -858,20 +971,11 @@ function checkRowsForPrimaryKey(
     if (key.some((value) => value === null)) {
       fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, "NULL violates NOT NULL of a primary key column.", position);
     }
-    for (const other of seen) {
-      let same = true;
-      for (let index = 0; index < key.length; index++) {
-        const type = pkTypes[index] as DataType;
-        if (!isNotDistinct(key[index] as SqlValue, other[index] as SqlValue, { ignoreTrailingSpaces: type.kind === "CHAR" })) {
-          same = false;
-          break;
-        }
-      }
-      if (same) {
-        fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${table.name}".`, position);
-      }
+    const text = tupleKeyText(key, pkTypes);
+    if (seen.has(text)) {
+      fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${table.name}".`, position);
     }
-    seen.push(key);
+    seen.add(text);
   }
 }
 
@@ -886,17 +990,19 @@ function checkRowsForForeignKey(
 ): void {
   const types = table.columns.map((column) => column.dataType);
   const refTypes = refTable.columns.map((column) => column.dataType);
-  const parentKeys = catalog.space.heap(refTable.heapRoot).scan().map((stored) => {
-    const values = decodeRow(stored.data, refTypes);
-    return refColumns.map((columnName) => {
-      const index = refTable.columns.findIndex((column) => column.name === columnName);
-      return (values[index] ?? null) as SqlValue;
-    });
-  });
   const parentTypes = refColumns.map((columnName) => {
     const found = refTable.columns.find((column) => column.name === columnName);
     return (found as StoredColumn).dataType;
   });
+  const parentKeys = new Set<string>();
+  for (const stored of catalog.space.heap(refTable.heapRoot).scan()) {
+    const values = decodeRow(stored.data, refTypes);
+    const key = refColumns.map((columnName) => {
+      const index = refTable.columns.findIndex((column) => column.name === columnName);
+      return (values[index] ?? null) as SqlValue;
+    });
+    parentKeys.add(tupleKeyText(key, parentTypes));
+  }
   for (const stored of catalog.space.heap(table.heapRoot).scan()) {
     const values = decodeRow(stored.data, types);
     const key = fkColumns.map((columnName) => {
@@ -904,16 +1010,7 @@ function checkRowsForForeignKey(
       return (values[index] ?? null) as SqlValue;
     });
     if (key.some((value) => value === null)) continue;
-    const found = parentKeys.some((parentKey) => {
-      for (let index = 0; index < key.length; index++) {
-        const type = parentTypes[index] as DataType;
-        if (!isNotDistinct(key[index] as SqlValue, parentKey[index] as SqlValue, { ignoreTrailingSpaces: type.kind === "CHAR" })) {
-          return false;
-        }
-      }
-      return true;
-    });
-    if (!found) {
+    if (!parentKeys.has(tupleKeyText(key, parentTypes))) {
       fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, "Existing rows violate the foreign key.", position);
     }
   }
@@ -1158,6 +1255,7 @@ export function executeDropTable(
   stmt: DropTableStatement,
 ): void {
   const { tablespace, name } = resolveTablespace(manager, stmt.name, currentTablespace);
+  assertNotDictionaryObject(manager, tablespace, name, stmt.name.position);
   const catalog = requireCatalog(manager, tablespace, stmt.name.position);
   const table = catalog.data.tables[name];
   if (table === undefined) {
@@ -1237,6 +1335,7 @@ export function executeTruncateTable(
   stmt: TruncateTableStatement,
 ): void {
   const { tablespace, name } = resolveTablespace(manager, stmt.name, currentTablespace);
+  assertNotDictionaryObject(manager, tablespace, name, stmt.name.position);
   const catalog = requireCatalog(manager, tablespace, stmt.name.position);
   const table = catalog.data.tables[name];
   if (table === undefined) {
@@ -1519,6 +1618,7 @@ export function executeDropView(
   stmt: DropViewStatement,
 ): void {
   const { tablespace, name } = resolveTablespace(manager, stmt.name, currentTablespace);
+  assertNotDictionaryObject(manager, tablespace, name, stmt.name.position);
   const catalog = requireCatalog(manager, tablespace, stmt.name.position);
   const view = catalog.data.views[name];
   if (view === undefined) {
@@ -1602,6 +1702,7 @@ export function executeCreateIndex(
   stmt: CreateIndexStatement,
 ): void {
   const tableRef = resolveTablespace(manager, stmt.table, currentTablespace);
+  assertNotDictionaryObject(manager, tableRef.tablespace, tableRef.name, stmt.table.position);
   const catalog = requireCatalog(manager, tableRef.tablespace, stmt.table.position);
   const table = catalog.data.tables[tableRef.name];
   if (table === undefined) {
