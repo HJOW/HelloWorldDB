@@ -41,6 +41,7 @@ import type { RowId } from "../storage/format/format.js";
 import type { CatalogStore, StoredTable } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
 import { getDictionaryColumns, getDictionaryRows } from "../catalog/dictionaryViews.js";
+import type { DictionarySources } from "../catalog/dictionaryViews.js";
 import { bindSource, validateGroupBy } from "./analyzer.js";
 import type { BoundSource } from "./analyzer.js";
 import { chooseIndex } from "./planner.js";
@@ -78,6 +79,11 @@ export interface QueryContext {
   readonly txn: Transaction;
   /** 잠금 걸기이다. 실행기는 기다리지 않는다. 충돌하면 오류를 던지고 세션이 기다렸다가 문장을 다시 시도한다. */
   readonly locker: LockSink;
+  /**
+   * 딕셔너리 뷰의 원천(세션 현황, 사용자, 권한, 그리고 조회하는 사용자에게 보일 행의 판정자)을 돌려준다.
+   * 세션 밖에서 질의를 실행하면 없을 수 있고, 그때는 카탈로그의 모든 행이 보인다.
+   */
+  readonly dictionary?: () => DictionarySources;
 }
 
 /** 질의 결과이다. 값과 함께 열 이름과 타입을 돌려준다. */
@@ -559,7 +565,7 @@ function scanSource(bound: BoundSource, ctx: QueryContext, where: Expression | n
       return [[{ tablespace: "SYSTEM", table: "DUAL", alias: null, slots: [{ column: "DUMMY", value: "X", type: varcharType(1) }] }]];
     case "dictionary": {
       const columns = getDictionaryColumns(bound.view);
-      return getDictionaryRows(ctx.manager, bound.view).map((row) => [{
+      return getDictionaryRows(ctx.manager, bound.view, ctx.dictionary?.() ?? {}).map((row) => [{
         tablespace: "SYSTEM",
         table: bound.view,
         alias: null,
@@ -580,7 +586,7 @@ function scanTable(
   const table = bound.def;
   const types = table.columns.map((column) => column.dataType);
   // 트랜잭션이 건드린 테이블은 인덱스를 타지 않고 합친 값으로 훑는다.
-  const touched = ctx.txn !== null && ctx.txn.touches(bound.tablespace, bound.table);
+  const touched = ctx.txn.touches(bound.tablespace, bound.table);
   if (!touched) {
     // 상수 평가는 바깥 범위만으로 한다. 행의 열이 섞이면 null 로 보고 pushdown하지 않는다.
     const choice = chooseIndex(bound.catalog, table, bound.alias ?? bound.table, where, (expression) => {

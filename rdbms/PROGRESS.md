@@ -6,29 +6,26 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-11
-- 진행 단계 : 1 ~ 6단계 완료. 7단계(트랜잭션과 동시성)는 구현과 테스트를 마쳤고 완료 기준(10개 세션 동시성 테스트)을 채웠다. 아래 "7단계 남은 마무리"가 남아 있어 단계를 닫지는 않았다.
+- 최종 갱신 : 2026-10-15
+- 진행 단계 : 1 ~ 8단계 완료. 7단계의 남은 마무리(`SYS_SESSIONS` 연결, 문서)도 8단계 착수 전에 처리했다. 8단계(계정과 권한)는 구현과 테스트를 마쳤고 완료 기준(권한 조합별 허용·거부, 개요 5 의 뷰 UPDATE 예시)을 채웠다.
 - 착수 조건 : 없음
-- 다음 작업 : "7단계 남은 마무리"를 처리한 뒤 8단계(계정과 권한)에 착수한다. 7단계 설계의 요약은 "결정 사항"의 7단계 항목, 코드를 이어받을 때의 주의는 "인수인계 사항"의 7단계 항목에 있다.
-- 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. 7단계 착수 전에 "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
+- 다음 작업 : 9단계(통신). 8단계가 넘기는 것은 "인수인계 사항"의 8단계 항목과 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 10절에 있다. 프로토콜 명세 문서를 먼저 쓴다.
+- 사용자 확인이 남은 것 : DML 행 단위 접근 여부(미결 사항). 8단계는 이것과 무관하여 먼저 진행했다. 큰 테이블 성능이 문제가 되는 시점(늦어도 11단계 전)에 정하면 된다.
+- 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 331개 통과(6단계 점검 보완의 회귀 9개 포함). 빌드에 오류와 경고가 없다.
-  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 330개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다. `test/storage/runtime-smoke.mjs` 는 Node.js 와 bun 양쪽에서 통과.
+- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 383개 통과(8단계 신규 51개 포함). 빌드에 오류와 경고가 없다.
+  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 382개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다. 새 테스트(`test/auth`, 데몬 경고)는 bun 에서도 통과했다.
+  권한 검사기를 일부러 무력화한 빌드에서 `test/auth/privileges.test.ts` 24개 중 18개가 실패하는 것을 확인했다(테스트가 실제로 검사하는지 점검).
 
-### 7단계 남은 마무리
-
-8단계 착수 전에 처리한다. 모두 작은 작업이며 구조를 바꾸지 않는다.
+### 7단계 남은 마무리 (2026-10-15 완료)
 
 - [x] bun 확인 (2026-10-11) : `bun test --timeout 120000 dist/test/` 는 330개 통과. 1개는 `t.mock` 미구현으로 실패한다(인수인계 사항 참고). 동시성 테스트(`setTimeout`, `setImmediate`, Promise 순서에 기대는 것)도 bun 에서 통과했다.
-- [ ] `SYS_SESSIONS` 연결을 끝낸다. `catalog/dictionaryViews.ts` 는 컬럼(`SESSION_ID`, `USER_NAME`, `TABLESPACE_NAME`, `AUTOCOMMIT`, `IN_TRANSACTION`)과 `getDictionaryRows(manager, view, { sessions })` 의 세 번째 인자까지 받도록 고쳐 두었다.
-  남은 일은 두 가지이다. `QueryContext` 에 `sessions?: () => readonly SessionInfo[]` 를 추가해 `Session.queryContext` 가 `this.database.sessions.list()` 를 넘기게 하고,
-  `exec/executor.ts` 에서 행을 만드는 `case "dictionary"`(`getDictionaryRows(ctx.manager, bound.view)` 를 부르는 곳 하나)가 `{ sessions: ctx.sessions?.() }` 를 넘기게 한다. 열 정보만 쓰는 `typeScopesOf` 쪽은 고칠 필요가 없다.
-  그 뒤 `SELECT * FROM SYSTEM.SYS_SESSIONS` 로 세션 수와 `IN_TRANSACTION` 이 맞는지 보는 테스트를 `test/txn/` 에 추가한다. 지금은 이 뷰가 빈 결과이며 컬럼만 늘어난 상태이다.
-- [ ] `exec/executor.ts` 의 `scanTable` 에 남은 `ctx.txn !== null &&` 는 `txn` 이 항상 있으므로 불필요하다. 지운다.
-- [ ] `test/exec/query.test.ts` 의 "FOR UPDATE는 잠금 없이 읽는다" 는 제목이 이제 맞지 않는다. "자동 커밋에서 FOR UPDATE 는 읽고 바로 푼다" 로 바꾼다. (동작은 통과한다)
-- [ ] `docs/transactions.md` 를 쓴다. 지금은 설계가 `txn/transaction.ts`, `txn/lockManager.ts`, `session/session.ts`, `exec/dml.ts` 의 머리 주석과 이 문서의 "결정 사항"에만 있다. 오버레이 구조, 잠금 키 종류, 커밋 순서, 기다림의 처리를 한 문서로 모은다.
-- [ ] `docs/storage-v1.md` 의 "7단계 SQL 트랜잭션은 행 변경을 보관했다가 커밋 직전 최신 페이지 위에 적용해야 한다" 항목에 "7단계에서 오버레이 방식으로 구현했다" 를 덧붙인다.
-- [ ] 아래 "알려진 한계"를 읽고 8단계 이후에 손볼 것이 있는지 정한다.
+- [x] `SYS_SESSIONS` 연결. `QueryContext.dictionary()` 가 딕셔너리 뷰의 원천(세션 현황, 사용자, 권한, 가시성 판정자)을 돌려주고 `executor.ts` 의 `case "dictionary"` 가 `getDictionaryRows` 에 넘긴다. (처음 계획한 `QueryContext.sessions` 는 8단계 원천이 늘어 `dictionary` 하나로 합쳤다) `test/txn/transaction.test.ts` 에 세션 수와 `IN_TRANSACTION` 을 보는 테스트를 추가했다.
+- [x] `exec/executor.ts` 의 `scanTable` 에 남은 불필요한 `ctx.txn !== null &&` 를 지웠다.
+- [x] `test/exec/query.test.ts` 의 테스트 제목을 "자동 커밋에서 FOR UPDATE 는 읽고 바로 푼다" 로 고쳤다.
+- [x] [docs/transactions.md](docs/transactions.md) 를 썼다. 오버레이 구조, 잠금 키 종류, 기다림과 교착, 커밋 순서, DDL 과 자동 커밋, 트랜잭션 문장 규칙, 오류 번호, 알려진 한계를 모았다.
+- [x] `docs/storage-v1.md` 의 트랜잭션 설계 절에 "7단계에서 오버레이 방식으로 구현했다. 실제 구조는 transactions.md" 를 덧붙였다.
+- [x] "알려진 한계"를 읽고 8단계 이후에 손볼 것을 정했다 : 8단계에서는 손볼 것이 없다. 한계 가운데 성능(메모리 이미지 방식)은 미결 사항(행 단위 접근)에 남아 있고, 나머지는 사용자가 불편을 느끼면 다룬다.
 
 ### 7단계 알려진 한계
 
@@ -52,7 +49,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를 붙였다. 인증, 통신은 아직 뼈대이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를, 8단계에서 `auth`(계정, 권한, SCRAM 계산, 문장별 권한 검사)와 사용자·권한 문장 실행(`exec/accounts.ts`)을 붙였다. 통신(`net`, `client`)과 `cli` 는 아직 뼈대이다.
 
 ```
 rdbms/
@@ -107,10 +104,13 @@ rdbms/
                          sessionManager.ts(세션 목록, 유휴 세션 종료, 전체 종료. 접속 수 제한과 로컬 판정은 9단계)
     exec/                ddl.ts(테이블·뷰·인덱스 DDL 실행), analyzer.ts(이름 해석과 뷰 전개, 갱신 가능 판정),
                          planner.ts(규칙 기반 인덱스 선택), expression.ts(식 계산과 3값 논리),
-                         functions.ts(내장 함수와 집계), executor.ts(조회 실행), dml.ts(INSERT·UPDATE·DELETE·TRUNCATE)
+                         functions.ts(내장 함수와 집계), executor.ts(조회 실행), dml.ts(INSERT·UPDATE·DELETE·TRUNCATE),
+                         accounts.ts(CREATE·ALTER·DROP USER, GRANT, REVOKE 실행)
     txn/                 transaction.ts(트랜잭션의 미커밋 변경 오버레이, 되돌리기 기록, 세이브포인트, 커밋 값과 합쳐 읽기),
                          lockManager.ts(행·PK·객체 배타 잠금, 대기열, 제한 시간, 교착 감지)
-    auth/                scram.ts, users.ts, privileges.ts
+    auth/                scram.ts(SCRAM-SHA-256 계산과 메시지), users.ts(계정 저장소, SYSTEM 계정, 비밀번호 확인),
+                         privileges.ts(부여 기록, 권한 판정, 권한 그룹, 이름 해석, 기록 정리),
+                         authorizer.ts(문장별 필요한 권한을 정해 실행 전에 확인)
     net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
                          tcpServer.ts, udpServer.ts, localChannelServer.ts
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
@@ -120,7 +120,9 @@ rdbms/
                            regression.test.ts 는 6단계 점검에서 찾은 결함의 회귀 테스트이다
     txn/                   트랜잭션 테스트. lockManager(잠금 단위), transaction(커밋·롤백·세이브포인트·가시성·동기 잠금 충돌·DDL),
                            concurrency(비동기 대기·제한 시간·교착, 10개 세션 동시성). exec/helpers.ts 를 함께 쓴다
-    daemon/                server.test.ts 에 정상 종료 때의 트랜잭션 롤백 테스트가 있다
+    auth/                  계정과 권한 테스트. scram(RFC 7677 시험 벡터), accounts(SYSTEM 계정, 사용자 문장, 인증, CONNECT, 영속성, 가시성),
+                           privileges(권한 조합별 허용·거부, 수준별 독립, 소유자, OFFICER·DBA, 뷰 규칙, 딕셔너리 가시성, 기록 정리). helpers.ts 는 공용 도우미
+    daemon/                server.test.ts 에 정상 종료 때의 트랜잭션 롤백과 초기 암호 경고 테스트가 있다
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
@@ -130,7 +132,9 @@ rdbms/
   docs/
     data-types.md          타입 인자와 기본값, 값 표현, 비교, 형변환, 연산 결과 타입, 타입 오류 번호
     sql-syntax.md          어휘 규칙, 예약어, 사양에 더해 받는 문법, 지원하지 않는 문법, 한도, 구문 트리의 원칙
-    storage-v1.md          저장 포맷, 행과 인덱스 키의 값 인코딩, API 사용 원칙과 트랜잭션 설계. 프로토콜 명세는 9단계
+    storage-v1.md          저장 포맷, 행과 인덱스 키의 값 인코딩, API 사용 원칙과 트랜잭션 설계 원안. 프로토콜 명세는 9단계
+    transactions.md        오버레이, 잠금 키, 기다림과 교착, 커밋 순서, DDL 과 자동 커밋, 트랜잭션 문장 규칙, 한계
+    accounts-and-privileges.md  계정 저장, SCRAM, 권한 수준과 판정, 뷰 규칙, 권한 그룹, 문장별 필요 권한, 딕셔너리 가시성, 오류 번호
   dist/                  빌드 결과물. git 에 넣지 않는다
 ```
 
@@ -257,7 +261,7 @@ rdbms/
 - [x] 세션 목록, 유휴 세션 종료(`session.idleTimeoutMs`), 세션을 닫을 때의 롤백, 데몬 정상 종료 때의 롤백
 - [x] 6단계 점검 보완에서 `0A000` 으로 막아 둔 문장을 풀었다 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF`. `regression.test.ts` 와 `catalog.test.ts` 의 단언을 7단계 동작으로 바꾸었다
 - [ ] DML 행 단위 접근 (7단계 계획의 "DML 구조 재설계") : 하지 않았다. 메모리 이미지 방식이 남아 있다. 사용자 확인 필요 (미결 사항, 인수인계 사항 참고)
-- [ ] 남은 마무리 : 현재 상태 절의 "7단계 남은 마무리" 참고 (`SYS_SESSIONS` 연결, 문서)
+- [x] 남은 마무리 : `SYS_SESSIONS` 연결과 문서를 8단계 착수 전에 끝냈다 (현재 상태 절의 "7단계 남은 마무리")
 - 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과. (충족)
   (`test/txn` 48개 + 데몬 1개. 잠금 관리자 단위 11개, 트랜잭션 시나리오 24개, 비동기 대기·제한 시간·교착·세션 종료 중 대기 12개, 10개 세션 동시성 1개.
   동시성 테스트는 세션 10개가 각각 15회 이체 트랜잭션(두 계좌 갱신 + 카운터 + 로그 삽입)을 하고 매번 합계 조회를 하며, 계좌 1·2 를 서로 반대 방향으로 오가게 해 교착을 부추긴다.
@@ -266,14 +270,19 @@ rdbms/
 
 ### 8단계. 계정과 권한
 
-- [ ] SCRAM-SHA-256 검증 정보 생성과 저장 (상세 4)
-- [ ] 최초 구동 시 SYSTEM 계정 생성. 초기 암호를 바꾸지 않았으면 구동 로그에 경고
-- [ ] `CREATE USER`, `ALTER USER`, `DROP USER`
-- [ ] 객체 소유자 기록
-- [ ] GRANT, REVOKE (권한, 권한 그룹)와 실행 자격 검사 (상세 5, 6)
-- [ ] 문장별 권한 검사, 뷰 권한 규칙
-- [ ] 딕셔너리 뷰는 권한이 있는 객체의 행만 보여 준다
-- 완료 기준 : 권한 조합별 허용, 거부 테스트 통과. 개요 5 의 뷰 UPDATE 예시 포함.
+- [x] SCRAM-SHA-256 검증 정보 생성과 저장 (상세 4). `auth/scram.ts`, RFC 7677 시험 벡터로 검증. 통신 계층이 쓸 메시지 함수와 없는 사용자용 가짜 검증 정보 포함
+- [x] 최초 구동 시 SYSTEM 계정 생성. 초기 암호를 바꾸지 않았으면 구동 로그에 경고 (`Database.open`, `Server.start`)
+- [x] `CREATE USER`, `ALTER USER`, `DROP USER [CASCADE]`
+- [x] 객체 소유자 기록 (이미 6단계까지 `owner` 로 저장하고 있었다). `CREATE OR REPLACE VIEW` 가 소유자를 바꾸던 것을 고쳤다
+- [x] GRANT, REVOKE (권한, 권한 그룹)와 실행 자격 검사 (상세 5, 6)
+- [x] 문장별 권한 검사, 뷰 권한 규칙. 문장 실행 전에 구문 트리로 확인한다 (`auth/authorizer.ts`)
+- [x] 딕셔너리 뷰는 권한이 있는 객체의 행만 보여 준다. `SYS_USERS`, `SYS_PRIVILEGES`, `SYS_GROUP_GRANTS` 도 채웠다
+- [x] 사양 4 의 "기본 테이블스페이스가 없는 상태" : 현재 테이블스페이스가 없는 세션, `3F000`
+- [x] 객체 삭제·이름 변경·테이블스페이스 삭제 때의 권한 기록 정리
+- [x] `Database.login`(비밀번호 확인 + CONNECT 검사)을 두어 9단계가 쓸 입구를 마련했다
+- 완료 기준 : 권한 조합별 허용, 거부 테스트 통과. 개요 5 의 뷰 UPDATE 예시 포함. (충족)
+  (`test/auth` 50개(scram 10, accounts 16, privileges 24)와 데몬 초기 암호 경고 테스트 1개. 권한 조합별 허용·거부, 수준별 독립, 소유자, OFFICER·DBA, CONNECT·로컬 접속, 개요 5 의 `VIEW_SAMPLE1` UPDATE 예시, 딕셔너리 가시성, 영속성, 기록 정리를 확인했다.
+  권한 검사기를 무력화한 빌드에서 테스트가 실패하는 것도 확인했다.)
 
 ### 9단계. 통신
 
@@ -331,7 +340,6 @@ SQL 접속 (상세 14-2)
 
 - Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.21.0, bun 1.3.14이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
 - `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
-- SCRAM 반복 횟수의 기본값 (8단계)
 - 유닉스 도메인 소켓 파일의 접근 권한, 비정상 종료 뒤 남은 소켓 파일의 정리 (9단계)
 - bun 에서 네임드 파이프와 TLS 최소 버전 설정이 Node.js 와 똑같이 동작하는지 (9단계에서 실제로 확인)
 - bun 에서 프로세스를 분리해 띄우는 동작이 Node.js 와 같은지 (10단계에서 실제로 확인)
@@ -341,7 +349,9 @@ SQL 접속 (상세 14-2)
 - 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 8단계 이후에 정한다.
 - 잠금 생성 가드(`helloworlddb.lock.acquire`) 안에서 강제 종료되어 가드가 남는 경우의 정리(10단계). 현재는 동시 점유 방지를 위해 구동에 실패시킨다. 관리자가 관련 데몬이 없는지 확인한 뒤 빈 가드 디렉토리를 제거해야 한다. 일반 구동 후 남은 잠금 파일은 죽은 PID를 확인해 재사용한다.
 
-- DML 행 단위 접근 여부 (사용자 확인 필요). 7단계 계획에는 "DML 구조 재설계"가 있었으나 구현하지 않았다. 메모리 이미지 방식을 남긴 채 8단계로 갈지, 8단계 전에 행 단위로 바꿀지 정해야 한다. 인수인계 사항의 "DML 구조와 성능" 참고.
+- DML 행 단위 접근 여부 (사용자 확인 필요). 7단계 계획에는 "DML 구조 재설계"가 있었으나 구현하지 않았다. 8단계는 이 구조와 무관하여 메모리 이미지 방식을 남긴 채 먼저 진행했다(권한 검사는 문장을 실행하기 전의 구문 트리 검사라 DML 구조를 건드리지 않는다).
+  행 단위로 바꿀지는 큰 테이블 성능이 문제가 되는 시점(늦어도 11단계 전)에 정한다. 인수인계 사항의 "DML 구조와 성능" 참고.
+- 사용자·권한 문장에 대해 사양이 정하지 않아 정한 규칙(대상 컬럼을 읽는 UPDATE·DELETE 는 SELECT 불필요, FOR UPDATE 는 UPDATE 요구, CASCADE 삭제는 별도 권한 없음 등)이 사용자의 의도와 다른지 확인이 필요하다. 목록은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 8절. 기본 동작이 문제없으면 그대로 둔다.
 
 ## 결정 사항
 
@@ -448,6 +458,25 @@ SQL 접속 (상세 14-2)
     `withPosition` 이 잠금 충돌 오류의 `conflictKey` 를 잃지 않게 고쳤다.
   - `SYS_SESSIONS` 컬럼을 `SESSION_ID`, `USER_NAME`, `TABLESPACE_NAME`, `AUTOCOMMIT`(YES/NO), `IN_TRANSACTION`(YES/NO) 로 정했다. `SessionManager.list()` 가 원천이다. (연결은 남은 마무리)
   - 행 쓰기 도중 `heap.update` 가 RowId 를 바꾸지 않는다는 6단계의 가정을 그대로 쓴다. 바뀌는 구현이 되면 오버레이의 `pageId:slotId` 키 방식을 다시 봐야 한다.
+- 8단계에서 정한 사항이다. 전체는 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)에 있다.
+  - 사용자, 권한, 권한 그룹 부여 내역은 SYSTEM 카탈로그의 `system`(`users`, `privileges`, `groups`)에 둔다. 읽을 때 빠진 항목을 빈 값으로 채우므로 포맷 번호는 올리지 않았다. 8단계 전의 데이터 디렉토리도 열리고, 열 때 SYSTEM 계정이 없으면 만든다.
+  - 비밀번호는 SCRAM-SHA-256 검증 정보(솔트, 반복 횟수, StoredKey, ServerKey)로만 저장한다. 반복 횟수의 기본값은 4096(RFC 7677 권고 최소, PostgreSQL 기본)이고 `Database.open` 의 `scramIterations` 로 바꾼다(config.json 키는 만들지 않았다). 비밀번호는 NFKC 정규화만 한다(SASLprep 은 하지 않음).
+  - 권한 검사는 문장을 실행하기 전에 구문 트리로 한다(`auth/authorizer.ts`). 문장에 적힌 객체만 보고 뷰는 펼치지 않으므로, 뷰에 권한이 있으면 기반 테이블의 권한은 보지 않는다(뷰 정의자의 권한). 실행기(`exec`)는 권한을 모른다.
+    권한이 없으면 `42501` 로 문장이 시작도 하지 않는다. DDL 계열은 자동 커밋 전에 확인하여 거부된 문장이 트랜잭션을 커밋하지 않는다. 데이터 문장은 잠금을 기다렸다가 다시 시도할 때마다 확인한다.
+  - 없는 객체는 권한 검사가 거부하지 않고 지나가 실행 단계의 "없음" 오류가 난다. 그래서 권한 없음(`42501`)과 없음(`42P01`)이 구별된다(PostgreSQL 과 같음).
+  - 사양이 정하지 않은 규칙 : 대상 컬럼을 읽는 `UPDATE`·`DELETE` 에는 `SELECT` 를 요구하지 않는다(개요 5 의 뷰 UPDATE 예시를 그대로 따르기 위함). `SELECT ... FOR UPDATE` 는 `UPDATE` 도 요구한다. `CASCADE` 로 지워지는 FK·의존 뷰에는 별도 권한을 보지 않는다.
+    `USE` 는 권한 없이 한다. 객체 수준 `CREATE` 는 줄 수 없다(`0LP01`). 자기 기본 테이블스페이스 변경은 DBA 만 한다. 빈 비밀번호는 거부한다.
+  - 뷰 소유자 규칙 : 뷰 소유자는 ALTER, DROP 을 가지고, 따로 받은 뷰 권한이 없는 SELECT·INSERT·UPDATE·DELETE 는 뷰가 참조하는 모든 객체(재귀)에 대한 본인의 권한으로 판정한다. 뷰 권한을 GRANT 하려면 뷰가 직접·간접으로 참조하는 모든 객체의 소유자이기도 해야 한다.
+    `CREATE OR REPLACE VIEW` 는 기존 뷰의 ALTER 가 필요하고 소유자를 바꾸지 않는다.
+  - DBA 는 OFFICER 를 포함하지만 `groups` 에 펼쳐 저장하지 않고 판정 때 계산한다. CONNECT 는 포함하지 않는다. SYSTEM 의 삭제와 SYSTEM 의 DBA 회수는 `42501`(7008)이다.
+  - 사용자 삭제는 접속 중이면 `55006`, 소유 객체가 있으면 `55006`, `CASCADE` 면 뷰와 테이블을 `CASCADE` 로 지운다. 받은 권한 기록도 지운다.
+  - 객체를 지우거나 테이블스페이스를 지우면 권한 기록을 지운다. DDL 이 끝날 때마다 사라진 객체의 기록을 정리하는 방식이라 모든 삭제 경로(CASCADE 포함)를 한 곳에서 처리한다. 테이블 이름 변경은 권한 기록이 따라간다.
+    지워진 테이블스페이스를 기본으로 쓰던 사용자는 기본 테이블스페이스가 없는 상태가 된다.
+  - 현재 테이블스페이스가 없는 세션(`NO_TABLESPACE`, 빈 문자열)을 지원한다(사양 4). 테이블스페이스명이 없는 객체 이름은 `3F000`(7005), `DUAL`·딕셔너리 뷰·FROM 없는 SELECT 는 그대로 된다.
+  - 딕셔너리 뷰는 `QueryContext.dictionary()` 가 돌려주는 원천(세션, 사용자, 권한, 판정자)으로 행을 만든다. 일반 사용자는 권한이 있는 객체의 행만 보고, `SYS_USERS`·`SYS_GROUP_GRANTS`·`SYS_SESSIONS` 는 자기 것만, `SYS_PRIVILEGES` 는 받은 기록과 자기 객체의 기록만 본다. 비밀번호 정보는 원천에 넘기지 않는다.
+  - 오류 번호 7000 ~ 7008 을 배정했다. 7000 `28000` 인증 실패, 7001 `42501` 권한 없음, 7002 `42710` 사용자 있음, 7003 `42704` 사용자 없음, 7004 `0LP01` 줄 수 없는 권한, 7005 `3F000` 현재 테이블스페이스 없음, 7006 `28000` CONNECT 없는 원격 접속, 7007 `22023` 비밀번호 오류, 7008 `42501` 보호되는 계정.
+  - `Database.login(사용자, 비밀번호, { local })` 은 비밀번호 확인과 CONNECT 검사를 한다. 없는 사용자도 같은 계산을 하고 같은 오류를 낸다. `createSession` 은 인증이 끝난 접속용이며 비밀번호를 보지 않고, 사용자는 있어야 한다. 기본 테이블스페이스는 사용자 설정을 따른다.
+  - 데몬은 구동할 때 SYSTEM 이 초기 암호이면 경고를 로그에 남긴다(`INITIAL_PASSWORD_WARNING`).
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -460,6 +489,16 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
+- 8단계까지 마쳤다. 9단계(통신)가 이어받을 때 알아 둘 점이다. 자세한 것은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 10절.
+  - 접속마다 SCRAM 교환을 한다. 서버는 `database.users.verifierOf(이름)` 의 검증 정보로 `parseClientFirst` → `serverFirstMessage` → `parseClientFinal` → `verifyClientProof` → `computeServerSignature` 순으로 처리한다(`auth/scram.ts`, RFC 7677 시험 벡터로 검증됨).
+    없는 사용자에게는 `decoyVerifier(이름, 구동 때 정한 비밀값)` 를 쓰고, 마지막 실패 응답은 두 경우가 같아야 한다. `client/connection.ts` 는 `clientFirstMessage`, `computeClientProof`, `verifyServerSignature` 를 쓰면 된다.
+  - 인증이 끝나면 `database.createSession({ user, tablespace })` 로 세션을 만든다. 원격 접속(루프백이 아닌 주소의 TCP·UDP)이면 그 앞에 `database.assertMayConnect(사용자, false)` 로 CONNECT 를 확인한다(`28000`, 7006). 로컬 전용 채널과 루프백은 `true` 로 부른다.
+    `Database.login` 은 평문 비밀번호를 받으므로 프로세스 안에서만 쓴다(네트워크 경로에서 쓰지 않는다).
+  - `maxConnections` 와 로컬 판정은 아직 `SessionManager` 에 없다. 9단계에서 붙인다. 접속 수 제한은 `database.sessions.count` 에서 로컬 전용 채널 세션을 뺀 수로 센다(세션에 접속 경로를 표시해야 한다).
+  - 통신 계층은 `executeAsync` 를 쓴다. 권한 검사는 두 실행 방식 모두에서 같다. 권한 오류(`42501`)는 문장 오류이며 세션을 끊지 않는다.
+  - 현재 테이블스페이스가 없는 세션이 있을 수 있다(`session.currentTablespace === ""`). 접속 응답이나 `hwdb` 의 프롬프트에서 이를 "없음" 으로 보여야 한다. `-t`(접속 직후의 테이블스페이스)는 `createSession({ tablespace })` 로 넘긴다.
+  - 비밀번호가 든 문장(`CREATE USER`, `ALTER USER`)의 원문을 로그에 남길 때는 1단계의 로그 가림을 거친다. 구문 트리와 `Statement` 의 `password` 는 평문이다.
+  - 새 문장 종류를 추가할 때는 `auth/authorizer.ts` 의 `authorizeStatement` 와 `session.ts` 의 `statementClass` 를 함께 고친다. 빠뜨리면 `never` 검사로 컴파일이 실패한다.
 - **DML 구조와 성능** (6단계 점검 보완에서 기록, 7단계 이후에도 유효). `exec/dml.ts` 는 INSERT·UPDATE·DELETE 마다 대상 테이블(과 FK 로 얽힌 테이블)의 모든 행을 `readTableRows` 로 메모리 이미지에 올리고, 제약을 검사한 뒤 바뀐 행을 되쓴다. 7단계도 이 방식을 그대로 두고 결과를 트랜잭션 오버레이에 접는다. 행 단위 접근은 하지 않았다.
   - 16,384행 테이블에서 1건 INSERT 가 약 26ms, `INSERT ... SELECT` 로 8,192행을 더 넣는 데 약 17초가 걸린다. (6단계 점검 보완 시점의 측정)
   - CPU 프로파일에서 `v1/index.ts` 의 `checkedPage` 와 `v1/pages.ts` 의 `checksum` 이 상위였다. 페이지를 읽을 때마다 CRC-32 를 검증하므로, 디스크에서 올릴 때 한 번만 검증하는 쪽으로 바꾸면 줄어든다. 체크섬은 손상 감지 규칙(상세 3, 12)이므로 바꿀 때 `storage.test.ts` 의 손상 감지 테스트를 유지한다.
@@ -528,3 +567,8 @@ SQL 접속 (상세 14-2)
   오류 번호 6000 ~ 6006 을 배정했다. 테스트 49개(`test/txn` 48개, 데몬 1개)를 추가해 `npm test` 322개(Node.js 24.21.0) 통과. 10개 세션 동시성 테스트(약 1.5 ~ 2초)를 포함한다.
   bun 확인, `SYS_SESSIONS` 연결, 설계 문서는 남아 있다. (현재 상태의 "7단계 남은 마무리")
 - 2026-10-11 : 병합 점검. 원격 커밋(`f39583f`)과 병합한 커밋(`9d50f23`)에 충돌 마커가 남아 빌드가 깨져 있었다. `session.ts`·`dml.ts` 의 충돌을 7단계 쪽으로 정리하고, `AlterTable` 의 컨텍스트 전달을 7단계 시그니처(`queryContext(params, txn)`)에 맞추었다. `dml.ts` 의 `pkEquals` 호출은 `tupleKey` 비교로 바꿨다. 이 문서의 6단계 점검 보완 기록이 병합 중 빠져 있어 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개를 7단계 동작으로 바꿨다. `npm test` 331개 통과, bun 330개 통과(`t.mock` 1개 제외).
+- 2026-10-15 : 7단계 남은 마무리 완료. `SYS_SESSIONS` 연결(`QueryContext.dictionary()`), `scanTable` 의 불필요한 조건 제거, 테스트 제목 수정, `docs/transactions.md` 작성, `docs/storage-v1.md` 덧붙임. 테스트 1개 추가.
+- 2026-10-15 : 8단계(계정과 권한) 완료. `auth/scram.ts`(SCRAM-SHA-256 계산, RFC 7677 시험 벡터), `auth/users.ts`(계정 저장소, SYSTEM 계정, 비밀번호 확인), `auth/privileges.ts`(부여 기록, 판정, 권한 그룹, 이름 해석),
+  `auth/authorizer.ts`(문장별 권한 검사), `exec/accounts.ts`(사용자·권한 문장 실행)를 구현하고 `session.ts` 에 연결했다(`Database.login`, `assertMayConnect`, 문장 실행 전 권한 확인, DDL 뒤 기록 정리).
+  딕셔너리 뷰의 가시성과 `SYS_USERS`·`SYS_PRIVILEGES`·`SYS_GROUP_GRANTS`, 현재 테이블스페이스가 없는 세션(`3F000`), 데몬의 초기 암호 경고, `CREATE OR REPLACE VIEW` 의 소유자 유지, 테이블 이름 변경 때 권한 이동을 넣었다. 오류 번호 7000 ~ 7008 을 배정했다.
+  테스트 51개를 더해 `npm test` 383개 통과, bun 382개 통과(`t.mock` 1개 제외). 권한 검사기를 무력화하면 테스트가 실패함을 확인했다. 문서는 `docs/accounts-and-privileges.md`.

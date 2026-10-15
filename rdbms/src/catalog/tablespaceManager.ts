@@ -29,6 +29,7 @@ import {
   CatalogStore,
   emptyCatalog,
   emptySystemCatalog,
+  emptySystemRegistry,
   parseCatalog,
   serializeCatalog,
 } from "./catalog.js";
@@ -101,16 +102,14 @@ export class TablespaceManager {
       });
       try {
         const data: CatalogData = emptySystemCatalog();
-        data.system = {
-          tablespaces: {
-            SYSTEM: {
-              name: "SYSTEM",
-              dataFile: systemFile,
-              characterSet: "UTF8",
-              formatVersion: LATEST_FORMAT_VERSION,
-            },
+        data.system = emptySystemRegistry({
+          SYSTEM: {
+            name: "SYSTEM",
+            dataFile: systemFile,
+            characterSet: "UTF8",
+            formatVersion: LATEST_FORMAT_VERSION,
           },
-        };
+        });
         const batch = created.begin();
         try {
           batch.setCatalog(serializeCatalog(data));
@@ -149,7 +148,7 @@ export class TablespaceManager {
     try {
       const data = parseCatalog(space.getCatalog(), "SYSTEM");
       if (data.system === undefined) {
-        data.system = { tablespaces: {} };
+        data.system = emptySystemRegistry();
       }
       if (data.system.tablespaces["SYSTEM"] === undefined) {
         data.system.tablespaces["SYSTEM"] = {
@@ -267,7 +266,7 @@ export class TablespaceManager {
       registry[name] = record;
     }
     if (system.data.system === undefined) {
-      system.data.system = { tablespaces: {} };
+      system.data.system = emptySystemRegistry();
     }
     system.data.system.tablespaces = registry;
     system.save();

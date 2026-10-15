@@ -23,6 +23,8 @@ import type {
   Expression,
   ForeignKeyReference,
   ObjectName,
+  Privilege,
+  PrivilegeGroup,
   Query,
   ReferentialAction,
   TableConstraint,
@@ -98,9 +100,50 @@ export interface CatalogData {
   system?: SystemRegistry;
 }
 
-/** SYSTEM 테이블스페이스에 두는 서버 전체 정보이다. 사용자와 권한은 8단계에서 채운다. */
+/** 사용자 계정의 저장 형태이다. 비밀번호는 SCRAM-SHA-256 검증 정보(모두 base64)로만 둔다. */
+export interface StoredUser {
+  name: string;
+  /** 기본 테이블스페이스. 없으면 null 이다. */
+  defaultTablespace: string | null;
+  verifier: { salt: string; iterations: number; storedKey: string; serverKey: string };
+  createdAt: string;
+}
+
+/**
+ * 권한 부여 기록 하나이다. 권한 하나가 기록 하나이며, `object` 가 null 이면 테이블스페이스 수준이다.
+ * 수준마다 기록은 서로 독립이다.
+ */
+export interface StoredPrivilege {
+  grantee: string;
+  tablespace: string;
+  object: string | null;
+  privilege: Privilege;
+}
+
+/** SYSTEM 테이블스페이스에 두는 서버 전체 정보이다. 테이블스페이스 목록, 사용자, 권한, 권한 그룹 부여 내역을 가진다. */
 export interface SystemRegistry {
   tablespaces: Record<string, TablespaceRecord>;
+  /** 사용자 이름 → 계정. */
+  users: Record<string, StoredUser>;
+  /** 테이블스페이스와 객체(테이블, 뷰)에 대한 권한 부여 기록. */
+  privileges: StoredPrivilege[];
+  /** 사용자 이름 → 명시적으로 부여받은 권한 그룹. DBA 가 OFFICER 를 포함하는 것은 판정 때 계산한다. */
+  groups: Record<string, PrivilegeGroup[]>;
+}
+
+/** 비어 있는 SYSTEM 레지스트리를 만든다. */
+export function emptySystemRegistry(tablespaces: Record<string, TablespaceRecord> = {}): SystemRegistry {
+  return { tablespaces, users: {}, privileges: [], groups: {} };
+}
+
+/** 저장된 레지스트리의 빠진 항목을 빈 값으로 채운다. 앞으로 항목이 늘어나도 읽을 수 있게 하기 위함이다. */
+export function normalizeSystemRegistry(raw: Partial<SystemRegistry> | undefined): SystemRegistry {
+  return {
+    tablespaces: raw?.tablespaces ?? {},
+    users: raw?.users ?? {},
+    privileges: raw?.privileges ?? [],
+    groups: raw?.groups ?? {},
+  };
 }
 
 /** 테이블스페이스 목록의 한 행이다. dataFile 은 절대 경로로 둔다. */
@@ -181,7 +224,7 @@ export function emptyCatalog(): CatalogData {
 /** 비어 있는 SYSTEM 카탈로그를 만든다. 테이블스페이스 목록을 함께 가진다. */
 export function emptySystemCatalog(): CatalogData {
   const data = emptyCatalog();
-  data.system = { tablespaces: {} };
+  data.system = emptySystemRegistry();
   return data;
 }
 
@@ -212,8 +255,8 @@ export function parseCatalog(bytes: Buffer | null, tablespaceName: string): Cata
     constraints: data.constraints ?? {},
     nextIndexSeq: data.nextIndexSeq ?? 1,
     nextFkSeq: data.nextFkSeq ?? 1,
-    ...(data.system !== undefined ? { system: data.system } : {}),
-    ...(tablespaceName === "SYSTEM" && data.system === undefined ? { system: { tablespaces: {} } } : {}),
+    ...(data.system !== undefined ? { system: normalizeSystemRegistry(data.system) } : {}),
+    ...(tablespaceName === "SYSTEM" && data.system === undefined ? { system: emptySystemRegistry() } : {}),
   };
 }
 

@@ -657,3 +657,25 @@ test("데이터베이스를 닫으면 세션이 모두 끝나고 새 세션을 �
   assert.equal(a.isClosed, true);
   assert.throws(() => db.createSession({}), state("57P01"));
 });
+
+test("SYS_SESSIONS 는 접속 중인 세션과 트랜잭션 상태를 보여 준다", (t) => {
+  const { db, a, b } = setup(t);
+  try {
+    seed(a);
+    a.execute("BEGIN");
+    a.execute("INSERT INTO T VALUES (4, 40)");
+    b.execute("SET AUTOCOMMIT OFF");
+    const view = "SELECT SESSION_ID, USER_NAME, TABLESPACE_NAME, AUTOCOMMIT, IN_TRANSACTION FROM SYSTEM.SYS_SESSIONS ORDER BY SESSION_ID";
+    assert.deepEqual(rows(b, view), [
+      [String(a.id), "SYSTEM", "APP", "YES", "YES"],
+      [String(b.id), "SYSTEM", "APP", "NO", "YES"],
+    ]);
+    // 세션이 끝나면 목록에서 빠지고, 트랜잭션이 끝나면 IN_TRANSACTION 이 바뀐다.
+    a.execute("COMMIT");
+    b.close();
+    assert.deepEqual(rows(a, view), [[String(a.id), "SYSTEM", "APP", "YES", "NO"]]);
+    assert.deepEqual(rows(a, "SELECT COUNT(*) FROM SYSTEM.SYS_SESSIONS"), [["1"]]);
+  } finally {
+    db.close();
+  }
+});

@@ -31,6 +31,12 @@ export const DEFAULT_PORT = 7410;
 /** 데이터 디렉토리 안에 두는 잠금 파일의 이름. */
 export const LOCK_FILE_NAME = "helloworlddb.lock";
 
+/**
+ * 세션에 현재 테이블스페이스가 없는 상태를 나타내는 값이다. (빈 문자열)
+ * 사용자에게 기본 테이블스페이스가 없고 `USE` 도 하지 않았을 때이며, 이때는 객체 이름에 테이블스페이스명을 붙여야 한다.
+ */
+export const NO_TABLESPACE = "";
+
 /** 로그 디렉토리 안에 두는 로그 파일의 이름. */
 export const LOG_FILE_NAME = "helloworlddb.log";
 

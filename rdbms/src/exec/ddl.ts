@@ -19,6 +19,8 @@
 
 import { DbError, ERROR_CODES, unsupportedFeature } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
+import { NO_TABLESPACE } from "../common/instance.js";
+import { AccessControl, noCurrentTablespace } from "../auth/privileges.js";
 import type {
   AlterTableStatement,
   CreateIndexStatement,
@@ -79,6 +81,7 @@ export function resolveTablespace(
   current: string,
 ): { tablespace: string; name: string } {
   const tablespace = name.tablespace ?? current;
+  if (tablespace === NO_TABLESPACE) throw noCurrentTablespace(name.position);
   if (!manager.has(tablespace)) {
     fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${tablespace}".`, name.position);
   }
@@ -942,6 +945,8 @@ function renameTable(
     if (index.table === tableName) index.table = newName;
   }
   persistCatalog(catalog);
+  // 이 테이블에 부여된 권한은 새 이름을 따라간다.
+  new AccessControl(manager).renameObject(tablespace, tableName, newName);
 }
 
 /** 값 묶음을 비교용 문자열로 바꾼다. 인덱스 키와 같은 인코딩이라 CHAR 의 뒤쪽 공백은 무시한다. */
@@ -1601,9 +1606,10 @@ export function executeCreateView(
     fail("54011", ERROR_CODES.TOO_MANY_COLUMNS, "A view cannot have more than 1000 columns.", stmt.name.position);
   }
 
+  // CREATE OR REPLACE 는 소유자를 바꾸지 않는다. ALTER 권한만 가진 사용자가 교체해도 소유자는 그대로이다.
   catalog.data.views[name] = {
     name,
-    owner,
+    owner: existingView?.owner ?? owner,
     columns,
     queryText: stmt.queryText,
     dependencies,

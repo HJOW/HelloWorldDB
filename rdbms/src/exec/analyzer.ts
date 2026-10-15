@@ -15,6 +15,8 @@
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
+import { NO_TABLESPACE } from "../common/instance.js";
+import { noCurrentTablespace } from "../auth/privileges.js";
 import type {
   ColumnExpression,
   Expression,
@@ -82,6 +84,10 @@ function bindTable(
 ): BoundSource {
   const tablespace = name.tablespace ?? currentTablespace;
   const objectName = name.name;
+  // 현재 테이블스페이스가 없으면 테이블스페이스명을 붙인 이름과 DUAL, 딕셔너리 뷰만 풀 수 있다.
+  if (name.tablespace === null && currentTablespace === NO_TABLESPACE && objectName !== "DUAL" && !isDictionaryView(objectName)) {
+    throw noCurrentTablespace(position);
+  }
   // DUAL 과 딕셔너리는 사용자 객체보다 나중에 본다. 같은 이름의 사용자 객체가 있으면 그것을 쓴다.
   if (name.tablespace === null || tablespace === currentTablespace) {
     try {

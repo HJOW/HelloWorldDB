@@ -274,7 +274,7 @@ test("규칙 기반 인덱스 선택을 확인한다", (t) => {
   }
 });
 
-test("FOR UPDATE는 잠금 없이 읽는다", (t) => {
+test("자동 커밋에서 FOR UPDATE 는 읽고 바로 푼다", (t) => {
   const { db, session } = setupApp(t);
   try {
     empSetup(session);

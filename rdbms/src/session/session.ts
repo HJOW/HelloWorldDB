@@ -2,7 +2,8 @@
  * 세션 : 접속 하나에 대응하는 실행 단위이자 SQL 실행의 입구.
  *
  * 담당
- *  - 세션 상태 : 로그인한 사용자, 자동 커밋 여부, 진행 중인 트랜잭션, 현재 테이블스페이스, 타임존
+ *  - 세션 상태 : 로그인한 사용자, 자동 커밋 여부, 진행 중인 트랜잭션, 현재 테이블스페이스(없을 수 있음), 타임존
+ *  - 접속 : `Database.login`(비밀번호 확인과 CONNECT 검사), `Database.createSession`(인증이 끝난 접속)
  *  - 문장 실행의 흐름 : 구문 분석(sql) → 이름과 타입 검사(exec/analyzer) → 권한 검사(auth) → 실행(exec)
  *  - 세션 문장 처리 : USE, SET TIME ZONE, SET AUTOCOMMIT
  *  - 트랜잭션 문장 처리 : BEGIN, COMMIT, ROLLBACK, SAVEPOINT, ROLLBACK TO, RELEASE SAVEPOINT
@@ -31,12 +32,13 @@
  *    DDL 의 결과는 바로 저장되므로 롤백할 수 없다.
  *  - 세션 문장과 트랜잭션 문장 : 잠금 없이 바로 처리한다.
  *
- * 관련 사양 : AGENTS.md 상세 0, 9, 10
- * 구현 단계 : 5단계(실행 입구), 6단계(질의와 DML 연결), 7단계(트랜잭션 상태)
+ * 관련 사양 : AGENTS.md 상세 0, 4, 5, 6, 9, 10
+ * 구현 단계 : 5단계(실행 입구), 6단계(질의와 DML 연결), 7단계(트랜잭션 상태), 8단계(계정과 권한)
  */
 
-import { DbError, ERROR_CODES, unsupportedFeature } from "../common/errors.js";
+import { DbError, ERROR_CODES } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
+import { NO_TABLESPACE } from "../common/instance.js";
 import { parseStatement } from "../sql/parser.js";
 import type { Statement } from "../sql/ast.js";
 import type { DataType } from "../types/dataType.js";
@@ -45,6 +47,19 @@ import type { TypeContext } from "../types/cast.js";
 import type { SqlValue } from "../types/value.js";
 import { ensureSystemTablespace } from "../catalog/bootstrap.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
+import type { DictionarySources } from "../catalog/dictionaryViews.js";
+import { AccessControl } from "../auth/privileges.js";
+import { SYSTEM_USER, UserStore } from "../auth/users.js";
+import { authorizeStatement } from "../auth/authorizer.js";
+import type { AuthContext } from "../auth/authorizer.js";
+import {
+  executeAlterUser,
+  executeCreateUser,
+  executeDropUser,
+  executeGrantOrRevoke,
+  executeGrantOrRevokeGroup,
+} from "../exec/accounts.js";
+import type { AccountsContext } from "../exec/accounts.js";
 import {
   executeAlterTable,
   executeCreateIndex,
@@ -82,12 +97,25 @@ export interface DatabaseOptions {
   lockTimeoutMs?: number;
   /** 유휴 세션을 닫는 시간(ms). `session.idleTimeoutMs` 와 같다. 0 이면 제한 없음. 기본 0. */
   idleTimeoutMs?: number;
+  /** 새 비밀번호 검증 정보의 SCRAM 반복 횟수. 기본 4096. */
+  scramIterations?: number;
 }
 
 export interface SessionOptions {
+  /** 세션의 사용자. 생략하면 SYSTEM 이다. 이미 인증을 거친 접속을 위한 것이며 비밀번호는 확인하지 않는다. */
   user?: string;
+  /** 접속 직후의 현재 테이블스페이스. 생략하면 사용자의 기본 테이블스페이스이고, 그것도 없으면 현재 테이블스페이스가 없다. */
   tablespace?: string;
   timeZone?: string;
+}
+
+/** 비밀번호로 접속할 때의 옵션이다. */
+export interface LoginOptions extends SessionOptions {
+  /**
+   * 로컬 접속인지 여부. 로컬 전용 채널이나 루프백 주소에서 들어온 접속이면 true 이다. 기본 true.
+   * false(원격)이면 CONNECT 권한 그룹이 있어야 한다.
+   */
+  local?: boolean;
 }
 
 /**
@@ -99,6 +127,10 @@ export class Database {
   /** 모든 세션이 함께 쓰는 잠금 관리자이다. */
   readonly locks = new LockManager();
   readonly sessions: SessionManager;
+  /** 사용자 계정 저장소이다. SYSTEM 테이블스페이스에 저장한다. */
+  readonly users: UserStore;
+  /** 권한 부여 기록과 권한 판정이다. */
+  readonly access: AccessControl;
   private transactionSeq = 0;
 
   private constructor(
@@ -107,23 +139,39 @@ export class Database {
     readonly defaultTimeZone: string,
     readonly lockTimeoutMs: number,
     idleTimeoutMs: number,
+    scramIterations: number | undefined,
   ) {
     this.sessions = new SessionManager(idleTimeoutMs);
+    this.users = new UserStore(manager, scramIterations);
+    this.access = new AccessControl(manager);
   }
 
-  /** 데이터 디렉토리를 열고 SYSTEM 을 준비한다. 없으면 새로 만든다. */
+  /** 데이터 디렉토리를 열고 SYSTEM 을 준비한다. 없으면 새로 만든다. SYSTEM 계정이 없으면 함께 만든다. */
   static open(dataDir: string, options: DatabaseOptions = {}): Database {
     const manager = ensureSystemTablespace(dataDir, {
       serverVersion: options.serverVersion,
       onWarning: options.onWarning,
     });
-    return new Database(
+    const database = new Database(
       dataDir,
       manager,
       options.timeZone ?? "local",
       options.lockTimeoutMs ?? 30000,
       options.idleTimeoutMs ?? 0,
+      options.scramIterations,
     );
+    try {
+      database.users.ensureSystemAccount();
+    } catch (error) {
+      manager.close();
+      throw error;
+    }
+    return database;
+  }
+
+  /** SYSTEM 계정이 초기 암호 그대로인지 본다. 구동 로그와 `hwdb` 의 경고에 쓴다. */
+  isInitialSystemPassword(): boolean {
+    return this.users.isInitialSystemPassword();
   }
 
   /** 트랜잭션과 잠금 소유자에 쓸 새 번호이다. DDL 문장도 이 번호로 객체 잠금을 건다. */
@@ -132,26 +180,48 @@ export class Database {
     return this.transactionSeq;
   }
 
-  /** 세션을 만든다. 사용자 인증은 8단계에서 붙이며 지금은 이름만 남긴다. */
+  /**
+   * 세션을 만든다. 이미 인증을 거친 접속(통신 계층의 SCRAM 인증 뒤, 로컬 CLI, 내부 시험)을 위한 것이며
+   * 비밀번호는 확인하지 않는다. 사용자는 있어야 한다. 비밀번호로 접속하려면 `login` 을 쓴다.
+   * 현재 테이블스페이스는 `options.tablespace`, 없으면 사용자의 기본 테이블스페이스이다.
+   * 둘 다 없으면 현재 테이블스페이스가 없는 상태("")로 시작하며, 테이블스페이스명을 붙이거나 USE 를 먼저 실행해야 한다.
+   */
   createSession(options: SessionOptions = {}): Session {
     if (!this.sessions.isAccepting) {
       fail("57P01", ERROR_CODES.SESSION_CLOSED, "Database is shutting down.");
     }
-    const user = options.user ?? "SYSTEM";
+    const user = options.user ?? SYSTEM_USER;
+    const account = this.users.require(user);
     const timeZone = options.timeZone ?? this.defaultTimeZone;
     // 타임존 문자열이 잘못되면 여기서 실패한다.
     resolveTimeZone(timeZone);
-    let current = options.tablespace ?? null;
-    if (current === null) {
-      // 기본 테이블스페이스가 없으면 SYSTEM 에서 시작한다. (8단계에서 사용자 기본값으로 바꾼다)
-      current = "SYSTEM";
-    }
-    if (!this.manager.has(current)) {
+    const current = options.tablespace ?? account.defaultTablespace ?? NO_TABLESPACE;
+    if (current !== NO_TABLESPACE && !this.manager.has(current)) {
       fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${current}".`);
     }
     const session = new Session(this, this.sessions.nextId(), user, current, timeZone);
     this.sessions.add(session);
     return session;
+  }
+
+  /**
+   * 사용자 이름과 비밀번호로 접속한다. 사용자가 없는 경우와 비밀번호가 틀린 경우를 구분하지 않고 같은 오류(28000)를 낸다.
+   * 원격 접속(`local: false`)이면 CONNECT 권한 그룹이 있어야 한다. 비밀번호가 맞은 뒤에만 이 검사를 한다.
+   * 로컬 접속은 CONNECT 와 상관없이 받는다.
+   */
+  login(userName: string, password: string, options: LoginOptions = {}): Session {
+    if (!this.users.verify(userName, password)) {
+      fail("28000", ERROR_CODES.AUTHENTICATION_FAILED, "Authentication failed.");
+    }
+    this.assertMayConnect(userName, options.local ?? true);
+    return this.createSession({ user: userName, tablespace: options.tablespace, timeZone: options.timeZone });
+  }
+
+  /** 인증이 끝난 사용자가 이 경로로 접속해도 되는지 본다. CONNECT 가 없는 사용자는 로컬 접속만 한다. */
+  assertMayConnect(userName: string, local: boolean): void {
+    if (!local && !this.access.hasGroup(userName, "CONNECT")) {
+      fail("28000", ERROR_CODES.CONNECT_NOT_ALLOWED, "User is not allowed to connect remotely; the CONNECT privilege group is required.");
+    }
   }
 
   /** 모든 세션을 끝내고(커밋하지 않은 변경은 롤백) 모든 테이블스페이스를 닫는다. */
@@ -167,7 +237,7 @@ export type SessionCloseReason = "closed" | "idle" | "shutdown";
 
 /**
  * 접속 하나의 실행 단위이다. 한 번에 문장 하나씩 순서대로 처리한다.
- * 권한은 8단계에서 붙는다.
+ * 문장은 실행하기 전에 사용자의 권한을 확인한다. (auth/authorizer.ts)
  */
 export class Session {
   autocommit = true;
@@ -255,7 +325,46 @@ export class Session {
       viewStack: [],
       txn,
       locker: this.database.locks,
+      dictionary: () => this.dictionarySources(),
     };
+  }
+
+  /** 딕셔너리 뷰가 쓸 원천이다. 비밀번호 검증 정보는 넘기지 않는다. 이 사용자에게 보일 행은 판정자가 가린다. */
+  private dictionarySources(): DictionarySources {
+    const registry = this.database.manager.systemCatalog().data.system;
+    return {
+      sessions: this.database.sessions.list(),
+      users: this.database.users.list().map((user) => ({ name: user.name, defaultTablespace: user.defaultTablespace })),
+      privileges: registry?.privileges ?? [],
+      groups: registry?.groups ?? {},
+      access: this.database.access.dictionaryAccess(this.user),
+    };
+  }
+
+  /** 권한 검사에 쓸 문맥이다. */
+  private authContext(): AuthContext {
+    return {
+      access: this.database.access,
+      manager: this.database.manager,
+      user: this.user,
+      currentTablespace: this.currentTablespace,
+    };
+  }
+
+  /** 사용자·권한 문장이 쓸 문맥이다. */
+  private accountsContext(): AccountsContext {
+    return {
+      manager: this.database.manager,
+      users: this.database.users,
+      access: this.database.access,
+      connectedUsers: () => this.database.sessions.list().map((info) => info.user),
+      currentTablespace: this.currentTablespace,
+    };
+  }
+
+  /** 문장을 실행해도 되는지 확인한다. 권한 변경은 접속 중인 세션에도 다음 문장부터 바로 적용된다. */
+  private authorize(stmt: Statement): void {
+    authorizeStatement(this.authContext(), stmt);
   }
 
   // -------------------------------------------------------------------------
@@ -352,6 +461,8 @@ export class Session {
         }
       }
       case "ddl": {
+        // 권한이 없는 문장이 진행 중인 트랜잭션을 커밋하지 않도록 자동 커밋 전에 확인한다.
+        this.authorize(stmt);
         this.commitBeforeDdl();
         const owner = this.database.nextTransactionId();
         try {
@@ -362,8 +473,6 @@ export class Session {
       }
       case "control":
         return this.executeControl(stmt);
-      case "unsupported":
-        throw unsupportedFeature("User and privilege management is supported in a later step.");
     }
   }
 
@@ -392,6 +501,7 @@ export class Session {
         }
       }
       case "ddl": {
+        this.authorize(stmt);
         this.commitBeforeDdl();
         const owner = this.database.nextTransactionId();
         try {
@@ -409,8 +519,6 @@ export class Session {
       }
       case "control":
         return this.executeControl(stmt);
-      case "unsupported":
-        throw unsupportedFeature("User and privilege management is supported in a later step.");
     }
   }
 
@@ -444,6 +552,8 @@ export class Session {
 
   /** 문장 하나를 실행한다. 실패하면 이 문장이 한 변경만 되돌린다. */
   private attemptData(stmt: Statement, params: SqlValue[], txn: Transaction): ExecuteResult {
+    // 잠금을 기다렸다가 다시 시도할 때도 매번 확인한다. 기다리는 동안 권한이 회수될 수 있다.
+    this.authorize(stmt);
     const mark = txn.mark();
     try {
       return this.executeData(stmt, params, txn);
@@ -511,7 +621,29 @@ export class Session {
     const keys = this.ddlLockKeys(stmt);
     const locked = this.database.locks.tryAcquireAll(owner, keys);
     if (!locked.ok) throw lockConflict(locked.key);
-    return this.executeDdl(stmt, params, owner);
+    let result: ExecuteResult;
+    try {
+      result = this.executeDdl(stmt, params, owner);
+    } catch (error) {
+      // 일부만 실행되고 실패했을 수 있으므로 정리하되, 정리 오류가 원래 오류를 가리지 않게 한다.
+      try {
+        this.cleanupAfterDdl();
+      } catch {
+        // 원래 오류를 유지한다.
+      }
+      throw error;
+    }
+    this.cleanupAfterDdl();
+    return result;
+  }
+
+  /**
+   * DDL 이 끝난 뒤의 정리이다. 삭제된 객체와 테이블스페이스의 권한 기록을 지우고,
+   * 삭제된 테이블스페이스를 기본으로 쓰던 사용자는 기본 테이블스페이스가 없는 상태로 둔다.
+   */
+  private cleanupAfterDdl(): void {
+    this.database.access.pruneStaleRecords();
+    this.database.users.clearMissingDefaultTablespaces();
   }
 
   /**
@@ -581,6 +713,15 @@ export class Session {
         }
         break;
       }
+      case "DropUser": {
+        // CASCADE 는 사용자가 소유한 테이블을 지우므로 DROP TABLE 과 같이 FK 로 엮인 테이블까지 잠근다.
+        if (stmt.cascade) {
+          for (const entry of this.database.access.objectsOwnedBy(stmt.name)) {
+            if (entry.kind === "table") addRelated(entry.tablespace, entry.name);
+          }
+        }
+        break;
+      }
       default:
         break;
     }
@@ -626,6 +767,18 @@ export class Session {
       case "DropIndex":
         executeDropIndex(manager, this.currentTablespace, stmt);
         return { kind: "ok", message: `Index "${stmt.name.name}" dropped.` };
+      case "CreateUser":
+        return { kind: "ok", message: executeCreateUser(this.accountsContext(), stmt) };
+      case "AlterUser":
+        return { kind: "ok", message: executeAlterUser(this.accountsContext(), stmt) };
+      case "DropUser":
+        return { kind: "ok", message: executeDropUser(this.accountsContext(), stmt) };
+      case "Grant":
+      case "Revoke":
+        return { kind: "ok", message: executeGrantOrRevoke(this.accountsContext(), stmt) };
+      case "GrantGroup":
+      case "RevokeGroup":
+        return { kind: "ok", message: executeGrantOrRevokeGroup(this.accountsContext(), stmt) };
       default:
         throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, `Not a DDL statement: ${stmt.kind}.`);
     }
@@ -711,9 +864,12 @@ function isDeadlock(error: unknown): boolean {
   return error instanceof DbError && error.sqlState === "40P01";
 }
 
-type StatementClass = "data" | "ddl" | "control" | "unsupported";
+type StatementClass = "data" | "ddl" | "control";
 
-/** 문장을 실행 방식에 따라 나눈다. */
+/**
+ * 문장을 실행 방식에 따라 나눈다.
+ * 사용자·권한 문장(CREATE USER, ALTER USER, DROP USER, GRANT, REVOKE)은 DDL 과 같이 실행 전후에 자동 커밋되고 롤백할 수 없다.
+ */
 function statementClass(stmt: Statement): StatementClass {
   switch (stmt.kind) {
     case "Query":
@@ -731,6 +887,13 @@ function statementClass(stmt: Statement): StatementClass {
     case "DropView":
     case "CreateIndex":
     case "DropIndex":
+    case "CreateUser":
+    case "AlterUser":
+    case "DropUser":
+    case "Grant":
+    case "Revoke":
+    case "GrantGroup":
+    case "RevokeGroup":
       return "ddl";
     case "Use":
     case "SetTimeZone":
@@ -742,14 +905,6 @@ function statementClass(stmt: Statement): StatementClass {
     case "Savepoint":
     case "ReleaseSavepoint":
       return "control";
-    case "CreateUser":
-    case "AlterUser":
-    case "DropUser":
-    case "Grant":
-    case "Revoke":
-    case "GrantGroup":
-    case "RevokeGroup":
-      return "unsupported";
     default: {
       const exhaustive: never = stmt;
       throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, `Unsupported statement: ${JSON.stringify(exhaustive)}.`);

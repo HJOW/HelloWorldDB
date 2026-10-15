@@ -26,6 +26,10 @@ import { acquireLock, readLockFile, releaseLock } from "./lockFile.js";
 import type { LockFileContent } from "./lockFile.js";
 import { Database } from "../session/session.js";
 
+/** SYSTEM 계정이 초기 암호 그대로일 때 구동 로그에 남기는 경고이다. `hwdb start` 도 같은 내용을 보여 준다. */
+export const INITIAL_PASSWORD_WARNING =
+  "The SYSTEM account still uses its initial password. Connect with hwdb on this machine and run: ALTER USER SYSTEM IDENTIFIED BY '<new password>'";
+
 /** 상태 조회에 답할 정보이다. 세션 수는 통신(9단계)이 붙기 전에는 0이다. */
 export interface ServerStatus {
   running: boolean;
@@ -92,6 +96,10 @@ export class Server {
       this.logger.info(
         `Server started. port=${String(this.config.port)} pid=${String(lock.pid)} dataDir="${this.config.dataDir}"`,
       );
+      // 초기 암호를 바꾸지 않은 채 구동하면 경고를 남긴다. 표준 절차는 서버 장비에서 hwdb 로 접속해 바꾸는 것이다.
+      if (this.database.isInitialSystemPassword()) {
+        this.logger.warn(INITIAL_PASSWORD_WARNING);
+      }
       this.logger.info(
         `Configured transports (not opened yet): local-channel=always tcp=${this.config.tcp.enabled ? "on" : "off"} udp=${this.config.udp.enabled ? "on" : "off"}`,
       );

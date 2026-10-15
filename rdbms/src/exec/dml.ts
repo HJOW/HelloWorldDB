@@ -23,6 +23,8 @@
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
+import { NO_TABLESPACE } from "../common/instance.js";
+import { noCurrentTablespace } from "../auth/privileges.js";
 import type {
   DeleteStatement,
   Expression,
@@ -83,6 +85,7 @@ function resolveTarget(
   target: ObjectName,
 ): DmlTarget & { viewName: string | null; columnMap: Map<string, string | null> | null } {
   const tablespace = target.tablespace ?? currentTablespace;
+  if (tablespace === NO_TABLESPACE) throw noCurrentTablespace(target.position);
   if (!manager.has(tablespace)) {
     fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${tablespace}".`, target.position);
   }

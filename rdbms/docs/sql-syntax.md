@@ -93,7 +93,8 @@ SELECT SET SOME TABLE THEN TO TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE W
 - DML : `RETURNING`, `ON CONFLICT`, `INSERT ALL`, `UPDATE ... FROM`, `DELETE ... USING`, 여러 컬럼 대입 `SET (a, b) = ...`
 - 권한 : `WITH GRANT OPTION`, `GRANT OPTION FOR`, `PUBLIC`, 컬럼 단위 권한, `REFERENCES`·`EXECUTE` 등 사양에 없는 권한, 사용자 정의 권한 그룹
 - 트랜잭션 : `READ COMMITTED` 외의 격리 수준, `READ ONLY`·`READ WRITE`, `AND CHAIN`
-- 7단계 전의 임시 제한 : 문장마다 바로 커밋되므로 `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF` 는 `0A000` 이다. 되돌릴 수 없는데 성공으로 알리면 데이터가 남기 때문이다. `COMMIT`, `SET AUTOCOMMIT ON`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` 는 할 일이 없는 채로 받는다. 7단계에서 이 제한을 푼다.
+- 6단계까지의 임시 제한(`BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF` 를 `0A000` 으로 막던 것)은 7단계에서 풀렸다. 트랜잭션의 동작은 [transactions.md](transactions.md)에 있다.
+- 사용자와 권한 문장(`CREATE USER`, `ALTER USER`, `DROP USER`, `GRANT`, `REVOKE`)은 8단계에서 실행되기 시작했다. 규칙은 [accounts-and-privileges.md](accounts-and-privileges.md)에 있다.
 
 ## 한도
 

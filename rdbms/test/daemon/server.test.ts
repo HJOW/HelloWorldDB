@@ -128,3 +128,33 @@ test("포그라운드 구동의 종료와 구동 완료 콜백 실패는 자원�
   assert.equal(isRunning(config.dataDir), false);
   assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], before);
 });
+
+test("SYSTEM 계정이 초기 암호 그대로이면 구동 로그에 경고하고, 바꾼 뒤에는 경고하지 않는다 (8단계)", async (t) => {
+  const installDir = makeTempDir();
+  t.after(() => fs.rmSync(installDir, { recursive: true, force: true }));
+  const { config } = loadConfig(installDir);
+  const startWithWarnings = async (): Promise<{ server: Server; warnings: string[] }> => {
+    const warnings: string[] = [];
+    const logger = {
+      error: () => {},
+      warn: (message: string) => { warnings.push(message); },
+      info: () => {},
+      debug: () => {},
+      close: async () => {},
+    };
+    const server = new Server(config, logger);
+    await server.start();
+    return { server, warnings };
+  };
+
+  const first = await startWithWarnings();
+  assert.equal(first.warnings.some((message) => message.includes("initial password")), true);
+  (first.server.getDatabase() as NonNullable<ReturnType<Server["getDatabase"]>>)
+    .createSession({})
+    .execute("ALTER USER SYSTEM IDENTIFIED BY 'changed-password'");
+  await first.server.stop();
+
+  const second = await startWithWarnings();
+  assert.equal(second.warnings.some((message) => message.includes("initial password")), false);
+  await second.server.stop();
+});

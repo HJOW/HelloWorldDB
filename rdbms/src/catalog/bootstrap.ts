@@ -23,7 +23,7 @@ export const DUAL_NAME = "DUAL";
 /**
  * 데이터 디렉토리를 열고 SYSTEM 테이블스페이스를 준비한다.
  * 이미 있으면 열어만 두고, 없으면 새로 만든다. DUAL 과 SYSTEM 계정은 저장하지 않는다.
- * DUAL 은 조회할 때 가상으로 제공하고, SYSTEM 계정은 8단계에서 만든다.
+ * DUAL 은 조회할 때 가상으로 제공한다. SYSTEM 계정은 `Database.open` 이 계정 저장소(auth/users.ts)로 만든다.
  */
 export function ensureSystemTablespace(
   dataDir: string,

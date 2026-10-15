@@ -147,6 +147,24 @@ export const ERROR_CODES = {
   NO_ACTIVE_TRANSACTION: 6005,
   /** 커밋 시점에 트랜잭션의 전제가 깨짐 (객체 정의 변경, 참조 무결성). SQLSTATE 40001. */
   TRANSACTION_CONFLICT: 6006,
+  /** 인증 실패. 사용자가 없는 경우와 비밀번호가 틀린 경우를 구분하지 않는다. SQLSTATE 28000. */
+  AUTHENTICATION_FAILED: 7000,
+  /** 권한이 없음. SQLSTATE 42501. */
+  INSUFFICIENT_PRIVILEGE: 7001,
+  /** 사용자가 이미 있음. SQLSTATE 42710. */
+  USER_EXISTS: 7002,
+  /** 사용자가 없음. SQLSTATE 42704. */
+  USER_NOT_FOUND: 7003,
+  /** 그 수준의 객체에 줄 수 없는 권한을 부여하려 함. SQLSTATE 0LP01. */
+  INVALID_GRANT_OPERATION: 7004,
+  /** 현재 테이블스페이스가 없는데 테이블스페이스명이 생략된 이름을 씀. SQLSTATE 3F000. */
+  NO_CURRENT_TABLESPACE: 7005,
+  /** CONNECT 권한 그룹이 없는 사용자가 원격에서 접속함. SQLSTATE 28000. */
+  CONNECT_NOT_ALLOWED: 7006,
+  /** 비밀번호가 올바르지 않음(빈 비밀번호 등). SQLSTATE 22023. */
+  INVALID_PASSWORD: 7007,
+  /** 보호되는 계정(SYSTEM)을 삭제하거나 DBA 를 회수하려 함. SQLSTATE 42501. */
+  PROTECTED_ACCOUNT: 7008,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */
