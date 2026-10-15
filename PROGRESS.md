@@ -9,7 +9,8 @@
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
 - `rdbms` 는 1 ~ 8단계 구현을 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사까지 내부 세션 API 로 실행된다.
 - 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `rdbms` 9단계(통신). 프로토콜 명세 문서를 먼저 쓴다. 8단계가 통신 계층에 넘기는 것(SCRAM 메시지 함수, `Database.assertMayConnect`, `createSession`)은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md)의 10절에 있다.
+- 다음 작업 : `rdbms` 9단계(통신) 구현. 설계 문서 [rdbms/docs/communication-design.md](rdbms/docs/communication-design.md)가 먼저 작성되어 있다(2026-10-15, 구현은 아직 없음). 작업은 그 문서 15절의 9-1 ~ 9-10 순서이고 9-1 에서 프로토콜 명세를 확정한다.
+  8단계가 통신 계층에 넘기는 것(SCRAM 메시지 함수, `Database.assertMayConnect`, `createSession`)은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md)의 10절에 있다.
 - 2026-10-15 : 7단계 남은 마무리(`SYS_SESSIONS` 연결, `docs/transactions.md`)를 끝내고 8단계를 완료했다. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
 - 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML 의 행 단위 접근은 하지 않았다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 `session.ts`, `dml.ts` 에 충돌 마커가 커밋되어 빌드가 깨져 있었다. 7단계 쪽을 기준으로 정리했고, 병합 중 빠진 6단계 점검 보완 기록을 `rdbms/PROGRESS.md` 에 다시 넣었다.
@@ -21,7 +22,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 8단계까지 완료, 9단계(통신) 착수 전 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 8단계까지 완료, 9단계(통신) 설계 문서 작성됨(구현 전) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
@@ -44,6 +45,8 @@
 - 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 현재 검증 환경은 Windows, Node.js 24.21.0, TypeScript 6.0.3, bun 1.4.2이다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
 - 드라이버와 DB툴이 참고할 `rdbms` 문서이다. 타입과 값의 규칙은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md), SQL 의 어휘 규칙·예약어·지원 문법·한도는 [rdbms/docs/sql-syntax.md](rdbms/docs/sql-syntax.md), 저장 포맷은 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md),
   트랜잭션과 잠금의 동작(오류 번호 `55P03`, `40P01` 등)은 [rdbms/docs/transactions.md](rdbms/docs/transactions.md), 계정·권한·오류 번호 `28000`·`42501` 등과 딕셔너리 뷰의 가시성은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md)이다. 프로토콜 명세는 9단계에서 추가된다.
+- **TLS 서버 인증서 검증(모든 클라이언트 공통, 2026-10-15 결정)** : 접속용 CLI(`hwdb --ssl`)와 드라이버는 서버 인증서를 기본으로 검증한다. 신뢰할 CA 를 지정하는 방법과 검증을 끄는 방법을 함께 제공한다.
+  인증서 오류로 접속에 실패하면 접속을 끊고 100 ms 뒤에 다시 시도하며, 재시도는 최대 2회(연결 시도는 최대 3번)이다. 재시도에서도 검증은 그대로 한다. 인증서 오류가 아닌 실패(연결 거부, 시간 초과 등)에는 적용하지 않는다. 사양은 AGENTS.md 상세 8, 설계는 [rdbms/docs/communication-design.md](rdbms/docs/communication-design.md)의 12-1절이다.
 - 인증은 SCRAM-SHA-256 이다. 드라이버가 쓸 계산은 `rdbms/src/auth/scram.ts` 에 순수 함수로 있고 RFC 7677 시험 벡터로 검증되어 있다. 사용자가 없는 경우와 비밀번호가 틀린 경우는 같은 오류(`28000`)이다.
   CONNECT 권한 그룹이 없는 사용자는 원격(루프백이 아닌 주소) 접속이 거부된다. 현재 테이블스페이스가 없는 세션(사용자에게 기본 테이블스페이스가 없을 때)이 있을 수 있으므로 드라이버와 DB툴은 이를 처리해야 한다.
 - 오류는 SQLSTATE, 내부 오류 번호, 영문 메시지에 더해, SQL 문장 안의 위치(줄, 칸)를 가질 수 있다. 문법 오류는 항상 위치를 가진다. 9단계의 프로토콜 오류 메시지에 이 위치를 실어 드라이버와 CLI 가 보여 줄 수 있게 한다.
@@ -74,3 +77,5 @@
 - 2026-10-11 : `rdbms` 7단계(트랜잭션과 동시성) 구현. 세션 상태, 오버레이 방식의 트랜잭션, 커밋·롤백·세이브포인트, 행·PK·객체 잠금과 교착 감지, 10개 세션 동시성 테스트를 구현했다. 6단계 점검 보완에서 막아 둔 트랜잭션 문장(`0A000`)을 풀었다. 남은 마무리는 `rdbms/PROGRESS.md` 의 "7단계 남은 마무리".
 - 2026-10-11 : 병합 점검. 원격 커밋(`f39583f`)과 병합한 커밋(`9d50f23`)에 충돌 마커가 남아 빌드가 깨져 있었다. `session.ts`, `dml.ts` 를 7단계 쪽으로 정리하고 `npm test` 331개 통과를 확인했다. 병합 중 빠진 `rdbms/PROGRESS.md` 의 6단계 점검 보완 기록을 복구했다. 커밋은 하지 않았다.
 - 2026-10-15 : `rdbms` 7단계 남은 마무리와 8단계(계정과 권한) 완료. SCRAM-SHA-256 계산(RFC 7677 시험 벡터), 사용자 계정과 SYSTEM 계정, 권한 수준별 부여·회수와 권한 그룹(CONNECT·OFFICER·DBA), 문장 실행 전 권한 검사와 뷰 권한 규칙(개요 5 의 뷰 UPDATE 예시 포함), 딕셔너리 뷰의 권한별 가시성, 현재 테이블스페이스가 없는 세션, 데몬의 초기 암호 경고를 구현했다. `npm test` 383개 통과, bun 382개 통과. 커밋은 하지 않았다.
+- 2026-10-15 : `rdbms` 9단계(통신) 설계 문서 작성(`rdbms/docs/communication-design.md`). 코드 변경 없음. 구현 전에 사용자 확인이 필요한 결정 5건을 정리했다.
+- 2026-10-15 : 9단계 설계의 결정 5건 반영. 클라이언트 TLS 서버 인증서 검증 기본 켬 + 인증서 오류 때 100 ms 뒤 최대 2회 재시도, `SYS_SESSIONS` 열 추가, `udp.sessionTimeoutMs = 0` 은 제한 없음(경고), `udp.maxPacketSize` 64 ~ 65,507, 인증 실패 시 접속 종료(권장안 유지). AGENTS.md 상세 7, 8 에 사양을 보충했다. 코드 변경 없음.
