@@ -436,3 +436,26 @@ test("인덱스를 쓰는 범위 조건의 결과는 인덱스를 쓸 수 없게
     db.close();
   }
 });
+
+// 12단계(Node.js 드라이버)의 통합 시험이 찾은 결함이다.
+test("문자열 파라미터를 CAST 하면 리터럴 해석을 쓴다 (내부 오류 XX000 이 아니다)", (t) => {
+  const { db, session } = setupApp(t);
+  try {
+    const rows = (sql: string, params: Array<string | bigint>): string[][] => selectStrings(session.execute(sql, params)).rows;
+    assert.deepEqual(rows("SELECT CAST(? AS INTEGER)", ["5"]), [["5"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS DECIMAL(20,10))", ["0.1"]), [["0.1000000000"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS DECIMAL(20,10)) + CAST(? AS DECIMAL(20,10))", ["0.1", "0.2"]), [["0.3000000000"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS DECIMAL(30,0))", ["123456789012345678901234567890"]), [["123456789012345678901234567890"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS DATE), CAST(? AS TIMESTAMP(3))", ["2026-10-16", "2026-10-16 12:34:56.789"]), [["2026-10-16", "2026-10-16 12:34:56.789"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS BOOLEAN)", ["TRUE"]), [["TRUE"]]);
+    assert.deepEqual(rows("SELECT CAST(? AS VARCHAR(10))", ["abc"]), [["abc"]]);
+    // 리터럴과 같은 결과이다. 해석할 수 없는 값은 리터럴과 같은 오류이다.
+    assert.deepEqual(rows("SELECT CAST('5' AS INTEGER)", []), rows("SELECT CAST(? AS INTEGER)", ["5"]));
+    assert.throws(() => session.execute("SELECT CAST(? AS INTEGER)", ["abc"]), state("22018"));
+    assert.throws(() => session.execute("SELECT CAST('abc' AS INTEGER)"), state("22018"));
+    // 타입이 있는 파라미터의 CAST 는 그대로이다.
+    assert.deepEqual(rows("SELECT CAST(? AS VARCHAR(10))", [42n]), [["42"]]);
+  } finally {
+    db.close();
+  }
+});

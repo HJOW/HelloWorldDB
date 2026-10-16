@@ -3,7 +3,6 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
@@ -17,9 +16,10 @@ import {
 } from "../../src/daemon/lockFile.js";
 import { getLockFilePath } from "../../src/common/instance.js";
 import { StartupError } from "../../src/common/errors.js";
+import { createTempDir } from "../tempDirs.js";
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-lock-"));
+  return createTempDir("hwdb-lock-");
 }
 
 test("잠금을 잡으면 PID와 포트, 제어 토큰이 기록된다", () => {

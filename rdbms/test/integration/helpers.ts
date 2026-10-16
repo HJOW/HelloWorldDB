@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { Connection } from "../../src/client/connection.js";
 import type { ExecuteOutcome, SslOptions } from "../../src/client/connection.js";
 import { DbError } from "../../src/common/errors.js";
-import { DEFAULT_PORT } from "../../src/common/instance.js";
+import { DEFAULT_PORT, getLocalChannelAddress } from "../../src/common/instance.js";
 import { isProcessAlive, readLockFile } from "../../src/daemon/lockFile.js";
 import type { JsonValue } from "../../src/net/protocol.js";
 import { waitFor, writeFreePortConfig } from "../net/helpers.js";
@@ -72,6 +72,40 @@ export interface HwdbResult {
   stderr: string;
 }
 
+/**
+ * 정리(`dispose`)가 아직 되지 않은 `Daemon` 들이다. 시험 러너가 정리 훅(`t.after`)을 돌리지 못하고 끝나더라도(시간 초과, 중단)
+ * 프로세스가 끝날 때 마지막으로 정리한다.
+ * PID 만 따로 모아 두었다가 종료할 때 죽이는 방식은 쓰지 않는다. 이미 끝난 데몬의 PID 를 운영체제가 다른 프로세스(병렬로 도는 다른 시험 파일의
+ * 데몬)에 다시 줄 수 있어서, 오래된 PID 에 신호를 보내면 남의 데몬을 죽인다. (Windows 는 PID 를 빨리 재사용한다)
+ */
+const undisposedDaemons = new Set<Daemon>();
+process.once("exit", () => {
+  for (const daemon of [...undisposedDaemons]) {
+    try {
+      daemon.dispose();
+    } catch {
+      // 종료 중이므로 정리 실패는 무시한다.
+    }
+  }
+});
+
+/**
+ * 이 잠금 파일의 데몬이 지금도 도는지 본다. PID 가 살아 있는 것에 더해, 그 포트 번호의 로컬 전용 채널(네임드 파이프, 유닉스 소켓)이 열려 있어야 한다.
+ * 강제 종료로 남은 잠금 파일의 PID 를 다른 프로세스가 재사용한 경우를 데몬으로 오인하지 않기 위함이다.
+ */
+function isDaemonAlive(lock: { pid: number; port: number }): boolean {
+  return lock.pid !== process.pid && isProcessAlive(lock.pid) && fs.existsSync(getLocalChannelAddress(lock.port));
+}
+
+/** 프로세스를 강제로 끝낸다. 이미 없으면 아무 일도 하지 않는다. */
+function forceKill(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // 그 사이에 끝났다.
+  }
+}
+
 export class Daemon {
   readonly installDir: string;
   /** 접속할 포트 번호이다. config.json 을 바꾸는 `writeConfig`, `updateConfig`, `setPort` 가 함께 갱신한다. */
@@ -82,12 +116,26 @@ export class Daemon {
   logPath: string;
   private readonly connections = new Set<Connection>();
   private readonly runtime = daemonRuntime();
+  /**
+   * 지금까지 이 설치가 데이터 디렉토리로 쓴 모든 경로이다. config.json 의 `dataDir` 를 바꾸면 `dataDir` 는 새 경로를 가리키지만,
+   * 옛 경로에서 구동한 데몬이 남아 있을 수 있으므로 정리할 때는 전부 찾아 본다.
+   */
+  private readonly usedDataDirs = new Set<string>();
+  /**
+   * 이 설치로 구동하거나 구동 중임을 확인한 데몬이다. (PID → 포트 번호) 잠금 파일이 지워져도 정리할 수 있게 따로 기억한다.
+   * 데몬이 끝난 것을 확인할 때마다 비운다(`livePids`). 오래 들고 있으면 PID 재사용으로 남의 프로세스를 죽일 수 있다.
+   */
+  private readonly knownDaemons = new Map<number, number>();
+  /** `makeExtraDir` 로 만든 디렉토리이다. 데몬을 모두 끝낸 뒤에 지운다. */
+  private readonly extraDirs: string[] = [];
+  private disposed = false;
 
   private constructor(installDir: string, port: number) {
     this.installDir = installDir;
     this.port = port;
     this.dataDir = path.join(installDir, "data");
     this.logPath = path.join(installDir, "logs", "helloworlddb.log");
+    this.usedDataDirs.add(this.dataDir);
   }
 
   /** config.json 의 내용에서 접속할 포트와 데이터·로그 경로를 다시 구한다. (경로는 설치 디렉토리 기준이다) */
@@ -99,6 +147,43 @@ export class Daemon {
       ? ((log as Record<string, unknown>)["dir"] as string) : "./logs";
     this.dataDir = path.resolve(this.installDir, dataDir);
     this.logPath = path.join(path.resolve(this.installDir, logDir), "helloworlddb.log");
+    this.usedDataDirs.add(this.dataDir);
+  }
+
+  /**
+   * 이 설치가 쓸 설치 디렉토리 밖의 임시 디렉토리를 만든다. (예 : 절대 경로의 `dataDir` 시험) 시험이 끝나면 데몬을 모두 끝낸 **뒤에** 지운다.
+   * 이런 디렉토리를 시험이 따로 `t.after` 로 지우면 정리 훅의 실행 순서에 따라 데몬의 잠금 파일이 먼저 사라져 데몬이 남을 수 있다.
+   */
+  makeExtraDir(prefix: string): string {
+    const dir = fs.mkdtempSync(path.join(path.dirname(this.installDir), prefix));
+    this.extraDirs.push(dir);
+    return dir;
+  }
+
+  /**
+   * 지금 도는 데몬의 PID 를 모은다. 지금까지 쓴 모든 데이터 디렉토리의 잠금 파일과, 구동 때 기억해 둔 데몬을 본다.
+   * 끝난 데몬은 기억에서 지운다.
+   */
+  private livePids(): number[] {
+    for (const dir of this.usedDataDirs) {
+      try {
+        const lock = readLockFile(dir);
+        if (lock !== null) this.knownDaemons.set(lock.pid, lock.port);
+      } catch {
+        // 읽을 수 없는 잠금 파일은 무시한다.
+      }
+    }
+    const pids: number[] = [];
+    for (const [pid, port] of [...this.knownDaemons]) {
+      if (isDaemonAlive({ pid, port })) pids.push(pid);
+      else this.knownDaemons.delete(pid);
+    }
+    return pids;
+  }
+
+  /** `hwdb start` 를 부른 뒤 구동된 데몬을 기억한다. (정리 때 쓴다) 다른 `hwdb` 호출 뒤에는 끝난 데몬을 기억에서 지운다. */
+  private noteDaemons(): void {
+    this.livePids();
   }
 
   /**
@@ -110,6 +195,7 @@ export class Daemon {
     const port = await writeFreePortConfig(installDir, config);
     const daemon = new Daemon(installDir, port);
     daemon.followConfig({ port, ...config });
+    undisposedDaemons.add(daemon);
     t.after(() => daemon.dispose());
     return daemon;
   }
@@ -155,6 +241,7 @@ export class Daemon {
       windowsHide: true,
       ...(input === undefined ? { stdio: ["ignore", "pipe", "pipe"] as const } : { input }),
     });
+    this.noteDaemons();
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
 
@@ -171,7 +258,10 @@ export class Daemon {
       child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
       child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
       child.once("error", reject);
-      child.once("close", (status) => resolve({ status, stdout, stderr }));
+      child.once("close", (status) => {
+        this.noteDaemons();
+        resolve({ status, stdout, stderr });
+      });
       child.stdin.end(input ?? "");
     });
   }
@@ -255,22 +345,29 @@ export class Daemon {
     return connection;
   }
 
-  /** 시험이 끝났을 때의 정리이다. 접속을 끊고, 데몬이 남았으면 정상 종료를 시도하고, 그래도 남으면 강제로 끝낸다. */
-  private dispose(): void {
+  /**
+   * 시험이 끝났을 때의 정리이다. 접속을 끊고, 데몬이 남았으면 정상 종료를 시도하고, 그래도 남으면 강제로 끝낸 뒤 디렉토리를 지운다.
+   * 데몬은 잠금 파일(지금까지 쓴 모든 데이터 디렉토리)과 구동 때 기억해 둔 데몬으로 찾는다. 디렉토리를 지우는 것은 항상 데몬을 끝낸 다음이다.
+   * 두 번 불러도 한 번만 한다.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    undisposedDaemons.delete(this);
     for (const connection of this.connections) connection.abort();
     this.connections.clear();
-    const pid = this.pid;
-    if (pid !== null && pid !== process.pid) {
-      this.hwdb(["stop", "--timeout", "20"]);
-      if (isProcessAlive(pid)) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // 이미 끝났다.
-        }
+    if (this.livePids().length > 0) {
+      this.hwdb(["stop", "--timeout", "20"]); // 지금 설정의 인스턴스를 정상 종료한다. 설정이 바뀌어 다른 인스턴스를 가리킬 수 있어 아래에서 다시 확인한다.
+      for (const pid of this.livePids()) forceKill(pid);
+    }
+    const rmOptions = { recursive: true, force: true, maxRetries: 20, retryDelay: 100 } as const;
+    for (const dir of [this.installDir, ...this.extraDirs]) {
+      try {
+        fs.rmSync(dir, rmOptions);
+      } catch {
+        // 지우지 못한 임시 디렉토리는 남는다. 데몬 프로세스를 남기는 것보다 낫다.
       }
     }
-    fs.rmSync(this.installDir, { recursive: true, force: true });
   }
 }
 

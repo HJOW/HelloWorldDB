@@ -6,19 +6,21 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-16
+- 최종 갱신 : 2026-10-17
+- 2026-10-17 : 11단계 뒤의 마무리와 12단계(`nodejsDriver`) 중에 한 수정 3건. (1) **bun 에서 통합 시험 뒤 데몬이 남던 문제를 재현하고 고쳤다**(시험 도우미. 제품 코드 변경 없음), (2) **드라이버의 통합 시험이 찾은 제품 결함** `CAST(? AS INTEGER)` 같은 문자열 파라미터 캐스트의 내부 오류(`XX000`)를 고쳤다, (3) 단위 시험이 쌓던 임시 디렉토리를 정리하게 했다. 내용은 "결정 사항"의 "12단계(Node.js 드라이버) 중에 한 rdbms 쪽 수정".
+  전체 시험을 다시 돌렸다 : Node.js 24.21.0 에서 `npm test` 888개 → 새 회귀 시험 1개를 더해 889개 중 888개 통과, 1개 건너뜀(Windows 의 SIGTERM), 실패 0. bun 1.3.14 : 통합 시험 87개(파일마다) 85개 통과·2개 건너뜀, 단위 시험 801개(통합 제외) 799개 통과·2개 실패(둘 다 bun 1.3.14 가 `t.mock` 을 구현하지 않아서. 위 "미결 사항"). 남은 `daemon/entry` 프로세스 0.
 - 진행 단계 : 1 ~ 11단계 완료. 11단계(통합 검증)는 개요 1 ~ 15 항목마다 실제 `hwdb start` 데몬에 접속하는 시험 87개(`test/integration/`)와 이전 포맷 버전 호환성(데이터 디렉토리 단위, 버전 보호), 사용 설명서 [docs/manual.md](docs/manual.md), 검증 기록 [docs/verification.md](docs/verification.md)를 갖추었고, 그 과정에서 제품 결함 넷을 찾아 고쳤다("11단계 검증"). 10단계(데몬 제어와 CLI)는 `hwdb start`(분리된 데몬), `stop`, `status` 와 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP)을 구현했다.
   완료 기준을 채웠다 : 데몬을 띄우면 바로 돌아오고 부모와 콘솔이 끝나도 남으며, 설치 직후 SYSTEM 으로 로그인해 초기 암호를 바꿀 수 있고, TCP·UDP 를 껐거나 `maxConnections` 가 차도 로컬 접속이 된다(Windows 에서 확인).
   명령의 동작은 [docs/cli.md](docs/cli.md), 9단계(통신)의 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)이다.
 - 착수 조건 : 없음
-- 다음 작업 : 12단계(Node.js 드라이버, `nodejsDriver`). 이 프로젝트의 일은 끝났다. 인수인계는 "인수인계 사항"의 첫 항목(11단계).
+- 다음 작업 : 없음. 12단계(Node.js 드라이버, `nodejsDriver`)도 2026-10-17 에 끝났다. 이 프로젝트의 일은 끝났다. 인수인계는 "인수인계 사항"의 첫 항목(11단계).
 - 10단계에서 서버·프로토콜에 더한 것(2026-10-16) : `bye` 응답의 `rolledBack`(세션을 닫으며 커밋하지 않은 변경을 롤백했는지. `Session.hasUncommittedChanges`, `Connection.close()` 가 `{ rolledBack }` 을 돌려줌),
   정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(`daemon/main.ts`. 클라이언트가 소켓을 읽지 않아 Windows 네임드 파이프가 닫히지 않을 때 데몬이 영원히 남아 `hwdb stop` 이 끝나지 않던 것을 고쳤다), 강제 종료로 남은 잠금 생성 가드 정리(`lockFile.ts`).
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
 - 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
 - 11단계 검증(Windows, Node.js 24.21.0 / TypeScript 6.0.3) : `npm test` 888개 중 887개 통과, 1개 건너뜀(SIGTERM 종료 시험. Windows 에서는 다른 프로세스가 보낸 SIGTERM 을 받을 수 없다), 실패 0. 10단계의 789개에서 99개가 늘었다(통합 87 : 동시성 10, 인스턴스 5, 데이터 11, 네트워크·설정·CLI 16, 계정·권한 15, 저장·복구 12, 트랜잭션·인덱스·제약 15, 데이터 디렉토리 호환성 3. 단위 12 : 힙 빈자리 지도 5, 인덱스 범위 1, 상대 경로 3, NULL 리터럴 2, 샘플 설정 1).
-  bun 1.3.14 : 통합 시험 87개를 시험 러너와 데몬 모두 bun 으로 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이고 실패 0이다(파일마다 따로 돌렸다). **전체 `bun test --timeout 360000 dist/test/` 는 11단계에서 끝까지 돌리지 못했다.** 사용자 요청으로 시험 재실행을 중단했고 도중의 결과는 기록하지 않는다. 11단계에서 바뀐 코드(힙 빈자리 지도, 인덱스 범위 탐색, NULL 리터럴 타입, 데이터 파일 경로)의 단위 시험을 bun 으로 돌린 기록은 없다("미결 사항").
+  bun 1.3.14 : 통합 시험 87개를 시험 러너와 데몬 모두 bun 으로 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이고 실패 0이다(파일마다 따로 돌렸다). 11단계에서는 단위 시험 전체를 bun 으로 돌리지 못했으나 2026-10-17 에 돌렸다 : `test/integration` 을 뺀 801개 중 799개 통과, 2개 실패(둘 다 bun 1.3.14 가 `t.mock` 을 구현하지 않아서). 통합 시험을 돌린 뒤 데몬이 남던 문제도 고쳤다("결정 사항").
   결함을 일부러 주입한 빌드에서 새 시험이 실패하는지 확인했다(힙 지도 6건, 인덱스 범위, 데이터 디렉토리 잠금, config 상대 경로, 제어 요청 두 가지, TLS 기본 버전, 모르는 키 경고, config 기본값, 포맷 버전 보호. [docs/verification.md](docs/verification.md) 4절). 모두 잡혔다.
 - 10단계 검증(Windows, Node.js 24.21.0 / TypeScript 6.0.3) : `npm test` 789개 통과(10단계 신규 131개 : 인자 해석 16, 문장 나누기 16, 결과 출력 15, 터미널 입력 16, SQL 접속 43, 실제 프로세스 수명주기 21, 잠금 가드 3, 처리기 1).
   bun 1.3.14 : `bun test dist/test/cli/` 138개, `dist/test/net/ dist/test/daemon/` 249개 통과, `hwdb start`·`status`·SQL 접속(로컬·TCP·UDP)·`stop` 직접 실행 확인.
@@ -388,7 +390,7 @@ SQL 접속 (상세 14-2)
 - [x] 네트워크를 거친 10개 세션 동시성 테스트 (`concurrency.test.ts` 10개 : 로컬·TCP·UDP 에 섞어 접속해 이체(교착 감지와 재시도로 합계 유지), 카운터, PK 경쟁, READ COMMITTED, 교착 `40P01`, 잠금 대기 `55P03`, 접속 끊김 뒤 잠금 해제, `maxConnections` 경계)
 - [x] 개요 1 ~ 15 항목별 시나리오 테스트 (제목이 `개요 N :` 인 시험. 대응표는 [docs/verification.md](docs/verification.md) 1절)
 - [x] 포트 번호가 다른 두 인스턴스를 한 장비에서 함께 구동 (상세 15) (`instances.test.ts` 5개 : 독립, 같은 포트·같은 데이터 디렉토리 거부, 포트 변경, 포트가 식별자인 것)
-- [x] bun 에서 데몬 구동과 종료, 접속, 주요 시나리오 확인 (`bun test` 로 통합 시험 87개를 데몬까지 bun 으로 돌려 통과. 단위 시험 전체의 bun 실행은 남았다 — "미결 사항")
+- [x] bun 에서 데몬 구동과 종료, 접속, 주요 시나리오 확인 (`bun test` 로 통합 시험 87개를 데몬까지 bun 으로 돌려 통과. 단위 시험 전체의 bun 실행은 2026-10-17 에 했다 — "미결 사항")
 - [x] 이전 포맷 버전 호환성 테스트가 전체 테스트에 포함되어 있는지 확인 (`storage-v1.hwdb` 시험은 `test/storage`, 데이터 디렉토리 시험은 `dataDirCompat.test.ts`. `LATEST_FORMAT_VERSION` 이 오르면 이전 버전 자료가 없을 때 시험이 실패하는 버전 보호를 더했다)
 - [x] 사용 설명서 : 설치, 데몬 구동과 종료, config.json, CLI 사용법, 초기 암호 변경 절차 ([docs/manual.md](docs/manual.md), [config.sample.json](config.sample.json))
 - 완료 기준 : 개요 1 ~ 15 항목을 각각 확인하는 테스트가 있고 모두 통과한다. (충족)
@@ -412,10 +414,8 @@ SQL 접속 (상세 14-2)
 - 실제 터미널 앱(Windows Terminal 등)의 탭을 닫는 동작은 확인하지 못했다(새 콘솔 창의 프로세스를 강제 종료하는 것으로 갈음했다). 데몬은 콘솔에 붙어 있지 않으므로 영향이 없다고 보지만 실제 장비에서 한 번 확인한다.
 - TLS 1.2를 쓸 수 없는 실제 자바 6 클라이언트의 TLS 1.0 접속 확인은 `jdbc6` 단계에서 한다. 자바 5는 지원하지 않는다. Node.js에서는 `tcp.ssl.minVersion = TLSv1`로 TLS 1.0 협상을 시험으로 확인했다. Bun은 구버전 TLS를 켤 수 없다(protocol.md 16절).
 - (11단계에서 해소) 동시 접속 부하에서의 교착 감지는 `test/integration/concurrency.test.ts` 가 로컬·TCP·UDP 세션 10개의 이체 부하(서로 반대 순서로 두 행을 잠금)로 확인한다.
-- **bun 으로 단위 시험 전체를 다시 돌리지 못했다.** 11단계에서 바뀐 코드(`storage/format/v1/heap.ts` 의 빈자리 지도, `exec/executor.ts` 의 인덱스 범위 탐색, NULL 리터럴 타입, `catalog/tablespaceManager.ts` 의 상대 경로)는 Node.js 전체 시험(888개)과 bun 통합 시험(87개)으로만 확인했다. `bun test --timeout 360000 dist/test/` 를 한 번 돌려 확인한다(통합 시험은 파일마다 따로 돌리는 편이 실패 원인을 보기 쉽다).
-- **bun 으로 통합 시험을 돌린 뒤 데몬 프로세스 둘이 남았다.** 두 데몬의 설치 디렉토리는 이미 지워졌는데 프로세스가 살아 있었다(직접 종료했다). Node.js 로 전체를 돌린 뒤에는 남은 데몬이 없었다. 어느 시험이 남겼는지는 확인하지 못했다.
-  추정 원인(검증하지 않음) : 시험이 `t.after` 로 정리를 여러 개 등록하는데 실행 순서가 Node.js 와 bun 이 달라, 설정을 바꾼 `Daemon`(`setPort`·`updateConfig` 로 `dataDir` 가 바뀜) 의 정리가 잠금 파일을 찾지 못한 경우이다. 특히 `overviewNetwork` 의 상대 경로 시험이 추가 디렉토리를 `t.after` 로 따로 지운다.
-  고칠 방향 : `Daemon` 이 지금까지 쓴 모든 데이터 디렉토리를 기억해 정리할 때 전부 찾아 보고, 시험이 만든 추가 디렉토리의 정리도 `Daemon` 에 맡긴다. 시험을 다시 돌리지 말라는 요청으로 이번에는 코드를 고치지 않았다. 고친 뒤에는 bun 으로 돌린 다음 `daemon/entry` 프로세스와 `hwdb-it-*` 임시 디렉토리가 남지 않는지 본다.
+- (2026-10-17 해소) **bun 으로 통합 시험을 돌린 뒤 데몬 프로세스가 남던 문제** : 재현하고 고쳤다. "결정 사항"의 "데몬 프로세스 누수 수정"을 본다.
+- (2026-10-17 해소) bun 으로 단위 시험 전체를 돌렸다 : `test/integration` 을 뺀 801개 중 799개 통과, 2개 실패. 실패는 둘 다 `t.mock`(`node:test` 의 mock)을 쓰는 시험(`fsync` 실패 시험, 힙 삽입 시험)이다. bun 1.3.14 가 mock 을 구현하지 않아("mock is not yet implemented in Bun") 나는 오류이며 제품 결함이 아니다. 예전 bun 1.4.2 에서는 통과했다(기록은 위 "검증"). 통합 시험 87개는 파일마다 따로 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이다.
 - **`SYS_COLUMNS` 에 뷰의 컬럼이 없다** (`SYS_VIEWS` 에는 뷰가 있다). JDBC `getColumns` 나 DB툴의 컬럼 목록이 뷰를 보려면 정해야 한다. 지금은 사양이 정하지 않아 그대로 두었다.
 - **인덱스 이름의 테이블스페이스** : `CREATE INDEX IX ON APP.T (...)` 처럼 인덱스 이름에 테이블스페이스를 붙이지 않으면 세션의 현재 테이블스페이스에 만들려 하고, 테이블과 다르면 `42P16` 이다. `DROP INDEX` 도 같다. 인덱스 이름이 생략되면 테이블이 있는 곳에 만든다. 이름만 쓰면 테이블의 테이블스페이스에 만들도록 바꿀지 사용자가 정한다(상세 0, 13 의 생략 원칙과 맞닿아 있다).
 - 통합 시험은 Windows 에서만 돌려 보았다. 리눅스·macOS 에서는 `test/integration/` 도 한 번 돌려 본다(원격 접속 시험은 루프백이 아닌 IPv4 주소가 필요하고 없으면 건너뛴다. SIGTERM 시험은 유닉스 계열에서만 돈다).
@@ -424,6 +424,17 @@ SQL 접속 (상세 14-2)
 
 
 ## 결정 사항
+
+### 12단계(Node.js 드라이버) 중에 한 rdbms 쪽 수정 (2026-10-17)
+
+- **데몬 프로세스 누수 수정** (시험 도우미 `test/integration/helpers.ts`. 제품 코드는 바꾸지 않았다)
+  - 재현 : bun 으로 통합 시험을 파일마다 돌리면 `overviewNetwork.test` 뒤에 `daemon/entry.js` 가 하나 남았다. 설치 디렉토리 `hwdb-it-*` 는 이미 지워진 뒤였다. 나머지 파일에서는 남지 않았다.
+  - 원인 : 상대 경로 시험이 `dataDir` 를 설치 디렉토리 밖(`hwdb-abs-*`)으로 바꿔 데몬을 다시 띄우고, 그 디렉토리를 `Daemon` 과 별개의 `t.after` 로 지웠다. 정리 훅의 실행 순서가 Node.js 와 bun 이 달라, bun 에서는 그 디렉토리(= 데몬의 잠금 파일)가 먼저 지워졌다. `Daemon.dispose` 는 **잠금 파일의 PID** 로만 데몬을 찾았으므로 데몬을 찾지 못하고 설치 디렉토리만 지웠다.
+  - 수정 : (1) `Daemon` 이 지금까지 쓴 모든 데이터 디렉토리를 기억하고(`usedDataDirs`) 정리할 때 전부의 잠금 파일을 본다. 구동 때 본 데몬도 기억한다(`knownDaemons`). (2) 설치 디렉토리 밖의 임시 디렉토리는 `daemon.makeExtraDir()` 로 만들어 `Daemon` 이 데몬을 끝낸 **뒤에** 지운다. (3) 정리되지 않은 `Daemon` 은 프로세스가 끝날 때(`process.on("exit")`) 마지막으로 정리한다. (4) 디렉토리를 지우는 쪽은 `maxRetries` 로 다시 시도하고 실패해도 데몬을 먼저 끝낸다.
+  - **PID 재사용 주의(고치는 중에 만든 결함)** : 처음에는 구동한 데몬의 PID 를 프로세스가 끝날 때까지 들고 있다가 종료 때 `SIGKILL` 을 보냈다. 이미 끝난 데몬의 PID 를 Windows 가 곧바로 다른 프로세스(병렬로 도는 다른 시험 파일의 새 데몬)에 주는 바람에, 전체 시험(`node --test`)에서 한 번 `overviewTxn` 의 시험이 `ECONNRESET` 으로 실패했다. 지금은 PID 를 오래 들고 있지 않고, **잠금 파일의 PID 가 살아 있으면서 그 포트의 로컬 전용 채널(네임드 파이프, 유닉스 소켓)이 열려 있을 때만** 도는 데몬으로 본다(`isDaemonAlive`). 데몬이 끝난 것을 확인할 때마다 기억에서 지운다.
+  - 확인 : bun 으로 통합 시험을 파일마다 돌린 뒤 남은 `daemon/entry` 프로세스와 `hwdb-it-*` 디렉토리가 0 (수정 전 1 / 수정 뒤 두 번 모두 0), Node.js 전체 시험 3회(888·888·889개 중 887·887·888 통과, 1 건너뜀, 실패 0) 통과, 단위 시험이 쌓던 임시 디렉토리는 시험 전후 개수가 같다.
+- **`CAST(? AS 숫자·날짜 타입)` 의 내부 오류(`XX000`)** : 문자열 파라미터를 숫자·날짜 타입으로 `CAST` 하면 `Cannot read properties of null (reading 'kind')` 가 났다. `evaluateExpression` 의 `Cast` 가 타입 없는 문자열 중 리터럴(`untyped` 표지)만 리터럴 해석(`castLiteral`)으로 보내고, 문자열 파라미터(`type` 이 null)는 놓쳐 `castValue` 에 null 타입을 넘겼다. 다른 곳이 쓰는 `untypedText()` 로 바꾸어 고쳤다(`exec/expression.ts`). 회귀 시험 `test/exec/regression.test.ts`("문자열 파라미터를 CAST 하면 …")를 더했고 수정 전 코드에서 실패함을 확인했다. `nodejsDriver` 의 통합 시험이 찾았다.
+- **단위 시험이 만드는 임시 디렉토리 정리** : `config`, `lockFile`, `logger`, `server`, `daemonControl` 시험이 `os.tmpdir()` 에 만든 디렉토리를 지우지 않아 시험을 돌릴 때마다 수백 개가 쌓였다(`hwdb-config-*` 584개, `hwdb-lock-*` 139개 등). `test/tempDirs.ts` 의 `createTempDir()` 로 만들어 시험 프로세스가 끝날 때 지운다. 이미 쌓인 것은 지우지 않았다(`%TEMP%` 의 `hwdb-*`. 필요하면 사용자가 지운다).
 
 ### 11단계 결정
 
@@ -628,7 +639,8 @@ SQL 접속 (상세 14-2)
 ## 인수인계 사항
 
 - 11단계까지 마쳤다. 12단계(Node.js 드라이버)가 이어받을 때 알아 둘 점이다.
-  - **읽을 것** : [docs/manual.md](docs/manual.md)(사용자 관점), [docs/protocol.md](docs/protocol.md)(드라이버의 기준), [docs/verification.md](docs/verification.md)(무엇을 어떻게 확인했고 무엇을 못 했는지). 드라이버의 통합 시험은 `test/integration/helpers.ts` 의 `Daemon` 을 본뜨면 된다(다만 이 도우미의 정리가 bun 에서 데몬을 남길 수 있다 — "미결 사항". `nodejsDriver` 가 `rdbms` 의 시험 코드를 직접 import 하지 않도록 필요한 부분을 복사하거나 `rdbms` 를 `hwdb start` 로 띄우는 작은 도우미를 새로 만든다. 빌드 결과물 `dist/src/cli/main.js` 와 `HWDB_INSTALL_DIR`, config.json 의 `port` 만 있으면 된다).
+  - **읽을 것** : [docs/manual.md](docs/manual.md)(사용자 관점), [docs/protocol.md](docs/protocol.md)(드라이버의 기준), [docs/verification.md](docs/verification.md)(무엇을 어떻게 확인했고 무엇을 못 했는지). 드라이버의 통합 시험은 `test/integration/helpers.ts` 의 `Daemon` 을 본뜨면 된다(이 도우미의 정리가 bun 에서 데몬을 남기던 문제는 2026-10-17 에 고쳤다 — "결정 사항". `nodejsDriver` 는 `rdbms` 의 시험 코드를 직접 import 하지 않고 `nodejsDriver/test/helpers/server.ts` 의 `TestServer` 로 `rdbms` 를 `hwdb start` 로 띄워 통합 시험을 한다. 빌드 결과물 `dist/src/cli/main.js` 와 `HWDB_INSTALL_DIR`, config.json 의 `port` 만 있으면 된다).
+  - **12단계가 끝났다(2026-10-17).** `nodejsDriver` 의 통합 시험 100개가 실제 `rdbms` 로 통과한다. 드라이버가 알아낸 서버 동작과 수정은 위 "결정 사항"에 있다. 드라이버의 시험이 자기 프로세스 안에서 `hwdb` 를 `spawnSync` 로 부르면 접속이 응답을 읽지 못해 서버 종료가 유예 시간(수십 초)만큼 늦어진다(`TestServer.stopAsync` 를 쓴다).
   - 클라이언트 라이브러리의 출발점은 `src/client/connection.ts` 이다(`Connection.open(target)` → `login` → `execute`/`fetch`/`fetchAll`/`closeCursor`/`ping`/`close`). 결과의 값은 JSON 값이고 BIGINT·NUMERIC·날짜시간·INTERVAL 은 문자열, 이진은 16진 문자열이다(`bigint`, 정밀도를 잃지 않는 날짜시간 변환은 드라이버의 몫). 통합 시험이 쓰는 `exec`/`query`/`failure` 도우미가 사용 예이다.
   - 알아 둘 서버 동작 : 인증 실패는 `28000`(없는 사용자와 틀린 암호가 같은 오류), 원격 접속에 CONNECT 가 없으면 `28000`(내부 7006), 접속 수 초과는 `53300`, 잠금 대기 초과 `55P03`, 교착 `40P01`(그 트랜잭션은 롤백됨), 유휴 종료 `57P05`, 서버 종료 `57P01`, UDP 는 암호화되지 않는다, TLS 포트에 평문으로 접속하면 연결이 끊긴다(`08006`), 인증서 검증 실패는 100 ms 뒤 최대 2회 재시도 후 `08001`(내부 8007).
   - 서버가 만든 데이터 디렉토리는 복사해 옮길 수 있다(데이터 파일 경로는 디렉토리 기준으로 기록). 드라이버 통합 시험이 서버를 띄울 때 임시 디렉토리를 쓰면 된다.
@@ -777,3 +789,4 @@ SQL 접속 (상세 14-2)
   제품 결함 넷을 찾아 고쳤다 : NULL 리터럴의 타입, 데이터 파일 절대 경로(복사한 데이터 디렉토리를 못 엶), 행 삽입 비용이 테이블 크기에 비례(힙 빈자리 지도), 인덱스 범위 조건이 틀린 결과(DESC 컬럼의 한쪽 범위, 컬럼이 더 있는 복합 인덱스). 회귀 시험을 더했고 수정 전 코드에서 실패함을 확인했다.
   `docs/manual.md`(사용 설명서), `docs/verification.md`(검증 기록), `config.sample.json`, `docs/storage-v1.md`(빈자리 지도)를 썼다. 사양(AGENTS.md)은 바꾸지 않았다.
   `npm test` 888개 중 887개 통과·1개 건너뜀(Windows 에서 SIGTERM 시험), 실패 0 (Node.js 24.21.0 / TypeScript 6.0.3). bun 1.3.14 에서 통합 시험 87개 통과(건너뜀 2). 결함 주입 점검 모두 잡힘. 커밋은 하지 않았다.
+- 2026-10-17 : 11단계 뒤의 마무리 (12단계 `nodejsDriver` 중에 한 수정). (1) bun 으로 통합 시험을 돌린 뒤 데몬이 남던 문제를 재현하고(`overviewNetwork` 상대 경로 시험 뒤 1개) 고쳤다 — 정리 훅 순서에 기대던 `Daemon.dispose` 를 지금까지 쓴 모든 데이터 디렉토리와 `makeExtraDir` 로 바꾸고, 고치는 중에 만든 PID 재사용 결함(끝난 데몬의 PID 에 `SIGKILL`)도 함께 바로잡았다. (2) `nodejsDriver` 의 통합 시험이 찾은 `CAST(? AS INTEGER)` 의 내부 오류(`XX000`)를 고치고 회귀 시험을 더했다. (3) 단위 시험의 임시 디렉토리 정리(`test/tempDirs.ts`). 시험 : Node.js `npm test` 889개 중 888 통과·1 건너뜀, bun 통합 85 통과·2 건너뜀, bun 단위 799 통과·2 실패(`t.mock` 미구현). 커밋은 하지 않았다.

@@ -132,8 +132,7 @@ test("개요 7 : 상대 경로는 config.json 이 있는 디렉토리를 기준�
   assert.equal(fs.existsSync(cwdData) || fs.existsSync(cwdLogs), false, "현재 디렉토리에 만들지 않는다");
   // 절대 경로는 그대로 쓴다.
   daemon.stopClean();
-  const elsewhere = fs.mkdtempSync(path.join(path.dirname(daemon.installDir), "hwdb-abs-"));
-  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+  const elsewhere = daemon.makeExtraDir("hwdb-abs-"); // 데몬을 끝낸 뒤에 지워진다 (직접 t.after 로 지우면 순서에 따라 데몬이 남는다)
   fs.cpSync(path.join(daemon.installDir, "mydata"), path.join(elsewhere, "data"), { recursive: true });
   daemon.updateConfig({ dataDir: path.join(elsewhere, "data"), log: { dir: path.join(elsewhere, "logs") } });
   daemon.start();

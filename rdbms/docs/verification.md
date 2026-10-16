@@ -57,6 +57,11 @@ bun test --timeout 360000 dist/test/integration/overviewTxn.test.js   # bun 으�
    이전 코드는 인덱스 정의 11가지 × 조건 약 600가지 중 217건이 인덱스를 쓰지 않은 같은 뜻의 질의와 달랐고, 고친 뒤에는 0건이다. 갱신·삭제의 대상 탐색도 같은 코드를 쓴다.
    시험 : `test/exec/regression.test.ts` 의 인덱스 범위 시험(인덱스 정의 11가지 × 조건 29가지 × 선행 조건, DML 포함).
 
+### 11단계 뒤에 찾은 결함 (2026-10-17, `nodejsDriver` 의 통합 시험)
+
+5. **문자열 파라미터의 `CAST`** : `CAST(? AS INTEGER)`, `CAST(? AS DECIMAL(20,10))`, `CAST(? AS DATE)` 처럼 문자열 파라미터를 숫자·날짜 타입으로 캐스트하면 내부 오류 `XX000`(`Cannot read properties of null (reading 'kind')`)이 났다. 타입 없는 문자열 가운데 리터럴만 리터럴 해석으로 보내고 파라미터를 놓쳤다. 고친 뒤 리터럴과 같은 결과와 같은 오류(`22018`)를 낸다.
+   시험 : `test/exec/regression.test.ts` 의 "문자열 파라미터를 CAST 하면 리터럴 해석을 쓴다" (수정 전 코드에서 실패함을 확인했다), `nodejsDriver/test/query.test.ts` 의 NUMERIC 시험.
+
 ## 4. 결함 주입(변이) 점검
 
 새 시험이 정말 결함을 잡는지 소스에 결함을 일부러 넣어 확인했다. 시험이 통과하는 것만으로는 시험이 느슨한지 알 수 없기 때문이다. 아래는 모두 시험이 실패했고, 확인 뒤 원본을 복구했다.
@@ -82,8 +87,8 @@ bun test --timeout 360000 dist/test/integration/overviewTxn.test.js   # bun 으�
 ## 6. 확인하지 못한 것과 알려진 한계
 
 - **Node.js 22 에서의 실행**: 개발 장비는 Node.js 24 이다. AGENTS.md 지켜야 할 사항 5 에 따라 Node.js 22.x PC 에서의 전체 시험은 나중에 한다. 문제가 나오면 고친다.
-- **bun 으로 단위 시험 전체를 돌리지 않았다.** bun 에서는 통합 시험 87개(시험 러너와 데몬 모두 bun)만 파일마다 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이다. 전체 `bun test --timeout 360000 dist/test/` 는 시작했다가 중단했고 결과를 쓰지 않는다. 11단계에서 바뀐 코드의 단위 시험은 Node.js 로만 확인했다.
-- **bun 으로 통합 시험을 돌린 뒤 데몬 프로세스 둘이 남았다** (설치 디렉토리는 지워진 상태). Node.js 로 전체를 돌린 뒤에는 남지 않았다. 원인으로는 `t.after` 정리 순서가 Node.js 와 bun 에서 다른 것을 의심하지만 확인하지 못했다. 시험 도우미(`Daemon`)의 정리를 고쳐야 한다. 자세한 것은 [../PROGRESS.md](../PROGRESS.md)의 미결 사항이다.
+- **bun 으로 단위 시험 전체를 돌렸다(2026-10-17).** `test/integration` 을 뺀 801개 중 799개 통과, 2개 실패이다. 실패는 둘 다 `t.mock`(`node:test` 의 mock)을 쓰는 시험(`fsync` 실패 시험, 힙 삽입 시험)으로, bun 1.3.14 가 mock 을 구현하지 않아 나는 오류이다(제품 결함이 아니다. bun 1.4.2 에서는 통과했다). 통합 시험 87개는 파일마다 따로 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이다.
+- **bun 으로 통합 시험을 돌린 뒤 데몬이 남던 문제는 고쳤다(2026-10-17).** 원인은 시험 도우미(`Daemon`)가 데이터 디렉토리를 바꾼 데몬의 잠금 파일을 찾지 못한 것이다(`t.after` 정리 순서가 Node.js 와 bun 에서 다르다). 고친 뒤 bun 으로 통합 시험을 세 번 돌려 남은 데몬이 없었다. 자세한 것은 [../PROGRESS.md](../PROGRESS.md)의 "결정 사항"이다.
 - **리눅스, macOS**: 모든 시험을 Windows 11 에서 돌렸다. 유닉스 도메인 소켓(권한 0600, 남은 소켓 파일 정리), `hwdb start` 의 새 세션 분리와 SIGHUP 무시, SIGTERM·SIGINT 로 정상 종료하는 시험(`overviewStorage` 의 마지막 시험, Windows 에서는 건너뜀)은 비윈도우 장비에서 확인해야 한다.
 - **실제 터미널 앱의 탭 닫기**: 새 콘솔 창의 프로세스를 강제로 끝내는 것으로 갈음했다. 데몬은 콘솔에 붙어 있지 않다.
 - **TLS 1.0 과 자바 6**: Node.js 에서 `minVersion: "TLSv1"` 협상은 확인했다(이 Node.js·OpenSSL 빌드가 TLS 1.0 을 협상하지 못하면 시험은 서버 설정과 경고까지만 확인한다). 실제 자바 6 클라이언트는 `jdbc6` 단계의 몫이다. bun 은 구버전 TLS 와 TLS 최소 버전 적용을 지원하지 않는다.

@@ -4,7 +4,6 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "../../src/config/config.js";
@@ -13,9 +12,10 @@ import { Server } from "../../src/daemon/server.js";
 import { isRunning } from "../../src/daemon/lockFile.js";
 import { runForeground } from "../../src/daemon/main.js";
 import { writeFreePortConfig } from "../net/helpers.js";
+import { createTempDir } from "../tempDirs.js";
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-server-"));
+  return createTempDir("hwdb-server-");
 }
 
 /** 사용하지 않는 포트로 구동하도록 config.json 을 쓴 설치 디렉토리를 만든다. (시험 파일이 병렬로 돌므로 기본 포트를 쓰지 않는다) */

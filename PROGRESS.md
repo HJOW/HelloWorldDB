@@ -5,15 +5,18 @@
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-16
+- 최종 갱신 : 2026-10-17
+- **2026-10-17 : `nodejsDriver` 12단계를 완료했다.** TCP(SSL)·UDP 접속, SCRAM 인증, 문장 실행과 파라미터, 결과 나누어 받기(`cursor`, `stream`), 트랜잭션 API, 커넥션 풀, 타입 대응, 오류 객체, 타입 정의, README. 시험 100개(단위 25, 실제 `rdbms` 를 띄우는 통합 75)가 Node.js 24.21.0 에서 통과하고 bun 1.3.14 에서도 같다. 세부는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)이고 사용법은 [nodejsDriver/README.md](nodejsDriver/README.md)이다.
+  이 과정에서 **`rdbms` 의 결함 하나를 찾아 고쳤다**(문자열 파라미터의 `CAST(? AS INTEGER)` 가 내부 오류 `XX000`, 회귀 시험 추가). 또 `rdbms` 통합 시험 도우미가 **bun 에서 데몬을 남기던 문제**(정리 훅 순서에 기대던 정리)를 재현하고 고쳤으며, 단위 시험이 쌓던 임시 디렉토리도 정리하게 했다. 사양(AGENTS.md)은 바꾸지 않았다.
+  전체 시험을 다시 돌렸다 : `rdbms` Node.js `npm test` 889개 중 888 통과·1 건너뜀(Windows 의 SIGTERM)·실패 0, bun 1.3.14 통합 85 통과·2 건너뜀, bun 단위 801개 중 799 통과·2 실패(bun 1.3.14 가 `t.mock` 을 구현하지 않아서. 제품 결함 아님).
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
 - `rdbms` 는 1 ~ 11단계를 마쳤다. 11단계(통합 검증)에서 개요 1 ~ 15 항목마다 실제 데몬에 접속하는 시험을 갖추고(87개), 사용 설명서 [rdbms/docs/manual.md](rdbms/docs/manual.md)와 검증 기록 [rdbms/docs/verification.md](rdbms/docs/verification.md)를 썼다. 이 과정에서 제품 결함 넷(NULL 리터럴 타입, 데이터 파일 절대 경로, 행 삽입 비용, 인덱스 범위 조건의 틀린 결과)을 찾아 고쳤다.
   구현 범위는 다음과 같다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사, **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 접속과 접속용 클라이언트 라이브러리(`rdbms/src/client`)에 더해,
   10단계에서 **`hwdb` 명령**을 완성했다 : `hwdb start`(분리된 데몬), `hwdb stop`, `hwdb status`, 그리고 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 화면에 보이지 않는 비밀번호 입력, 한글 폭을 맞춘 표 출력, 초기 암호 변경 안내, 종료 때 롤백 안내). 동작은 [rdbms/docs/cli.md](rdbms/docs/cli.md)에 있다.
 - 지금 진행할 범위는 `rdbms`와 `nodejsDriver`이다. JDBC(`jdbc8`, `jdbc6`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `nodejsDriver` 12단계. 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 "인수인계 사항" 첫 항목(11단계)에 있다. 드라이버의 프로토콜 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md), 사용자 관점의 동작은 [rdbms/docs/manual.md](rdbms/docs/manual.md)이다.
+- 다음 작업 : 없음. A(`rdbms`)와 B(`nodejsDriver`)를 모두 마쳤다. AGENTS.md "구현 계획"에 따라 JDBC(`jdbc8`, `jdbc6`)와 GUI DB툴(`gui`)은 보류 상태이며, 이 둘은 계획부터 다시 정해야 한다. `pythonDriver` 는 사용자 확인(일정, 패키지 이름)을 기다린다("사용자 확인이 필요한 사항"). 프로토콜의 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md), 사용자 관점의 동작은 [rdbms/docs/manual.md](rdbms/docs/manual.md)이다.
 - 11단계 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 888개 중 887개 통과, 1개 건너뜀(Windows에서 SIGTERM을 받을 수 없는 유닉스 전용 시험), 실패 0. bun 1.3.14에서는 통합 시험 87개를 시험 러너와 데몬 모두 bun으로 돌려 85개 통과, 2개 건너뜀(bun의 TLS 최소 버전 제약, SIGTERM)이다. 결함을 일부러 주입한 빌드에서 새 시험이 실패하는지 확인했다(모두 잡힘).
-  확인하지 못한 것 : bun 으로 단위 시험 전체(통합 시험 87개만 bun 으로 확인), bun 으로 통합 시험을 돌린 뒤 데몬 프로세스 둘이 남은 원인(시험 도우미의 정리 순서로 추정, 아직 고치지 않음), Node.js 22.x 장비, 리눅스·macOS(유닉스 소켓, `hwdb start`의 세션 분리, SIGTERM 종료), 실제 터미널 앱의 탭 닫기, 실제 자바 6의 TLS 1.0 접속. 알려진 한계 : `SYS_COLUMNS`에 뷰의 컬럼이 없음, 인덱스 이름에 테이블스페이스를 붙여야 하는 경우(`rdbms/PROGRESS.md` 미결 사항).
+  확인하지 못한 것 : Node.js 22.x 장비, 리눅스·macOS(유닉스 소켓, `hwdb start`의 세션 분리, SIGTERM 종료), 실제 터미널 앱의 탭 닫기, 실제 자바 6의 TLS 1.0 접속. 알려진 한계 : `SYS_COLUMNS`에 뷰의 컬럼이 없음, 인덱스 이름에 테이블스페이스를 붙여야 하는 경우(`rdbms/PROGRESS.md` 미결 사항).
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
 - 2026-10-15 : 7단계 남은 마무리(`SYS_SESSIONS` 연결, `docs/transactions.md`)를 끝내고 8단계를 완료했다.
 - 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML의 행 단위 접근은 당시 미구현이었고 2026-10-16에 완료했다.
@@ -28,7 +31,7 @@
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
 | `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1 ~ 11단계 완료(`hwdb`, 통합 검증, 사용 설명서 포함) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
-| `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전. 착수 조건을 채웠다 | 11단계 완료 (충족) | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
+| `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 12단계 완료 (TCP·SSL·UDP, 트랜잭션, 커넥션 풀, 타입 정의, README) | 11단계 완료 (충족) | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `pythonDriver` | 미정 (배포 이름 `org.duckdns.hjow.helloworlddb.pythondriver` 안, import 이름 `helloworlddb` 안) | 없음 | 계획 초안만 있음 (코드 없음). Python 3.2 이상, DB-API 2.0 | 11단계 완료 + 사용자가 일정과 패키지 이름을 정함 | [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류. 자바 8 이상, JDBC 4.2 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 없음 | 보류. 자바 6~7용 JDBC 4.0, 자바 8 이상 실행 호환 | 계획부터 다시 정한다 | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
@@ -67,6 +70,10 @@
   3. **사양이 정하지 않은 사용자·권한 규칙** : 보편적인 RDBMS 의 동작을 따른다. 점검 결과 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md) 8절의 규칙은 이미 PostgreSQL, Oracle 의 공통 동작이거나 AGENTS.md 개요 5 의 명시 문구를 따른 것이라 그대로 두었다.
 - 오류는 SQLSTATE, 내부 오류 번호, 영문 메시지에 더해, SQL 문장 안의 위치(줄, 칸)를 가질 수 있다. 문법 오류는 항상 위치를 가진다. 9단계의 프로토콜 오류 메시지에 이 위치를 실어 드라이버와 CLI 가 보여 줄 수 있게 한다.
 - 내부 오류 번호의 배정 : 1 ~ 999 공통, 1000번대 저장 엔진, 2000번대 타입 시스템, 3000번대 SQL 문법, 4000번대 카탈로그와 DDL, 5000번대 질의 실행. 번호와 SQLSTATE 의 목록은 `rdbms/src/common/errors.ts`에 있고 한 번 정한 번호는 바꾸지 않는다.
+
+- **Node.js 드라이버가 끝났다(2026-10-17).** 공개 API 는 [nodejsDriver/README.md](nodejsDriver/README.md), 결정과 한계는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)이다. 다른 드라이버(`pythonDriver` 등)와 DB툴이 참고할 점 :
+  (1) 서버를 띄우는 통합 시험 도우미 `nodejsDriver/test/helpers/server.ts`(`TestServer`)는 임시 설치 디렉토리·빈 포트·`hwdb start`/`stop` 으로 `rdbms` 를 띄운다. (2) 시험 프로세스 안에 서버에 접속한 연결이 열려 있을 때 `hwdb` 를 동기로 부르면 연결이 응답을 읽지 못해 서버 종료가 유예 시간만큼 늦어진다. (3) 시험의 서버 정리는 PID 만 믿고 `SIGKILL` 하지 않는다. 끝난 서버의 PID 를 운영체제가 곧바로 다른 프로세스에 줄 수 있다(Windows). 잠금 파일의 PID 가 살아 있고 그 포트의 로컬 전용 채널이 열려 있을 때만 서버로 본다.
+  (4) 서버가 먼저 끊을 때는 `id: 0` 오류(`57P01` 서버 종료, `57P05` 유휴 시간 초과)가 오고 그 뒤 연결이 닫힌다. 연결은 이 오류를 원인으로 보고해야 한다. (5) 정수 파라미터의 산술과 집계(`COUNT(*)`)는 `BIGINT` 로 온다. (6) 서버의 `maxConnections`(기본 10)는 TCP·UDP 세션의 합이므로 풀의 기본 크기는 그보다 작게 둔다.
 
 ## 사용자 확인이 필요한 사항
 
@@ -116,3 +123,4 @@ JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 202
 - 2026-10-16 : `rdbms` 11단계(통합 검증) 완료. 개요 1 ~ 15 항목마다 실제 `hwdb start` 데몬에 접속하는 시험 87개(동시성 10, 인스턴스 5, 개요별 시나리오 69, 데이터 디렉토리 호환성 3)와 이전 포맷 버전 호환성의 버전 보호를 갖추고 사용 설명서(`rdbms/docs/manual.md`), 검증 기록(`rdbms/docs/verification.md`), `rdbms/config.sample.json` 을 썼다.
   제품 결함 넷을 찾아 고쳤다 : 타입 없는 `NULL` 리터럴(`NVL(NULL, x)`, `1 + NULL` 등), 데이터 파일 절대 경로(복사한 데이터 디렉토리를 못 엶), 행 삽입 비용이 테이블 크기에 비례(힙 빈자리 지도), 인덱스 범위 조건이 틀린 결과(DESC 컬럼의 한쪽 범위, 컬럼이 더 있는 복합 인덱스. 217건이 틀렸고 0건으로). 모두 회귀 시험이 있고 수정 전 코드에서 실패함을 확인했다. 사양(AGENTS.md)은 바꾸지 않았다.
   Node.js 24.21.0 에서 `npm test` 888개 중 887개 통과·1개 건너뜀·실패 0, bun 1.3.14 에서 통합 시험 87개 통과(건너뜀 2). 다음은 `nodejsDriver` 12단계이다. 커밋은 하지 않았다.
+- 2026-10-17 : `nodejsDriver` 12단계 완료 (위 "현재 상태"). `rdbms` 쪽에서는 통합 시험 도우미의 데몬 누수(bun)와 PID 재사용 결함을 고치고, 드라이버의 시험이 찾은 `CAST(? AS 타입)` 내부 오류를 고쳤다. 전체 시험을 다시 돌려 통과를 확인했다. 커밋은 하지 않았다.

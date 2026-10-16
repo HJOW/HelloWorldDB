@@ -3,15 +3,15 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/config/config.js";
 import { StartupError } from "../../src/common/errors.js";
+import { createTempDir } from "../tempDirs.js";
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-config-"));
+  return createTempDir("hwdb-config-");
 }
 
 function writeConfig(dir: string, value: unknown): void {

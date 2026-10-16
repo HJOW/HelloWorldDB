@@ -537,9 +537,9 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
     case "Cast": {
       const operand = evaluateExpression(expression.operand, ctx);
       if (operand.value === null) return { value: null, type: expression.dataType };
-      // 타입 없는 문자열은 리터럴 해석을 쓴다.
-      const untyped = (operand as TypedValue & { untyped?: string }).untyped;
-      if (untyped !== undefined) {
+      // 타입 없는 문자열(리터럴과 문자열 파라미터)은 리터럴 해석을 쓴다.
+      const untyped = untypedText(operand);
+      if (untyped !== null) {
         return { value: at(expression.position, () => castLiteral(untyped, expression.dataType, ctx.typeCtx)), type: expression.dataType };
       }
       return { value: at(expression.position, () => castValue(operand.value, operand.type, expression.dataType, ctx.typeCtx)), type: expression.dataType };

@@ -7,7 +7,6 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -16,11 +15,12 @@ import { loadConfig } from "../../src/config/config.js";
 import { createLogger } from "../../src/common/logger.js";
 import { Server } from "../../src/daemon/server.js";
 import { writeFreePortConfig } from "../net/helpers.js";
+import { createTempDir } from "../tempDirs.js";
 
 const HWDB = fileURLToPath(new URL("../../src/cli/main.js", import.meta.url));
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-cli-"));
+  return createTempDir("hwdb-cli-");
 }
 
 /** 이벤트 루프를 막지 않고 `hwdb` 를 실행한다. */
