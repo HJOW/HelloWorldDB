@@ -7,15 +7,16 @@
 
 - 최종 갱신 : 2026-10-16
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
-- `rdbms` 는 1 ~ 9단계 구현을 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사에 더해, 9단계에서 **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 로 접속해 로그인, 질의, 대량 결과, 트랜잭션을 하고 데몬이 세 경로를 열고 닫으며 상태 조회·종료 요청을 처리한다. 접속용 클라이언트 라이브러리(`rdbms/src/client`)도 있다.
+- `rdbms` 는 1 ~ 10단계 구현을 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사, **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 접속과 접속용 클라이언트 라이브러리(`rdbms/src/client`)에 더해,
+  10단계에서 **`hwdb` 명령**을 완성했다 : `hwdb start`(분리된 데몬), `hwdb stop`, `hwdb status`, 그리고 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 화면에 보이지 않는 비밀번호 입력, 한글 폭을 맞춘 표 출력, 초기 암호 변경 안내, 종료 때 롤백 안내). 동작은 [rdbms/docs/cli.md](rdbms/docs/cli.md)에 있다.
 - 지금 진행할 범위는 `rdbms`와 `nodejsDriver`이다. JDBC(`jdbc8`, `jdbc6`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `rdbms` 10단계(데몬 제어와 CLI `hwdb`). DML 행 단위 접근은 읽기·오버레이(1부)와 제약·참조동작·커밋(2부)을 모두 2026-10-16 완료했다.
-  10단계는 9단계의 클라이언트 라이브러리를 그대로 쓰며, `hwdb` 화면 문구는 영어만 낸다(다국어용 메시지 카탈로그 분리). 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)에 있다. 드라이버의 프로토콜 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
+- 다음 작업 : `rdbms` 11단계(통합 검증 : 네트워크를 거친 10개 세션 동시성, 개요 1 ~ 15 항목별 시나리오, 두 인스턴스 동시 구동, bun 구동 확인, 사용 설명서). 그다음 `nodejsDriver` 12단계. 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)에 있다. 드라이버의 프로토콜 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
 - 2026-10-15 : 7단계 남은 마무리(`SYS_SESSIONS` 연결, `docs/transactions.md`)를 끝내고 8단계를 완료했다.
 - 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML의 행 단위 접근은 당시 미구현이었고 2026-10-16에 완료했다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 `session.ts`, `dml.ts` 에 충돌 마커가 커밋되어 빌드가 깨져 있었다. 7단계 쪽을 기준으로 정리했고, 병합 중 빠진 6단계 점검 보완 기록을 `rdbms/PROGRESS.md` 에 다시 넣었다.
-- 검증 : Windows의 Node.js 24.19.0 / TypeScript 6.0.3에서 `npm test` 658개 통과(행 단위 접근 2부 신규 16개 포함). Bun 1.4.2도 658개 검증 완료(전체 실행 657개 통과 + 2만 행 시험 1개 별도 통과). 대량 시험은 준비 시간을 포함해 최초 120초 제한을 넘었으며, 360초 제한으로 재실행해 약 221초에 통과했다. 이전 통신 결함 22건과 읽기 계층 결함 8건의 주입 검증 기록은 유지한다.
+- 10단계 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 789개 통과(10단계 신규 131개). bun 1.3.14에서 CLI 시험 138개, net·daemon 시험 249개 통과. 결함 주입 15건을 시험이 모두 잡았다. 분리 구동(콘솔 창 없음, 콘솔 프로세스를 끝내도 데몬 유지)과 실제 Windows 콘솔의 대화형 모드를 확인했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 확인하지 못했다.
+- 이전 검증 : Windows의 Node.js 24.19.0 / TypeScript 6.0.3에서 `npm test` 658개 통과(행 단위 접근 2부 신규 16개 포함). Bun 1.4.2도 658개 검증 완료(전체 실행 657개 통과 + 2만 행 시험 1개 별도 통과). 대량 시험은 준비 시간을 포함해 최초 120초 제한을 넘었으며, 360초 제한으로 재실행해 약 221초에 통과했다. 이전 통신 결함 22건과 읽기 계층 결함 8건의 주입 검증 기록은 유지한다.
 
 ## 프로젝트별 상태
 
@@ -23,7 +24,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 9단계와 DML 행 단위 접근 완료. 다음은 10단계(CLI) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1 ~ 10단계 완료(`hwdb` 포함). 다음은 11단계(통합 검증) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류. 자바 8 이상, JDBC 4.2 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 없음 | 보류. 자바 6~7용 JDBC 4.0, 자바 8 이상 실행 호환 | 계획부터 다시 정한다 | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
@@ -36,7 +37,9 @@
 - RDBMS 사양 중 보류한 프로젝트를 위한 부분(TLS 1.2를 쓸 수 없는 자바 6 환경용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 `rdbms`에서 그대로 구현한다.
 - 프로토콜 명세는 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)에 확정되어 있다(2026-10-16, 버전 1). 모든 드라이버가 이 문서를 기준으로 삼는다. 클라이언트가 해야 하는 검증(서버 nonce·서명 확인, TLS 인증서 검증과 재시도 등)은 그 문서 15절의 체크리스트이다.
   프로토콜을 바꾸면 프로토콜 버전을 올리고, 영향을 받는 드라이버 프로젝트의 PROGRESS.md 에 알린다.
-- 명령은 `hwdb` 하나이다. `hwdb start`, `hwdb stop`, `hwdb status` 로 데몬을 제어하고, `hwdb` 로 SQL 접속을 한다. 서버 실행 파일을 따로 두지 않는다.
+- 명령은 `hwdb` 하나이다. `hwdb start`, `hwdb stop`, `hwdb status` 로 데몬을 제어하고, `hwdb` 로 SQL 접속을 한다. 서버 실행 파일을 따로 두지 않는다. (10단계에서 구현을 마쳤다. [rdbms/docs/cli.md](rdbms/docs/cli.md))
+- 10단계에서 프로토콜·클라이언트에 더한 것(드라이버가 알아 둘 점) : (1) `close` 의 응답 `bye` 에 선택 필드 `rolledBack: true`(세션을 닫으며 커밋하지 않은 변경을 롤백했을 때만)가 생겼다. 프로토콜 버전은 올리지 않았다. `Connection.close()` 는 `{ rolledBack }` 을 돌려준다.
+  (2) `authStart.tablespace` 는 저장된 이름 그대로를 받는다. 서버는 대문자로 바꾸는 등의 처리를 하지 않으므로 사용자 입력을 받는 쪽(`hwdb -t` 는 따옴표 없으면 대문자, 큰따옴표면 그대로)이 식별자 규칙으로 바꿔 보내야 한다. (3) 데몬이 구동 중인지는 잠금 파일의 PID 가 아니라 로컬 전용 채널의 `status` 응답으로 판단한다(PID 재사용 대비).
 - 인스턴스는 포트 번호로 구분한다. SID 나 DB 이름은 없으며, TCP 와 UDP 가 같은 포트 번호를 쓴다.
 - `rdbms` 의 CLI 는 `nodejsDriver` 보다 먼저 만들어지므로 자체 클라이언트 코드(`rdbms/src/client`: `Connection`, 전송 계층 로컬·TCP·TLS·UDP)를 가진다. `nodejsDriver` 는 그 코드를 출발점으로 삼을 수 있다.
 - 타입스크립트 코드는 타입스크립트 6 에서 컴파일되어야 한다 (AGENTS.md 지켜야 할 사항 7). 그래서 `rdbms` 의 개발 의존성은 타입스크립트 6 으로 묶어 두었다. 7 로 올리지 않는다.
@@ -95,3 +98,6 @@ JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 202
 
 - 2026-10-16 : `rdbms` DML 행 단위 접근 2부 완료. 제약 검사·FK 참조동작·커밋 쓰기·커밋 FK 재검사에서 전체 테이블 이미지를 없애고 변경 행만 처리한다. 복합 FK와 자기 참조·연쇄, 문장 실패 되돌리기와 잠금 재시도를 유지했다. 16개 시험을 더해 Node.js `npm test` 658개 통과. 2만 행 테이블의 PK 단건 INSERT·UPDATE·DELETE와 명시적 커밋에서 힙 순회가 0회였다. Bun 1.4.2도 전체 실행 657개 통과 + 대량 시험 별도 1개 통과로 658개 검증을 마쳤다(대량 시험은 데이터 준비를 포함해 제한을 120초에서 360초로 조정). 트랜잭션 문서와 진행·인수인계를 갱신했다. 다음은 10단계 CLI이며 커밋은 하지 않았다.
 - 2026-10-16 : JDBC의 자바 5 지원을 철회하고 자바 6~7용 프로젝트·폴더·패키지 이름을 `jdbc6`으로 변경했다. JDBC 인터페이스는 `jdbc6` 4.0, `jdbc8` 4.2이며 `jdbc6`도 자바 8 이상에서 같은 배포본을 사용할 수 있어야 한다. AGENTS.md 상세 8-1, JDBC 초안, TLS 안내와 관련 문서·참조를 동기화했다. Markdown 17개의 UTF-8·로컬 링크·옛 JDBC 참조를 검사했고, 빌드와 TCP/TLS 시험은 Node.js·Bun 각각 28개 통과했다. 개발 보류는 유지하며 커밋은 하지 않았다.
+- 2026-10-16 : `rdbms` 10단계(데몬 제어와 CLI) 완료. `hwdb start`(분리된 데몬), `stop`, `status`와 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 비밀번호 숨김 입력, 한글 폭을 맞춘 표, 오류 위치 표시, 초기 암호·롤백 안내)을 구현하고 [rdbms/docs/cli.md](rdbms/docs/cli.md)를 썼다.
+  구동 중인지는 PID가 아니라 로컬 전용 채널의 응답으로 판단한다(PID 재사용 대비). 서버·프로토콜에는 `bye.rolledBack`, 정상 종료 뒤 프로세스를 직접 끝내는 처리(클라이언트가 소켓을 읽지 않으면 Windows에서 데몬이 영원히 남던 문제), 오래된 잠금 생성 가드 정리를 더했다. AGENTS.md 14-1, 14-2에 종료 코드·옵션 조합·스크립트 모드의 `exit` 규칙을 보충했다.
+  시험 131개를 더해 `npm test` 789개 통과(Node.js 24.21.0), bun 1.3.14에서 CLI 138개·net/daemon 249개 통과, 결함 주입 15건을 모두 잡았다. Windows에서 분리 구동(콘솔 창 없음, 콘솔 프로세스를 끝내도 데몬 유지)과 실제 콘솔의 대화형 모드를 확인했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 확인하지 못했다. 커밋은 하지 않았다.

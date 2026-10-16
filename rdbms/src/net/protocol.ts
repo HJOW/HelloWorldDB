@@ -258,6 +258,8 @@ export interface PongResponse {
 export interface ByeResponse {
   id: number;
   type: "bye";
+  /** 세션을 닫으면서 커밋하지 않은 변경을 롤백했을 때만 있다(`true`). `hwdb` 가 종료 때 이를 알린다. */
+  rolledBack?: boolean;
 }
 
 export interface StatusResponse {

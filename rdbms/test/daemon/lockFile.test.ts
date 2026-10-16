@@ -8,6 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import {
+  GATE_STALE_MS,
   acquireLock,
   isProcessAlive,
   isRunning,
@@ -54,6 +55,41 @@ test("비정상 종료로 남은 파일은 덮어쓴다", () => {
   assert.equal(lock.pid, process.pid);
   assert.equal(lock.port, 7420);
   assert.notEqual(lock.controlToken, "old");
+  releaseLock(dataDir);
+});
+
+test("방금 만든 잠금 생성 가드가 있으면 다른 프로세스가 구동 중이므로 실패하고 가드를 건드리지 않는다", () => {
+  const dataDir = path.join(makeTempDir(), "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+  const gate = `${getLockFilePath(dataDir)}.acquire`;
+  fs.mkdirSync(gate);
+  assert.throws(() => acquireLock(dataDir, 7410), /another process is starting/);
+  assert.equal(fs.existsSync(gate), true);
+  assert.equal(readLockFile(dataDir), null);
+});
+
+test("강제 종료로 남은 오래된 잠금 생성 가드는 치우고 구동한다", () => {
+  const dataDir = path.join(makeTempDir(), "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+  const gate = `${getLockFilePath(dataDir)}.acquire`;
+  fs.mkdirSync(gate);
+  const old = new Date(Date.now() - GATE_STALE_MS - 5000);
+  fs.utimesSync(gate, old, old);
+  const lock = acquireLock(dataDir, 7410);
+  assert.equal(lock.pid, process.pid);
+  assert.equal(fs.existsSync(gate), false, "가드는 구동 뒤에 남지 않는다");
+  releaseLock(dataDir);
+});
+
+test("오래된 가드가 있어도 살아 있는 데몬이 있으면 중복 구동은 막는다", () => {
+  const dataDir = path.join(makeTempDir(), "data");
+  acquireLock(dataDir, 7410);
+  const gate = `${getLockFilePath(dataDir)}.acquire`;
+  fs.mkdirSync(gate);
+  const old = new Date(Date.now() - GATE_STALE_MS - 5000);
+  fs.utimesSync(gate, old, old);
+  assert.throws(() => acquireLock(dataDir, 7410), /already in use/);
+  assert.equal(fs.existsSync(gate), false, "실패해도 가드는 치워 둔다");
   releaseLock(dataDir);
 });
 

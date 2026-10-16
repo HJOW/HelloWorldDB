@@ -743,12 +743,41 @@ test("close 는 bye 로 답하고 접속을 닫고 커밋하지 않은 변경을
   const sessions = fixture.db.sessions.count;
   const bye = await a.request({ type: "close" });
   assert.equal(bye.type, "bye");
+  assert.equal(bye["rolledBack"], true, "커밋하지 않은 변경을 롤백했음을 알린다");
   assert.equal(a.endpoint.closed, true);
   assert.equal(fixture.db.sessions.count, sessions - 1);
   // 롤백되었고 잠금도 풀렸다.
   fixture.admin.execute("USE SYSTEM");
   assert.deepEqual(selectStrings(fixture.admin.execute("SELECT X FROM T")).rows, [["1"]]);
   assert.doesNotThrow(() => fixture.admin.execute("UPDATE T SET X = 11 WHERE X = 1"));
+});
+
+test("bye 의 rolledBack 은 롤백한 변경이 있을 때만 있다", async (t) => {
+  const fixture = setup(t);
+  const setupDriver = await loggedIn(fixture);
+  await setupDriver.execute("CREATE TABLE T (X INTEGER PRIMARY KEY)");
+  assert.equal((await setupDriver.request({ type: "close" }))["rolledBack"], undefined, "아무것도 하지 않았다");
+
+  const cases: Array<[string[], boolean]> = [
+    [["INSERT INTO T VALUES (1)"], false], // 자동 커밋
+    [["BEGIN", "SELECT 1"], false], // 트랜잭션은 열려 있지만 변경이 없다
+    [["BEGIN", "INSERT INTO T VALUES (2)", "COMMIT"], false],
+    [["BEGIN", "INSERT INTO T VALUES (3)", "ROLLBACK"], false],
+    [["BEGIN", "INSERT INTO T VALUES (4)", "SAVEPOINT S", "DELETE FROM T WHERE X = 4", "ROLLBACK TO S"], true], // 세이브포인트 앞의 변경이 남는다
+    [["SET AUTOCOMMIT OFF", "UPDATE T SET X = 20 WHERE X = 1"], true],
+    [["SET AUTOCOMMIT OFF", "SELECT 1"], false],
+    [["BEGIN", "INSERT INTO T VALUES (5)", "SAVEPOINT S", "ROLLBACK TO S", "ROLLBACK"], false],
+  ];
+  for (const [statements, expected] of cases) {
+    const driver = await loggedIn(fixture);
+    for (const sql of statements) {
+      const result = await driver.execute(sql);
+      assert.notEqual(result.type, "error", `${sql}: ${JSON.stringify(result)}`);
+    }
+    const bye = await driver.request({ type: "close" });
+    assert.equal(bye.type, "bye");
+    assert.equal(bye["rolledBack"], expected ? true : undefined, statements.join("; "));
+  }
 });
 
 test("접속이 갑자기 사라져도(dispose) 롤백하고 잠금을 푼다", async (t) => {

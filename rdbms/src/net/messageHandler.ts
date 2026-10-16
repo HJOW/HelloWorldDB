@@ -536,8 +536,10 @@ export class MessageHandler {
 
   private handleClose(id: number): void {
     if (this.state === "closed") return;
+    // 세션을 닫으면 커밋하지 않은 변경이 롤백된다. 클라이언트(hwdb 등)가 알릴 수 있게 닫기 전에 있었는지 알려 준다.
+    const rolledBack = this.session?.hasUncommittedChanges ?? false;
     try {
-      this.endpoint.send(encodeMessage({ id, type: "bye" }));
+      this.endpoint.send(encodeMessage({ id, type: "bye", ...(rolledBack ? { rolledBack: true } : {}) }));
     } finally {
       this.endpoint.close();
       this.dispose();

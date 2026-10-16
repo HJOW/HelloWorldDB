@@ -7,15 +7,20 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-16
-- 진행 단계 : 1 ~ 9단계 완료. 9단계(통신)는 로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)로 로그인, 질의, 대량 결과, 트랜잭션이 동작하고, 데몬(`Server`)이 세 경로를 열고 닫으며 제어 요청(상태 조회, 종료)을 처리한다.
-  완료 기준(세 경로의 로그인·질의·대량 결과·트랜잭션, UDP 는 패킷 유실과 중복 조건 포함)을 채웠다. 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)로 확정했다.
+- 진행 단계 : 1 ~ 10단계 완료. 10단계(데몬 제어와 CLI)는 `hwdb start`(분리된 데몬), `stop`, `status` 와 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP)을 구현했다.
+  완료 기준을 채웠다 : 데몬을 띄우면 바로 돌아오고 부모와 콘솔이 끝나도 남으며, 설치 직후 SYSTEM 으로 로그인해 초기 암호를 바꿀 수 있고, TCP·UDP 를 껐거나 `maxConnections` 가 차도 로컬 접속이 된다(Windows 에서 확인).
+  명령의 동작은 [docs/cli.md](docs/cli.md), 9단계(통신)의 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)이다.
 - 착수 조건 : 없음
-- 다음 작업 : 10단계(데몬 제어와 CLI). **DML 행 단위 접근은 1·2부 모두 2026-10-16 완료**했다(7단계 항목). 10단계의 `hwdb` 는 `client/connection.ts` 를 그대로 쓴다. 인수인계는 "인수인계 사항"의 9단계 항목.
-- 10단계 사전 작업(2026-10-16, 코드 일부) : 제어 요청 `status` 응답에 `ready`(모든 접속 경로가 열렸는지. `hwdb start` 가 구동 완료를 기다리는 데 쓴다)와 `systemPasswordInitial`(SYSTEM 이 초기 암호인지.
-  `hwdb start`·`status` 가 변경을 안내한다)을 더했다(`net/protocol.ts`, `daemon/server.ts`, [docs/protocol.md](docs/protocol.md)). `hwdb --ssl` 의 CA 지정과 검증 끄기 옵션(`--ssl-ca`, `--ssl-no-verify`)과 옵션 조합 규칙을 AGENTS.md 14-2 에 먼저 정했다. `hwdb` 명령 자체(`start`·`stop`·`status`·SQL 접속)는 아직 구현하지 않았다.
+- 다음 작업 : 11단계(통합 검증). 네트워크를 거친 10개 세션 동시성(교착 시나리오 포함), 개요 1 ~ 15 항목별 시나리오 테스트, 두 인스턴스 동시 구동, bun 구동 확인, 사용 설명서. 인수인계는 "인수인계 사항"의 첫 항목(10단계).
+- 10단계에서 서버·프로토콜에 더한 것(2026-10-16) : `bye` 응답의 `rolledBack`(세션을 닫으며 커밋하지 않은 변경을 롤백했는지. `Session.hasUncommittedChanges`, `Connection.close()` 가 `{ rolledBack }` 을 돌려줌),
+  정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(`daemon/main.ts`. 클라이언트가 소켓을 읽지 않아 Windows 네임드 파이프가 닫히지 않을 때 데몬이 영원히 남아 `hwdb stop` 이 끝나지 않던 것을 고쳤다), 강제 종료로 남은 잠금 생성 가드 정리(`lockFile.ts`).
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
 - 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
+- 10단계 검증(Windows, Node.js 24.21.0 / TypeScript 6.0.3) : `npm test` 789개 통과(10단계 신규 131개 : 인자 해석 16, 문장 나누기 16, 결과 출력 15, 터미널 입력 16, SQL 접속 43, 실제 프로세스 수명주기 21, 잠금 가드 3, 처리기 1).
+  bun 1.3.14 : `bun test dist/test/cli/` 138개, `dist/test/net/ dist/test/daemon/` 249개 통과, `hwdb start`·`status`·SQL 접속(로컬·TCP·UDP)·`stop` 직접 실행 확인.
+  결함을 일부러 주입한 빌드에서 시험이 실패하는지 15건 확인했다(문장 나누기의 따옴표·주석, 표시 폭, NULL 표시, 옵션 조합 규칙 2건, PID 만으로 구동 판단, 정상 종료 뒤 프로세스 끝내기, `rolledBack`, `-t` 전달, 비밀번호 되울림, 오류 뒤 계속 실행, 인증서 안내, 오류 칸 계산, 구동 실패 감지). 모두 잡혔다.
+  실제 Windows 콘솔(`winpty`)에서 대화형 모드를 사람이 하는 입력으로 확인했다 : 비밀번호 숨김, 여러 줄 입력, 위 화살표 이력, `help`, 오류와 `^` 표시, Ctrl-D, 롤백 안내. 새 콘솔 창에서 `hwdb start` 를 실행하고 그 창의 프로세스를 강제로 끝내도 데몬이 남는 것, 데몬에 콘솔 창과 콘솔 호스트가 없는 것도 확인했다. 실제 터미널 앱 탭 닫기는 확인하지 못했다.
 - 검증 : Windows의 Node.js 24.19.0 / TypeScript 6.0.3에서 `npm test` 658개 통과(행 단위 접근 2부 신규 16개 포함). 빌드에 오류와 경고가 없다.
   Bun 1.4.2에서도 전체 658개를 검증했다(전체 실행 657개 통과 + 2만 행 시험 1개 별도 통과). 대량 시험은 데이터 준비를 포함해 최초 120초 제한을 넘었고, 제한을 360초로 늘린 재실행에서 약 221초에 통과했다. 예전 Bun 1.3.14에서 실패했던 `t.mock` 기반 fsync 시험은 1.4.2에서 통과했다.
   TLS 시험의 일부(서버 쪽 핸드셰이크 실패 이벤트, 클라이언트의 `maxVersion`, 서버 인증서 교체)는 bun 에서 동작이 달라 Node.js 에서만 본다. 제품 동작의 차이는 [docs/protocol.md](docs/protocol.md) 16절.
@@ -54,7 +59,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를, 8단계에서 `auth`(계정, 권한, SCRAM 계산, 문장별 권한 검사)와 사용자·권한 문장 실행(`exec/accounts.ts`)을, 9단계에서 통신(`net`, `client`)과 데몬의 접속 경로 조립, `cli` 의 문구 카탈로그(`cli/i18n.ts`)를 붙였다. `cli` 의 나머지(`hwdb start`·`stop`·SQL 접속)는 10단계이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를, 8단계에서 `auth`(계정, 권한, SCRAM 계산, 문장별 권한 검사)와 사용자·권한 문장 실행(`exec/accounts.ts`)을, 9단계에서 통신(`net`, `client`)과 데몬의 접속 경로 조립, `cli` 의 문구 카탈로그(`cli/i18n.ts`)를 붙였다. 10단계에서 `cli` 의 나머지(`hwdb start`·`stop`·`status`·SQL 접속, 인자 해석, 문장 나누기, 터미널 입력, 결과 출력)와 분리된 데몬의 진입점(`daemon/entry.ts`)을 붙였다.
 
 ```
 rdbms/
@@ -62,18 +67,22 @@ rdbms/
   config.json            설정 파일. 없으면 기본값으로 구동한다 (아직 만들지 않음)
   src/
     cli/                 hwdb 명령 (화면 문구는 i18n.ts 의 t(키)로 꺼낸다)
-      main.ts              진입점. 하위 명령 분기, 옵션 해석
+      main.ts              진입점. 인자를 해석(args.ts)해 담당 모듈로 넘김, --help, --version, 종료 코드
+      args.ts              명령행 인자 해석, 옵션 조합 규칙
       i18n.ts              화면 문구의 다국어 처리 기반(카탈로그 등록, 언어 선택, t, checkCatalog)
       messages/en.ts       영어 카탈로그(키 목록의 기준)
-      daemonControl.ts     hwdb start, stop, status
-      sqlShell.ts          SQL 접속 (대화형 모드, 스크립트 모드)
-      resultPrinter.ts     실행 결과의 화면 출력
+      daemonControl.ts     hwdb start(분리 구동), stop, status. 구동 상태 확인(probeDaemon)
+      sqlShell.ts          SQL 접속 (로그인 흐름, 대화형 모드, 스크립트 모드, 롤백 안내). 입출력은 ShellEnvironment 로 받는다
+      statementSplitter.ts 문장 나누기 (문자열·식별자·주석 안의 ; 무시, 줄·칸 위치)
+      terminal.ts          터미널 입력 (사용자명, 화면에 보이지 않는 비밀번호, 줄 입력, 표준 입력 읽기)
+      resultPrinter.ts     실행 결과의 화면 출력 (표, 표시 폭, 행 수, NULL 표시, 오류와 위치 표시)
     client/
       connection.ts        클라이언트 쪽 프로토콜(핸드셰이크, SCRAM, 실행, 커서, 제어 요청). CLI 와 테스트가 쓴다
       transports.ts        전송 계층 추상화와 로컬 채널·TCP·TLS 연결(인증서 검증과 재시도)
       udpTransport.ts      UDP 전송(신뢰성 계층 위, 세션 번호, FIN)
     daemon/
-      main.ts              데몬 프로세스의 진입점, 신호 처리
+      main.ts              데몬 본체 구동(runForeground), 신호 처리, 정상 종료 뒤 프로세스 끝내기(exitAfterShutdown)
+      entry.ts             hwdb start 가 분리해서 띄우는 진입점
       server.ts            구성 요소 조립, 구동과 종료의 순서
       lockFile.ts          데이터 디렉토리 잠금 파일, 제어 토큰
     config/
@@ -129,7 +138,8 @@ rdbms/
 
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
     smoke.test.ts          프로젝트 구성 확인용
-    cli/                   i18n(카탈로그와 언어 선택), daemonControl
+    cli/                   i18n(카탈로그와 언어 선택), args(인자 해석), statementSplitter, resultPrinter, terminal(가짜 터미널 스트림), sqlShell(데몬을 프로세스 안에 띄우고 가짜 입출력으로 실행),
+                           daemonControl(프로세스 안의 데몬에 status), daemonLifecycle(실제 hwdb 프로세스로 start·status·stop·잠금 파일·두 인스턴스). helpers.ts 는 공용 도우미
     net/                   통신 테스트. protocol(메시지와 값 인코딩), framing, connect(접속 정책), messageHandler(소켓 없는 처리기), localChannel, tcp(TLS, 인증서 검증과 재시도 포함), clientSecurity(서버 서명 확인),
                            udpReliability(가짜 시계와 시뮬레이터), udp(실제 소켓과 손실 프록시). helpers.ts, udpSim.ts, udpProxy.ts 는 공용 도우미
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
@@ -153,6 +163,7 @@ rdbms/
     transactions.md        오버레이, 잠금 키, 기다림과 교착, 커밋 순서, DDL 과 자동 커밋, 트랜잭션 문장 규칙, 한계
     accounts-and-privileges.md  계정 저장, SCRAM, 권한 수준과 판정, 뷰 규칙, 권한 그룹, 문장별 필요 권한, 딕셔너리 가시성, 오류 번호
     communication-design.md     9단계 설계와 구현하며 달라진 점(20절)
+    cli.md                 hwdb 명령. 데몬 제어(구동 상태 판단, 분리 구동, 종료), SQL 접속(옵션, 모드, 문장 나누기, 출력, 롤백 안내), 표준 절차, 확인 기록과 한계
     protocol.md            프로토콜 명세(버전 1). 전송 계층(프레임, TLS, 로컬 채널, UDP 패킷), 메시지, SCRAM, 값 표현, 커서, 오류, 한도, 클라이언트 체크리스트, 런타임 차이. 드라이버가 기준으로 삼는다
   dist/                  빌드 결과물. git 에 넣지 않는다
 ```
@@ -331,30 +342,34 @@ rdbms/
   UDP 는 프록시로 유실 15 ~ 25%, 중복 10 ~ 100% 에서 로그인, 질의, 3,000행 결과, 트랜잭션, 10개 접속 동시 쓰기가 통과한다. Node.js 와 bun 모두 확인했다. 리눅스·macOS 의 유닉스 소켓은 Windows 개발 환경에서 실행해 보지 못했다.)
 
 
-### 10단계. 데몬 제어와 CLI
+### 10단계. 데몬 제어와 CLI (2026-10-16 완료)
+
+명령의 동작과 옵션은 [docs/cli.md](docs/cli.md)에 있다.
 
 데몬 제어 (상세 14-1)
 
-- [ ] `hwdb start` : 데몬을 분리된 프로세스로 띄우기, 구동 완료 대기, 실패 시 원인 표시, 이미 구동 중일 때의 처리, `--timeout`, `--foreground`
-- [ ] `hwdb stop` : 종료 요청, 프로세스가 사라질 때까지 대기
-- [ ] `hwdb status` : 상태 표시와 종료 코드
-- [ ] 잠금 파일에 PID, 포트 번호, 구동 시각, 제어 토큰 기록. 비정상 종료로 남은 잠금 파일과 소켓 파일 처리
-- [ ] 데몬의 출력을 로그 파일로 보내기
-- [ ] Windows 확인 : 터미널을 닫아도 데몬이 남는지, 데몬의 콘솔 창이 뜨지 않는지
+- [x] `hwdb start` : 데몬을 분리된 프로세스로 띄우기(`daemon/entry.ts`. `detached` + `windowsHide`, 출력은 로그 파일에 이어 붙임), 구동 완료 대기(로컬 전용 채널 `status` 의 `ready`), 실패 시 원인 표시(로그의 마지막 `[error]`), 이미 구동 중일 때의 처리(종료 코드 0), `--timeout`, `--foreground`
+- [x] `hwdb stop` : 종료 요청, 프로세스가 사라질 때까지 대기. 구동 중이 아니면 알리고 0. 접속한 클라이언트가 소켓을 읽지 않아도 최대 약 2초 뒤 끝난다(`exitAfterShutdown`)
+- [x] `hwdb status` : 구동 중이면 데몬이 알려 준 값과 종료 코드 0, 아니면 config.json 의 값과 1
+- [x] 잠금 파일에 PID, 포트 번호, 구동 시각, 제어 토큰 기록(9단계까지 구현). 비정상 종료로 남은 것의 처리 : 죽은 PID 는 구동 중이 아닌 것으로 보고 덮어쓴다. PID 가 살아 있는데 로컬 전용 채널이 답하지 않으면 `unresponsive` 로 알리고 잠금 파일을 지우지 않는다. 오래된(10초) 잠금 생성 가드는 치운다. 남은 소켓 파일은 9단계의 `LocalChannelServer` 가 정리한다(유닉스는 미확인)
+- [x] 데몬의 출력을 로그 파일로 보내기
+- [x] Windows 확인 : 터미널(콘솔)을 닫아도 데몬이 남는지, 콘솔 창이 뜨지 않는지 (확인 내용은 위 "10단계 검증")
 
 SQL 접속 (상세 14-2)
 
-- [ ] 명령행 옵션 처리. 모든 옵션을 생략할 수 있다
-- [ ] 로컬 전용 채널 접속(기본), TCP 접속, UDP 접속. 데몬이 구동 중이 아니면 `hwdb start` 를 안내한다
-- [ ] `--ssl` 접속 : 서버 인증서를 기본으로 검증하고, 인증서 오류 때 클라이언트 라이브러리의 재시도(100 ms 뒤 최대 2회)를 표준 오류에 한 줄씩 알린다(`onCertRetry`). 최종 실패에는 원인과 해결 방법(CA 지정, 검증 끄기)을 안내한다. 옵션 이름을 정하면 AGENTS.md 14-2 의 표를 먼저 고친다
-- [ ] 사용자명 입력, 화면에 보이지 않는 비밀번호 입력
-- [ ] 대화형 모드 : 여러 줄 입력, `;` 에서 실행, 입력 이력, `help`, `exit`, `quit`
-- [ ] 스크립트 모드 : `-e`, `-f`, 표준 입력. 오류 시 종료 코드 1
-- [ ] 문장 나누기 : 문자열과 주석 안의 `;` 는 문장 끝으로 보지 않는다
-- [ ] 결과 표 출력 : 한글처럼 폭이 넓은 문자의 칸 맞춤, 행 수와 소요 시간
-- [ ] SYSTEM 계정 초기 암호 변경 안내
+- [x] 명령행 옵션 처리. 모든 옵션을 생략할 수 있다 (`args.ts`)
+- [x] 로컬 전용 채널 접속(기본), TCP 접속, UDP 접속. 데몬이 구동 중이 아니면 `hwdb start` 를 안내한다
+- [x] `--ssl` 접속 : 서버 인증서를 기본으로 검증하고, 인증서 오류 때 클라이언트 라이브러리의 재시도(100 ms 뒤 최대 2회)를 표준 오류에 한 줄씩 알린다(`onCertRetry`). 최종 실패에는 `--ssl-ca`, `--ssl-no-verify` 를 안내한다
+- [x] 사용자명 입력, 화면에 보이지 않는 비밀번호 입력 (`terminal.ts`)
+- [x] 대화형 모드 : 여러 줄 입력, `;` 에서 실행, 입력 이력, `help`, `exit`, `quit`
+- [x] 스크립트 모드 : `-e`, `-f`, 표준 입력. 오류 시 종료 코드 1
+- [x] 문장 나누기 : 문자열과 주석 안의 `;` 는 문장 끝으로 보지 않는다 (`statementSplitter.ts`)
+- [x] 결과 표 출력 : 한글처럼 폭이 넓은 문자의 칸 맞춤, 행 수와 소요 시간
+- [x] SYSTEM 계정 초기 암호 변경 안내
 - 완료 기준 : `hwdb start` 가 데몬을 띄우고 바로 돌아오며, 터미널을 닫아도 데몬이 남는다. `hwdb status` 와 `hwdb stop` 이 동작한다.
-  설치 직후 `hwdb` 로 SYSTEM 에 로그인하여 초기 암호를 바꿀 수 있다. TCP 와 UDP 를 모두 껐거나 `maxConnections` 가 찬 상태에서도 로컬 접속이 된다. Windows 에서도 모두 확인한다.
+  설치 직후 `hwdb` 로 SYSTEM 에 로그인하여 초기 암호를 바꿀 수 있다. TCP 와 UDP 를 모두 껐거나 `maxConnections` 가 찬 상태에서도 로컬 접속이 된다. Windows 에서도 모두 확인한다. (충족)
+  (`test/cli/daemonLifecycle.test.ts` 21개 : 실제 `hwdb` 프로세스로 start 가 바로 돌아오고(측정 0.4초 안팎) 데몬이 부모가 끝난 뒤에도 남는 것, status·stop, 재구동 뒤 데이터 유지, 초기 암호 변경 절차, 세 접속 경로, TCP·UDP 를 껐을 때와 `maxConnections` 가 찼을 때의 로컬 접속, 구동 실패 원인, 남은 잠금 파일, 두 인스턴스.
+  터미널을 닫는 동작과 콘솔 창은 자동으로 확인할 수 없어 위 "10단계 검증"의 수동 확인을 따른다.)
 
 ### 11단계. 통합 검증
 
@@ -372,13 +387,11 @@ SQL 접속 (상세 14-2)
 
 - Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.22.0, bun 1.3.14이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다. 9단계의 `net`, `tls`, `dgram` 사용은 22.x 에서 달라질 것으로 보지 않는다.
 - **리눅스, macOS 에서의 유닉스 소켓 확인**. 소켓 파일 권한 0600(umask 0177), 남은 소켓 파일 정리(연결을 시도해 죽은 소켓이면 지움), 클라이언트의 소켓 파일 소유자 확인은 구현했으나 Windows 개발 환경에서는 실행해 보지 못했다. 비윈도우 장비에서 `test/net/localChannel.test.ts` 를 돌려 확인하고, 소켓 파일 정리와 권한을 직접 보는 시험을 더한다.
-- bun 에서 프로세스를 분리해 띄우는 동작이 Node.js 와 같은지 (10단계에서 실제로 확인)
-- 잠금 파일에 적힌 PID 를 운영체제가 다른 프로세스에 다시 쓴 경우의 처리 (10단계). PID 만 보면 구동 중으로 잘못 판단하므로 로컬 전용 채널 응답도 함께 확인해야 한다. (9단계로 로컬 전용 채널의 `status` 요청이 생겼으므로 그것으로 확인할 수 있다)
+- **리눅스, macOS 에서의 `hwdb start`**. 분리 구동(`detached` 로 새 세션, SIGHUP 무시)과 터미널을 닫는 동작은 Windows 개발 환경에서 실행해 보지 못했다. 비윈도우 장비에서 `test/cli/daemonLifecycle.test.ts` 를 돌리고, 터미널을 닫아도 데몬이 남는지 직접 본다.
+- 실제 터미널 앱(Windows Terminal 등)의 탭을 닫는 동작은 확인하지 못했다(새 콘솔 창의 프로세스를 강제 종료하는 것으로 갈음했다). 데몬은 콘솔에 붙어 있지 않으므로 영향이 없다고 보지만 실제 장비에서 한 번 확인한다.
 - TLS 1.2를 쓸 수 없는 실제 자바 6 클라이언트의 TLS 1.0 접속 확인은 `jdbc6` 단계에서 한다. 자바 5는 지원하지 않는다. Node.js에서는 `tcp.ssl.minVersion = TLSv1`로 TLS 1.0 협상을 시험으로 확인했다. Bun은 구버전 TLS를 켤 수 없다(protocol.md 16절).
-- `hwdb --ssl` 에서 신뢰할 CA 를 지정하거나 인증서 검증을 끄는 CLI 옵션의 이름 (10단계). 사양 14-2 의 옵션 표에 없으므로 정할 때 AGENTS.md 의 표를 먼저 고친다. 클라이언트 라이브러리는 `SslOptions.ca`, `rejectUnauthorized` 를 이미 제공한다.
 - 동시 접속 부하에서의 교착 감지 확인 (11단계). 7단계 동시성 테스트는 한 프로세스 안의 비동기 세션이며, 9단계에서 네트워크를 거친 10개 접속 시험(로컬 채널, UDP)을 더했으나 교착을 매번 만들어 내는 시나리오는 아니다. 11단계에서 네트워크를 거친 교착 시나리오를 본다.
 - 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 정한다.
-- 잠금 생성 가드(`helloworlddb.lock.acquire`) 안에서 강제 종료되어 가드가 남는 경우의 정리(10단계). 현재는 동시 점유 방지를 위해 구동에 실패시킨다. 관리자가 관련 데몬이 없는지 확인한 뒤 빈 가드 디렉토리를 제거해야 한다. 일반 구동 후 남은 잠금 파일은 죽은 PID를 확인해 재사용한다.
 - 결과 전체가 서버 메모리에 한 번 올라온다(통신 설계 5절의 한계). DML 행 단위 접근에서 검토했으나 조회 실행기·정렬·집계·커서의 스트리밍은 별도 작업으로 남긴다. DML 대상과 FK 탐색은 지연 순회하며 변경 행만 보관한다.
 
 
@@ -537,6 +550,18 @@ SQL 접속 (상세 14-2)
     6. 시험 : 변경 목록의 동작은 문장별 결과·실패 되돌리기·잠금 재시도·세이브포인트로 검증한다. 기존 DML·제약·참조동작·트랜잭션 시험 전부, 큰 테이블(수만 행)에서 PK 로 1건 INSERT·UPDATE·DELETE 가 행 수와 무관하게 끝나는 것(힙 순회 횟수를 `V1Heap.prototype.iterate` 로 세어 0 을 확인), 무작위 DML 로 "행 단위 방식"과 "이전 이미지 방식"의 결과 비교는 기존 시험 전체로 갈음. 메모리 이미지 한계 항목을 이 문서와 `docs/transactions.md` 9절에서 지웠다. 그 밖의 한계는 유지한다.
   - 사양이 정하지 않은 사용자·권한 규칙 : 보편적인 RDBMS 의 동작을 따른다. [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md) 8절의 규칙(대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 불필요, `SELECT ... FOR UPDATE` 는 UPDATE 요구, CASCADE 삭제는 별도 권한 없음,
     권한 없음과 객체 없음을 오류 번호로 구별 등)을 점검한 결과 PostgreSQL, Oracle 의 공통 동작이거나 AGENTS.md 개요 5 의 명시 문구를 따른 것이라 그대로 두었다. (대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 를 요구하지 않는 것은 Oracle 의 기본 동작이며, 개요 5 의 "뷰에 UPDATE 권한이 있으면 UPDATE 가 가능해야 한다" 를 조건 없이 지키기 위한 것이다.)
+- 10단계에서 정한 사항이다. 동작은 [docs/cli.md](docs/cli.md)가 기준이다.
+  - **구동 중인지는 PID 가 아니라 로컬 전용 채널의 상태 조회 응답으로 판단한다**(`probeDaemon`). PID 는 살아 있는데 답이 없으면 `unresponsive`(구동 중일 수도, 멈췄을 수도, PID 재사용일 수도 있음)이며 잠금 파일을 마음대로 지우지 않는다. 접속은 잠금 파일에 적힌 포트로 하므로 구동 뒤 config.json 의 `port` 를 바꿔도 떠 있는 데몬을 다룰 수 있다.
+  - `hwdb start` 가 이미 구동 중일 때와 `hwdb stop` 이 구동 중이 아닐 때는 그 사실만 알리고 **종료 코드 0** 이다(AGENTS.md 14-1 에 명시). `status` 만 구동 중 0, 아니면 1.
+  - 분리 구동은 `process.execPath`(Node.js 또는 bun)로 `daemon/entry.js` 를 `detached`, `windowsHide` 로 띄우고 표준 출력·오류를 로그 파일에 이어 붙인다. 부모는 0.1초마다 잠금 파일의 PID 와 `status.ready` 를 확인한다. 제한 시간이 지나면 정상 종료를 요청하고 5초 뒤 강제로 끝낸다. 실패 원인은 이번 구동이 쓴 로그 분량의 마지막 `[error]` 줄이다.
+  - **정상 종료 절차를 마친 데몬은 직접 `process.exit` 한다**(`exitAfterShutdown`. 표준 출력·오류를 비운 뒤). 접속한 클라이언트가 소켓을 읽지도 닫지도 않으면 Windows 네임드 파이프는 서버 쪽 닫기가 끝나지 않아 이벤트 루프가 비지 않고 프로세스가 영원히 남았다. 이 상태에서 `hwdb stop` 은 최대 약 2초(소켓 닫기 유예) 뒤에 끝난다.
+  - 문장 나누기는 SQL 어휘 분석과 같은 규칙(작은따옴표 문자열, 큰따옴표 식별자, `--` 와 `/* */` 주석, 중첩 없음)이다. 스크립트 모드에서 `exit`·`quit`·`help` 는 일반 문장으로 서버에 보낸다(AGENTS.md 14-2 에 명시). 서버에는 한 번에 한 문장만 보내며, 스크립트 모드는 입력 전체를 접속 전에 읽는다(UTF-8 이 아니면 로그인하지 않고 실패).
+  - 출력 규칙 : 결과(표, 완료 메시지)는 표준 출력, 오류·안내·경고(초기 암호, 롤백, 인증서 재시도)는 표준 오류. NULL 은 `NULL`, 빈 문자열은 빈 칸. 숫자 타입은 오른쪽 맞춤. 표시 폭은 한글·한자·가나·전각·이모지 2칸, 결합 문자 0칸. 서버의 오류 위치(문장 안의 줄·칸)를 입력 파일의 줄·칸으로도 바꿔 알린다(앞선 문장이 같은 줄에 있으면 시작 칸을 더한다).
+  - **종료 때 롤백 안내**는 `bye` 응답의 `rolledBack` 으로 정확히 알린다. 처음에는 `SYS_SESSIONS.IN_TRANSACTION` 으로 확인하려 했으나, `SET AUTOCOMMIT OFF` 인 세션에서는 확인 질의 자체가 트랜잭션을 열어 오탐이 되고 변경 없는 열린 트랜잭션도 알리게 되어 서버가 `Transaction.hasChanges()` 로 알려 주도록 했다. 프로토콜의 선택 필드이므로 프로토콜 버전은 올리지 않았다(없으면 false).
+  - `-t` 의 값은 SQL 식별자 규칙으로 바꿔 보낸다(`tablespaceNameOf` : 따옴표 없으면 대문자, 큰따옴표면 그대로). 프로토콜의 `authStart.tablespace` 는 저장된 이름 그대로를 받는다(서버는 접는 처리를 하지 않는다). 드라이버도 사용자 입력을 받는 곳에서는 같은 변환을 해야 한다.
+  - `--ssl-ca` 와 `--ssl-no-verify` 는 함께 쓸 수 없고 `--ssl` 이 있어야 한다. 짧은 옵션은 모두 값을 받는다(`-p` 도 값이 필요하다. 비밀번호를 물어보게 하려면 `-p` 를 쓰지 않는다). 모르는 옵션과 위치 인자는 오류 1이고 `Try: hwdb --help` 를 안내한다.
+  - 잠금 생성 가드(`helloworlddb.lock.acquire`)가 10초 넘게 남아 있으면 강제 종료로 남은 것으로 보고 치운다. 10초 이내이면 다른 프로세스가 구동 중이므로 실패한다. 오래된 가드를 두 프로세스가 동시에 치우면 둘 다 잡을 수 있는 좁은 틈이 있으나, 이어지는 잠금 파일의 PID 검사가 한 번 더 막는다.
+  - 시험 : 프로세스 안에서 데몬을 띄우는 시험(`daemonControl`, `sqlShell`)은 `hwdb` 를 `spawnSync` 로 실행하면 안 된다(이벤트 루프가 막혀 데몬이 답하지 못한다. 비동기 `spawn` 또는 프로세스 안의 `runSqlCommand` 를 쓴다). 실제 프로세스로 띄우는 시험은 `daemonLifecycle` 이며 정리할 때 잠금 파일의 PID 가 시험 프로세스 자신이면 끝내지 않는다.
 - 9단계에서 정한 사항이다. 프로토콜의 규칙은 [docs/protocol.md](docs/protocol.md), 구조는 [docs/communication-design.md](docs/communication-design.md)(구현하며 달라진 점은 20절)가 기준이다.
   - 세션은 `Database.connect` 한 곳에서 만든다(로컬 판정, CONNECT 검사, `maxConnections`). 로컬 전용 채널은 세지도 막지도 않고, 루프백 주소의 TCP·UDP 는 로컬이지만 `maxConnections` 에는 센다.
   - 메시지 처리기는 접속마다 하나이고 소켓을 모른다(`ConnectionEndpoint`). 한 접속의 요청은 도착 순서대로 하나씩 처리하며(대기열 64개) `close` 만 건너뛴다. 보내기가 밀리면(`drained`) 다음 요청을 처리하지 않는다.
@@ -562,6 +587,15 @@ SQL 접속 (상세 14-2)
 ## 인수인계 사항
 
 - JDBC 지원 기준(2026-10-16 사용자 결정) : `jdbc6`는 자바 6~7용 JDBC 4.0이며 같은 배포본을 자바 8 이상에서도 사용 가능해야 한다. `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 자바 5는 지원하지 않는다. 두 드라이버 모두 현재 서버 프로토콜을 사용하며, 공통 프로토콜 코드는 자바 6 기준으로 작성한다 (AGENTS.md 상세 8-1). JDBC 개발 보류는 유지한다.
+- 10단계까지 마쳤다. 11단계(통합 검증)와 12단계(Node.js 드라이버)가 이어받을 때 알아 둘 점이다.
+  - **`hwdb` 는 모두 구현되어 있다.** 명령 문서는 [docs/cli.md](docs/cli.md). 11단계의 네트워크 시험은 `test/cli/helpers.ts`(`startServer` 로 프로세스 안에 데몬, `makeShellEnv`/`runSql` 로 가짜 입출력의 `hwdb`)와 `daemonLifecycle.test.ts`(실제 프로세스)를 본뜨면 된다. 10개 세션 시험은 실제 프로세스 데몬 하나에 `Connection` 열 개를 열면 된다.
+  - 사용자 시나리오는 전부 `runSqlCommand(options, installDir, env)` 로 시험한다. `ShellEnvironment` 가 표준 입출력, 파일, 터미널 입력(`ask`, `askSecret`, `openLineSource`), 접속(`connect`)을 감싸므로 가짜를 끼우기 쉽다. 터미널 논리는 `terminal.ts` 의 함수에 가짜 스트림(`FakeTty`, 원시 모드를 흉내)을 준다.
+  - **이 시험 프로세스 안의 데몬에 `hwdb` 를 `spawnSync` 로 부르지 않는다.** 이벤트 루프가 막혀 데몬이 답하지 못하고, `status` 는 `unresponsive` 로 판정한다.
+  - 데몬 판정과 제어는 `cli/daemonControl.ts` 의 `probeDaemon(config)`(구동 중 / 아님 / 답 없음)이다. 드라이버나 DB툴이 데몬을 제어한다면 같은 방식을 쓴다 : 잠금 파일의 제어 토큰으로 로컬 전용 채널에 `status`·`stop`.
+  - 프로토콜에 선택 필드 `bye.rolledBack` 이 생겼다([docs/protocol.md](docs/protocol.md) 6절). 드라이버는 `close` 의 응답에서 이를 읽어 사용자에게 알릴 수 있다(없으면 false). `Connection.close()` 는 이제 `{ rolledBack }` 을 돌려준다.
+  - `daemon/main.ts` 의 `exitAfterShutdown` 때문에 `runForeground` 를 부르는 쪽(`hwdb start --foreground`, `daemon/entry.ts`)은 정상 종료 뒤 `process.exit` 한다. 프로세스 안에서 `runForeground` 를 직접 시험할 때는 이 함수를 부르지 않는다(`Server` 를 직접 쓰는 기존 시험처럼).
+  - 화면 문구를 더하면 `cli/messages/en.ts` 에 키를 넣는다(`t(키)`). 키를 지우거나 이름을 바꾸면 `usage.text` 를 비교하는 시험(`i18n.test.ts`)과 이 키를 쓰는 곳을 함께 확인한다.
+  - 알려진 한계 : 결과 전체를 서버와 클라이언트가 메모리에 모은 뒤 출력한다. 대화형 모드의 입력 이력은 파일에 저장하지 않는다. 리눅스·macOS 와 실제 터미널 앱의 탭 닫기는 확인하지 못했다("미결 사항").
 - 9단계까지 마쳤다. 10단계(`hwdb`)와 12단계(Node.js 드라이버)가 이어받을 때 알아 둘 점이다.
   - **클라이언트는 이미 있다.** `client/connection.ts`(`Connection.open(target)` → `login` → `execute`/`fetch`/`fetchAll`/`closeCursor`/`ping`/`close`/`control`)와 `client/transports.ts`, `client/udpTransport.ts` 이다.
     `Target` 은 `{ kind: "local", port }`, `{ kind: "tcp", host, port, ssl? }`, `{ kind: "udp", host, port }` 이다. `hwdb` 는 이것을 그대로 쓰고, `nodejsDriver` 는 이것을 출발점으로 삼아 타입 변환(`bigint`, 날짜 등)과 커넥션 풀을 얹는다. 결과의 값은 JSON 값 그대로이다.
@@ -686,3 +720,8 @@ SQL 접속 (상세 14-2)
   Bun 1.4.2는 전체 실행 657개 통과 + 대량 시험 별도 1개 통과로 658개를 모두 검증했다. 대량 시험은 데이터 준비 포함 최초 120초 타임아웃이었고, 제한을 360초로 늘린 재실행에서 약 221초에 통과했다. `t.mock` 기반 fsync 시험은 이 버전에서 통과한다.
   `docs/transactions.md`와 두 PROGRESS.md를 갱신했다. 조회 결과 전체의 스트리밍은 별도 미결 사항이며, 다음 작업은 10단계 CLI이다. 커밋은 하지 않았다.
 - 2026-10-16 : JDBC 지원 변경을 반영했다. 자바 6~7용 `jdbc6`(JDBC 4.0, 자바 8 이상 실행 호환)와 자바 8 이상용 `jdbc8`(JDBC 4.2)을 상세 사양과 인수인계에 명시했다. 자바 5 지원 문구를 제거하고 통신 설계·프로토콜·TLS 경고와 시험 주석을 자바 6 기준으로 맞췄다. 메시지 프로토콜과 TLS 설정 동작은 바꾸지 않았다. `npm run build`와 `test/net/tcp.test.ts`의 기존 시험은 Node.js·Bun 각각 28개 통과했다.
+
+- 2026-10-16 : `rdbms` 10단계(데몬 제어와 CLI) 완료. `hwdb start`(분리된 데몬. `daemon/entry.ts`, 구동 완료는 로컬 전용 채널 `status.ready` 로 확인, 실패 원인은 로그에서), `stop`(종료 요청 뒤 PID 가 사라질 때까지), `status`(구동 중이면 데몬의 값). 구동 중인지는 PID 가 아니라 로컬 전용 채널의 응답으로 판단한다.
+  SQL 접속 : 인자 해석(`args.ts`, 옵션 네 가지 형태와 조합 규칙), 로컬 전용 채널·TCP·SSL(`--ssl-ca`, `--ssl-no-verify`, 인증서 재시도 안내)·UDP, 사용자명과 화면에 보이지 않는 비밀번호 입력(`terminal.ts`), 대화형 모드(여러 줄, 이력, help·exit·quit, Ctrl-C·Ctrl-D), 스크립트 모드(`-e`, `-f`, 표준 입력), 문장 나누기, 한글 폭을 맞춘 표 출력, 오류 위치 표시, SYSTEM 초기 암호 안내, 종료 때 롤백 안내.
+  서버·프로토콜 : `bye.rolledBack`, 정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(클라이언트가 소켓을 읽지 않을 때 Windows 에서 데몬이 영원히 남던 문제), 오래된 잠금 생성 가드 정리. AGENTS.md 14-1, 14-2 에 종료 코드·옵션 조합·스크립트 모드의 `exit` 를 보충했다. [docs/cli.md](docs/cli.md)를 썼다.
+  시험 131개를 더해 `npm test` 789개 통과(Node.js 24.21.0), bun 1.3.14 에서 CLI 138개와 net·daemon 249개 통과. 결함 주입 15건을 모두 잡는 것을 확인했다. Windows 에서 분리 구동(콘솔 창 없음, 콘솔 프로세스를 끝내도 데몬 유지)과 실제 콘솔의 대화형 모드를 확인했다. 커밋은 하지 않았다.

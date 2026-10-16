@@ -12,9 +12,9 @@
  * 그래서 데이터 디렉토리를 읽을 수 있는 운영체제 사용자만 데몬을 제어할 수 있다.
  *
  * 관련 사양 : AGENTS.md 상세 9, 14-1
- * 구현 단계 : 1단계(중복 구동 방지), 10단계(제어 토큰)
- * 1단계에서는 중복 구동 방지와 기본 상태 조회까지만 쓴다.
- * 서버가 제어 토큰을 확인하는 일은 9단계(net/messageHandler.ts 의 `control` 처리)에서 구현했다. CLI 가 토큰을 읽어 보내는 일은 10단계이다.
+ * 구현 단계 : 1단계(중복 구동 방지), 9단계(서버의 제어 토큰 확인), 10단계(CLI 가 토큰을 읽어 제어 요청에 싣기, 남은 가드 정리)
+ * 서버가 제어 토큰을 확인하는 일은 net/messageHandler.ts 의 `control` 처리, CLI 가 토큰을 읽어 보내는 일은 cli/daemonControl.ts 의 `probeDaemon` 이다.
+ * 잠금 파일의 PID 만으로는 구동 중인지 알 수 없다(운영체제가 PID 를 다른 프로그램에 다시 줄 수 있다). CLI 는 로컬 전용 채널의 상태 조회 응답까지 확인한다.
  */
 
 import crypto from "node:crypto";
@@ -79,13 +79,9 @@ export function acquireLock(dataDir: string, port: number): LockFileContent {
   fs.mkdirSync(dataDir, { recursive: true });
   const lockPath = getLockFilePath(dataDir);
   // 읽기와 쓰기 사이에 다른 프로세스가 잠금을 덮어쓰지 못하도록 생성 절차를 직렬화한다.
-  // 이 짧은 구간에서 프로세스가 강제 종료되면 불완전한 잠금을 자동으로 추측해 지우지 않는다.
+  // 가드는 이 짧은 구간(수 ms)에만 존재한다. 그 사이에 프로세스가 강제 종료되어 남은 가드는 오래된 것만 치운다. (`takeGate`)
   const gatePath = `${lockPath}.acquire`;
-  try {
-    fs.mkdirSync(gatePath);
-  } catch (error) {
-    throw new StartupError(`Cannot acquire data directory lock: ${gatePath}`, { cause: error });
-  }
+  takeGate(gatePath);
   try {
     const existing = readLockFile(dataDir);
     if (existing !== null && isProcessAlive(existing.pid)) {
@@ -108,6 +104,48 @@ export function acquireLock(dataDir: string, port: number): LockFileContent {
     return content;
   } finally {
     fs.rmdirSync(gatePath);
+  }
+}
+
+/**
+ * 잠금 생성 가드가 이만큼(ms) 지났으면 강제 종료로 남은 것으로 본다.
+ * 가드는 잠금 파일을 읽고 쓰는 동안만 있으므로 정상이라면 수 ms 안에 사라진다. 여유를 크게 잡았다.
+ */
+export const GATE_STALE_MS = 10_000;
+
+/**
+ * 잠금 생성 가드(디렉토리)를 만든다. 이미 있으면 다른 프로세스가 지금 잠금을 만드는 중이므로 실패한다.
+ * 단, 오래된 가드(`GATE_STALE_MS` 보다 오래됨)는 그 구간에서 프로세스가 강제 종료되어 남은 것이므로 치우고 한 번 더 만든다.
+ * 오래된 가드를 치우는 순간 다른 프로세스도 같은 가드를 치우고 있으면 둘 다 잡을 수 있는 좁은 틈이 있다.
+ * 가드가 남아 있는 상황 자체가 드물고, 그 틈은 같은 순간에 구동하는 경우에만 열리며, 그때도 잠금 파일의 PID 검사가 한 번 더 막는다.
+ */
+function takeGate(gatePath: string): void {
+  try {
+    fs.mkdirSync(gatePath);
+    return;
+  } catch (error) {
+    if (!isErrnoError(error) || error.code !== "EEXIST") {
+      throw new StartupError(`Cannot acquire data directory lock: ${gatePath}`, { cause: error });
+    }
+    let ageMs: number;
+    try {
+      ageMs = Date.now() - fs.statSync(gatePath).mtimeMs;
+    } catch {
+      ageMs = Number.POSITIVE_INFINITY; // 그 사이에 지워졌다. 다시 만들어 본다.
+    }
+    if (ageMs <= GATE_STALE_MS) {
+      throw new StartupError(`Cannot acquire data directory lock: ${gatePath} (another process is starting on this data directory)`, { cause: error });
+    }
+    try {
+      fs.rmdirSync(gatePath);
+    } catch {
+      // 다른 프로세스가 먼저 치웠다. 아래에서 만들어 본다.
+    }
+    try {
+      fs.mkdirSync(gatePath);
+    } catch (retryError) {
+      throw new StartupError(`Cannot acquire data directory lock: ${gatePath}`, { cause: retryError });
+    }
   }
 }
 

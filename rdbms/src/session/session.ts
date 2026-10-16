@@ -339,6 +339,11 @@ export class Session {
     return this.txn !== null;
   }
 
+  /** 커밋하지 않은 데이터 변경(INSERT, UPDATE, DELETE의 결과)이 있는지 본다. 세션을 닫으면 이 변경이 롤백된다. */
+  get hasUncommittedChanges(): boolean {
+    return this.txn !== null && this.txn.hasChanges();
+  }
+
   get isClosed(): boolean {
     return this.closed;
   }

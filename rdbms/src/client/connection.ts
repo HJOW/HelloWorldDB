@@ -387,15 +387,21 @@ export class Connection {
     await this.expect("stopping", { type: "control", action, token });
   }
 
-  /** 정상적으로 접속을 끝낸다. 서버가 커밋하지 않은 변경을 롤백한다. 이미 닫혔으면 아무것도 하지 않는다. */
-  async close(): Promise<void> {
-    if (this.closed) return;
+  /**
+   * 정상적으로 접속을 끝낸다. 서버가 커밋하지 않은 변경을 롤백한다. 이미 닫혔으면 아무것도 하지 않는다.
+   * 돌려주는 `rolledBack` 은 서버가 그런 변경을 실제로 롤백했는지이다. (서버의 응답을 받지 못했으면 false)
+   */
+  async close(): Promise<{ rolledBack: boolean }> {
+    if (this.closed) return { rolledBack: false };
+    let rolledBack = false;
     try {
-      await this.request({ type: "close" }, 2000);
+      const response = await this.request({ type: "close" }, 2000);
+      rolledBack = response.type === "bye" && response.rolledBack === true;
     } catch {
       // 이미 끊겼거나 응답이 없어도 닫는다.
     }
     this.abort();
+    return { rolledBack };
   }
 
   /** 서버의 응답을 기다리지 않고 접속을 끊는다. */

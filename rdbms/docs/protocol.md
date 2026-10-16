@@ -189,7 +189,7 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 | `ok` | `message: string`, `rowCount?: number` | `execute` (조회가 아닌 문장) |
 | `cursorClosed` | (없음) | `closeCursor` |
 | `pong` | (없음) | `ping` |
-| `bye` | (없음) | `close` |
+| `bye` | `rolledBack?: true` | `close`. 세션을 닫으면서 커밋하지 않은 변경을 롤백했을 때만 `rolledBack` 이 있다. 클라이언트(`hwdb`)가 종료 때 이를 알린다 |
 | `status` | `running, port, pid, startedAt, version, dataDir, tcpEnabled, udpEnabled, sessionCount, ready, systemPasswordInitial` | `control` + `status` |
 | `stopping` | (없음) | `control` + `stop` |
 | `error` | 11절 | 어느 요청에든 |
