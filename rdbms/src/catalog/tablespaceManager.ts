@@ -43,6 +43,9 @@ function catalogError(sqlState: string, code: number, message: string, position?
   });
 }
 
+/** SYSTEM 테이블스페이스 데이터 파일의 이름이다. (데이터 디렉토리 안) */
+const SYSTEM_FILE_NAME = "SYSTEM.hwdb";
+
 export interface TablespaceStatus {
   name: string;
   dataFile: string;
@@ -85,7 +88,7 @@ export class TablespaceManager {
 
   /** SYSTEM 파일이 없으면 새로 만든다. 있으면 열어 레지스트리를 읽는다. */
   private bootstrapSystem(): void {
-    const systemFile = path.join(this.dataDir, "SYSTEM.hwdb");
+    const systemFile = path.join(this.dataDir, SYSTEM_FILE_NAME);
     let space: Tablespace | null = null;
     try {
       space = openTablespaceFile(systemFile, { onWarning: this.onWarning });
@@ -105,7 +108,7 @@ export class TablespaceManager {
         data.system = emptySystemRegistry({
           SYSTEM: {
             name: "SYSTEM",
-            dataFile: systemFile,
+            dataFile: SYSTEM_FILE_NAME,
             characterSet: "UTF8",
             formatVersion: LATEST_FORMAT_VERSION,
           },
@@ -126,7 +129,7 @@ export class TablespaceManager {
         this.catalogs.set("SYSTEM", new CatalogStore("SYSTEM", created, data));
         this.registry.set("SYSTEM", {
           name: "SYSTEM",
-          dataFile: systemFile,
+          dataFile: SYSTEM_FILE_NAME,
           characterSet: "UTF8",
           formatVersion: LATEST_FORMAT_VERSION,
         });
@@ -153,7 +156,7 @@ export class TablespaceManager {
       if (data.system.tablespaces["SYSTEM"] === undefined) {
         data.system.tablespaces["SYSTEM"] = {
           name: "SYSTEM",
-          dataFile: systemFile,
+          dataFile: SYSTEM_FILE_NAME,
           characterSet: "UTF8",
           formatVersion: space.header.formatVersion,
         };
@@ -164,11 +167,21 @@ export class TablespaceManager {
         this.registry.set(name, record);
       }
       // SYSTEM 레지스트리에 적힌 SYSTEM 경로가 실제와 다르면 실제 경로로 고친다.
+      // 데이터 디렉토리 안의 파일은 상대 경로로 기록한다. 이전에 절대 경로로 적힌 것도 한 번 바꿔 둔다. (아래 `recordedPath`)
       const systemRecord = this.registry.get("SYSTEM");
-      if (systemRecord !== undefined && path.resolve(systemRecord.dataFile) !== path.resolve(systemFile)) {
-        systemRecord.dataFile = systemFile;
-        this.saveRegistry();
+      let changed = false;
+      if (systemRecord !== undefined && this.fileOf(systemRecord) !== path.resolve(systemFile)) {
+        systemRecord.dataFile = SYSTEM_FILE_NAME;
+        changed = true;
       }
+      for (const record of this.registry.values()) {
+        const recorded = this.recordedPath(this.fileOf(record));
+        if (recorded !== record.dataFile) {
+          record.dataFile = recorded;
+          changed = true;
+        }
+      }
+      if (changed) this.saveRegistry();
     } catch (error) {
       try {
         space.close();
@@ -187,7 +200,7 @@ export class TablespaceManager {
     }
     for (const [name, record] of this.registry) {
       if (name === "SYSTEM") continue;
-      const filePath = path.resolve(record.dataFile);
+      const filePath = this.fileOf(record);
       try {
         const space = openTablespaceFile(filePath, { onWarning: this.onWarning });
         if (space.header.characterSet !== "UTF8") {
@@ -204,6 +217,26 @@ export class TablespaceManager {
     }
   }
 
+  /**
+   * 레지스트리 항목의 데이터 파일 실제 경로이다. 상대 경로는 데이터 디렉토리 기준으로 푼다.
+   */
+  private fileOf(record: { dataFile: string }): string {
+    return path.resolve(this.dataDir, record.dataFile);
+  }
+
+  /**
+   * 데이터 파일 경로를 레지스트리에 적을 모양으로 바꾼다.
+   * 데이터 디렉토리 안의 파일은 **데이터 디렉토리 기준의 상대 경로**(구분자는 `/`)로, 밖의 파일은 절대 경로로 적는다.
+   * 절대 경로로 적으면 정상 종료한 데이터 디렉토리를 통째로 복사해 다른 곳에서 구동했을 때(사양 12 의 백업·복원)
+   * 복사본이 원본의 데이터 파일을 열어 고치게 된다. 상대 경로면 디렉토리를 옮겨도 자기 파일을 연다.
+   * `DATAFILE` 로 데이터 디렉토리 밖을 지정한 테이블스페이스의 파일은 사용자가 정한 위치이므로 복사본이 같은 파일을 가리키는 것이 맞다.
+   */
+  private recordedPath(filePath: string): string {
+    const relative = path.relative(this.dataDir, path.resolve(filePath));
+    if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) return path.resolve(filePath);
+    return relative.split(path.sep).join("/");
+  }
+
   /** 관리 중인 테이블스페이스 이름들을 돌려준다. 레지스트리 기준이다. */
   listNames(): string[] {
     return [...this.registry.keys()];
@@ -217,7 +250,7 @@ export class TablespaceManager {
       const reason = this.unavailable.get(name) ?? null;
       result.push({
         name,
-        dataFile: record.dataFile,
+        dataFile: this.fileOf(record),
         characterSet: record.characterSet,
         formatVersion: space?.header.formatVersion ?? record.formatVersion,
         available: space !== undefined && reason === null,
@@ -288,7 +321,7 @@ export class TablespaceManager {
     }
     const filePath = dataFile === null ? path.join(this.dataDir, `${name}.hwdb`) : resolveDataFile(this.dataDir, dataFile);
     for (const record of this.registry.values()) {
-      if (path.resolve(record.dataFile) === path.resolve(filePath)) {
+      if (this.fileOf(record) === path.resolve(filePath)) {
         throw catalogError(
           "42P06",
           ERROR_CODES.TABLESPACE_EXISTS,
@@ -315,7 +348,7 @@ export class TablespaceManager {
       }
       this.spaces.set(name, space);
       this.catalogs.set(name, new CatalogStore(name, space, data));
-      this.registry.set(name, { name, dataFile: filePath, characterSet: "UTF8", formatVersion: LATEST_FORMAT_VERSION });
+      this.registry.set(name, { name, dataFile: this.recordedPath(filePath), characterSet: "UTF8", formatVersion: LATEST_FORMAT_VERSION });
       try {
         this.saveRegistry();
       } catch (registryError) {
@@ -365,7 +398,7 @@ export class TablespaceManager {
       );
     }
     const space = this.spaces.get(name);
-    const filePath = path.resolve(record.dataFile);
+    const filePath = this.fileOf(record);
     if (space !== undefined) {
       try {
         space.close();

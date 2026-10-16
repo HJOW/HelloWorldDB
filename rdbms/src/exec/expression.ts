@@ -30,6 +30,7 @@ import {
   BOOLEAN_TYPE,
   DOUBLE_TYPE,
   INTEGER_TYPE,
+  NULL_LITERAL_TYPE,
   varcharType,
   varbinaryType,
 } from "../types/dataType.js";
@@ -366,7 +367,8 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
   switch (expression.kind) {
     case "Literal": {
       if (expression.type === "NULL") {
-        return { value: null, type: expectedType ?? varcharType(1) };
+        // 기대 타입이 없으면 타입이 정해지지 않은 NULL 이다. 상대 타입에 맞추어 계산된다. (NULL_LITERAL_TYPE)
+        return { value: null, type: expectedType ?? NULL_LITERAL_TYPE };
       }
       if (expression.type === "BOOLEAN") {
         return { value: expression.value, type: BOOLEAN_TYPE };

@@ -12,3 +12,20 @@ SHA-256: `4761b56834809b99431944c62cd8c440957a76cde8a44f14c29ab1b333193d7c`
 테스트는 자료를 임시 디렉토리로 복사한 뒤 연다. 원본을 직접 열면 정상 종료 플래그가 바뀌므로 금지한다. 1.0 이후에는 이전 포맷의 자료를 새 구현으로 다시 만들지 않는다. 1.0 출시 전의 의도적인 포맷 변경에는 AGENTS.md 개요 3의 예외가 적용되며 자료/해시/포맷 문서를 함께 갱신할 수 있다.
 
 `create-storage-v1.mjs`는 최초 생성 과정을 남긴 스크립트이다. 일반 테스트에서 호출하지 않으며 기존 파일을 덮어쓰지 않는다. 실행하려면 `npm run build` 후 `node test/fixtures/create-storage-v1.mjs`를 쓴다.
+
+## 데이터 디렉토리 단위 자료 (`datadir-v<N>/`)
+
+`datadir-v1/` 은 2026-10-16 에 포맷 버전 1 을 쓰던 서버(0.1.0)가 만든 데이터 디렉토리 전체이다. 정상 종료된 상태이며 `SYSTEM.hwdb` 와 사용자 테이블스페이스 `APP.hwdb` 두 파일이다.
+`storage-v1.hwdb` 가 저장 엔진 계층(힙, B+Tree, 카탈로그 바이트)의 호환성을 보는 것과 달리, 이 자료는 서버 전체가 이전 버전 데이터를 열고 쓸 수 있는지 본다.
+
+| 파일 | 크기(바이트) | SHA-256 |
+|---|---|---|
+| `APP.hwdb` | 417,792 | `6131b93e39026d745e0f9b157d4f252d30c5e28350ced67cdf78cba1754367ac` |
+| `SYSTEM.hwdb` | 24,576 | `5d4e6fcc728d24658fd1f3a262823590cc19125b64eeeda7f942ebf194d2a598` |
+
+- 내용 : 사용자 `ALICE`(암호 `alice-pw`, CONNECT), 테이블 `DEPT`·`EMP`(FK `ON DELETE SET NULL`, 인덱스 둘 중 하나는 `DESC` 컬럼 포함)·`BIG`(오버플로 행)·`TYPES`(모든 데이터 타입), 뷰 `EMP_V`, 뷰와 테이블에 대한 권한. 삭제와 갱신으로 빈 슬롯도 남겼다. 정확한 값은 `create-datadir.mjs` 와 `test/integration/dataDirCompat.test.ts` 가 짝이다.
+- 시험은 자료를 임시 디렉토리로 복사한 뒤 실제 데몬으로 연다. 원본을 직접 열면 정상 종료 표시가 바뀌므로 금지한다. 시험이 해시를 확인해 실수로 바뀐 자료를 걸러낸다.
+- **버전 보호** : `LATEST_FORMAT_VERSION` 이 N 이면 `datadir-v1` ... `datadir-vN` 이 모두 있어야 시험이 통과한다. 포맷 버전을 올리려면 올리기 **전**의 서버로
+  `node test/fixtures/create-datadir.mjs <지금 버전>` 을 실행해 자료를 먼저 보관하고(이미 있으면 덮어쓰지 않는다), 새 서버로 새 버전의 자료도 만든다.
+  해시를 `dataDirCompat.test.ts` 의 `FIXTURE_HASHES` 와 이 표에 적는다.
+- 1.0 출시 전의 의도적인 포맷 변경에는 AGENTS.md 개요 3 의 예외가 적용되어 자료를 다시 만들 수 있다. 이때 자료, 해시, 시험의 기대값, 이 문서를 함께 갱신한다.

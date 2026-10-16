@@ -12,6 +12,7 @@ import { test } from "node:test";
 import { Database } from "../../src/session/session.js";
 import type { ExecuteResult } from "../../src/session/session.js";
 import { DbError } from "../../src/common/errors.js";
+import { openTablespace as openTablespaceDirect } from "../../src/storage/format/format.js";
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-catalog-"));
@@ -409,5 +410,127 @@ test("한도와 교차 테이블스페이스 참조를 검사한다", (t) => {
     assert.throws(() => session.execute("CREATE TABLE BAD_FK (A INTEGER REFERENCES OTHER.OT (A))"), state("42P16"));
   } finally {
     db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 11단계(통합 검증)에서 찾은 결함 : 데이터 파일 경로가 절대 경로로 기록되어, 정상 종료한 데이터 디렉토리를 복사해
+// 다른 곳에서 구동하면 복사본이 원본의 데이터 파일을 열어 고쳤다. (사양 12 의 백업·복원 방법)
+// ---------------------------------------------------------------------------
+
+/** 데이터 디렉토리를 (잠금 파일 빼고) 하위 디렉토리까지 다른 디렉토리로 복사한다. */
+function copyDataDir(from: string, to: string): void {
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (entry.name === "helloworlddb.lock") continue;
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) copyDataDir(source, target);
+    else fs.copyFileSync(source, target);
+  }
+}
+
+test("데이터 디렉토리를 복사해 다른 곳에서 열면 복사본이 자기 데이터 파일을 연다 (백업·복원)", (t) => {
+  const original = tempDir(t);
+  let db = openTestDb(original);
+  try {
+    const session = db.createSession({});
+    session.execute("CREATE TABLESPACE APP");
+    session.execute("CREATE TABLE APP.T (ID INTEGER PRIMARY KEY, V VARCHAR(10))");
+    session.execute("INSERT INTO APP.T VALUES (1, 'original')");
+    session.execute("CREATE TABLESPACE SUB DATAFILE 'nested/SUB.hwdb'");
+    session.execute("CREATE TABLE SUB.S (A INTEGER)");
+    session.execute("CREATE USER U1 IDENTIFIED BY 'pw' DEFAULT TABLESPACE APP");
+  } finally {
+    db.close();
+  }
+  const copy = tempDir(t);
+  copyDataDir(original, copy);
+  const before = fs.readFileSync(path.join(original, "APP.hwdb"));
+  const beforeSystem = fs.readFileSync(path.join(original, "SYSTEM.hwdb"));
+
+  db = openTestDb(copy);
+  try {
+    const session = db.createSession({});
+    // 복사본의 목록은 복사본 디렉토리의 파일을 가리킨다. (데이터 디렉토리 안은 상대 경로로 기록되어 있다)
+    const files = new Map(selectRows(session.execute("SELECT TABLESPACE_NAME, DATAFILE FROM SYSTEM.SYS_TABLESPACES")).map((row) => [row[0], row[1]]));
+    assert.equal(files.get("APP"), path.join(copy, "APP.hwdb"));
+    assert.equal(files.get("SYSTEM"), path.join(copy, "SYSTEM.hwdb"));
+    assert.equal(files.get("SUB"), path.join(copy, "nested", "SUB.hwdb"), "DATAFILE 에 상대 경로를 준 것도 데이터 디렉토리를 따라간다");
+    assert.deepEqual(selectRows(session.execute("SELECT ID, V FROM APP.T")), [["1", "original"]]);
+    // 복사본을 고쳐도 원본은 그대로이다.
+    session.execute("INSERT INTO APP.T VALUES (2, 'in copy')");
+    session.execute("CREATE USER U2 IDENTIFIED BY 'pw'");
+  } finally {
+    db.close();
+  }
+  assert.deepEqual(fs.readFileSync(path.join(original, "APP.hwdb")), before, "원본 테이블스페이스 파일이 바뀌지 않았다");
+  assert.deepEqual(fs.readFileSync(path.join(original, "SYSTEM.hwdb")), beforeSystem, "원본 SYSTEM 파일이 바뀌지 않았다");
+
+  db = openTestDb(original);
+  try {
+    const session = db.createSession({});
+    assert.deepEqual(selectRows(session.execute("SELECT ID FROM APP.T")), [["1"]]);
+    assert.deepEqual(selectRows(session.execute("SELECT USER_NAME FROM SYSTEM.SYS_USERS ORDER BY 1")), [["SYSTEM"], ["U1"]]);
+  } finally {
+    db.close();
+  }
+});
+
+test("데이터 디렉토리 밖을 DATAFILE 로 지정한 테이블스페이스는 사용자가 정한 위치(절대 경로)를 그대로 쓴다", (t) => {
+  const dir = tempDir(t);
+  const outside = tempDir(t);
+  const outsideFile = path.join(outside, "OUT.hwdb");
+  const db = openTestDb(dir);
+  try {
+    const session = db.createSession({});
+    session.execute(`CREATE TABLESPACE OUTSIDE DATAFILE '${outsideFile.split(path.sep).join("/")}'`);
+    assert.ok(fs.existsSync(outsideFile));
+    const rows = selectRows(session.execute("SELECT DATAFILE FROM SYSTEM.SYS_TABLESPACES WHERE TABLESPACE_NAME = 'OUTSIDE'"));
+    assert.deepEqual(rows, [[path.normalize(outsideFile)]]);
+  } finally {
+    db.close();
+  }
+});
+
+test("예전에 절대 경로로 기록된 데이터 디렉토리 안의 파일은 열 때 상대 경로로 바뀐다 (이전 데이터 디렉토리)", (t) => {
+  const dir = tempDir(t);
+  let db = openTestDb(dir);
+  try {
+    const session = db.createSession({});
+    session.execute("CREATE TABLESPACE APP");
+    session.execute("CREATE TABLE APP.T (ID INTEGER)");
+    session.execute("INSERT INTO APP.T VALUES (1)");
+  } finally {
+    db.close();
+  }
+  // 예전 버전처럼 레지스트리에 절대 경로를 적어 둔다. (SYSTEM 카탈로그를 직접 고친다)
+  const systemFile = path.join(dir, "SYSTEM.hwdb");
+  const space = openTablespaceDirect(systemFile);
+  try {
+    const catalog = JSON.parse(space.getCatalog()!.toString("utf8")) as { system: { tablespaces: Record<string, { dataFile: string }> } };
+    assert.equal(catalog.system.tablespaces["APP"]?.dataFile, "APP.hwdb", "새로 만든 것은 상대 경로로 기록된다");
+    catalog.system.tablespaces["APP"]!.dataFile = path.join(dir, "APP.hwdb");
+    catalog.system.tablespaces["SYSTEM"]!.dataFile = systemFile;
+    const batch = space.begin();
+    batch.setCatalog(Buffer.from(JSON.stringify(catalog), "utf8"));
+    batch.commit();
+  } finally {
+    space.close();
+  }
+  db = openTestDb(dir);
+  try {
+    const session = db.createSession({});
+    assert.deepEqual(selectRows(session.execute("SELECT ID FROM APP.T")), [["1"]], "예전 기록도 그대로 열린다");
+  } finally {
+    db.close();
+  }
+  const reopened = openTablespaceDirect(systemFile);
+  try {
+    const catalog = JSON.parse(reopened.getCatalog()!.toString("utf8")) as { system: { tablespaces: Record<string, { dataFile: string }> } };
+    assert.equal(catalog.system.tablespaces["APP"]?.dataFile, "APP.hwdb", "열면서 상대 경로로 바꾸어 저장했다");
+    assert.equal(catalog.system.tablespaces["SYSTEM"]?.dataFile, "SYSTEM.hwdb");
+  } finally {
+    reopened.close();
   }
 });

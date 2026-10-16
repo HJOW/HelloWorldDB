@@ -127,6 +127,20 @@ export function varcharType(length: number = DEFAULT_VARCHAR_LENGTH): CharacterD
   return { kind: "VARCHAR", name: "VARCHAR", length };
 }
 
+/**
+ * 타입이 정해지지 않은 `NULL` 리터럴의 타입이다.
+ * 모양은 `VARCHAR(1)` 이지만 **이 객체 하나만** "정해지지 않음" 을 뜻한다(참조로 비교한다. `isNullLiteralType`).
+ * `commonType`, `bindArithmetic`, `bindNegate` 는 이것을 상대 피연산자의 타입으로 대신하여, `1 + NULL`, `CASE ... THEN NULL ... END`,
+ * `COALESCE(NULL, 1)`, `SELECT NULL UNION ALL SELECT 1` 이 오류 없이 NULL 로 계산되게 한다.
+ * 결과 열에 그대로 남으면(`SELECT NULL`) 평범한 `VARCHAR(1)` 로 보인다.
+ */
+export const NULL_LITERAL_TYPE: CharacterDataType = Object.freeze({ kind: "VARCHAR", name: "VARCHAR", length: 1 } as const) as CharacterDataType;
+
+/** 타입이 정해지지 않은 `NULL` 리터럴의 타입인지 본다. */
+export function isNullLiteralType(type: DataType | null | undefined): boolean {
+  return type === NULL_LITERAL_TYPE;
+}
+
 export function binaryType(length: number): BinaryDataType {
   return { kind: "BINARY", name: "BINARY", length };
 }

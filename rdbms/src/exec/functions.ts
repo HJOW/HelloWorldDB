@@ -1013,10 +1013,10 @@ export function evaluateScalarFunction(
     }
     case "COALESCE": {
       requireArgCount(name, args, 1, 1000);
-      // NULL 값은 공통 타입에 끼지 않는다. (NULL 리터럴이 어느 타입과도 어울리게)
+      // 결과 타입은 값이 NULL 인지와 무관하게 모든 인자의 타입으로 정한다. (행마다 타입이 달라지면 안 된다. 열 타입은 같은 규칙으로 미리 정한다)
+      // 타입이 정해지지 않은 NULL 리터럴은 commonType 이 상대 타입으로 대신한다.
       let common: DataType | null = null;
       for (const arg of args) {
-        if (arg.value === null) continue;
         common = common === null ? arg.type : commonType(common, arg.type);
         if (common === null) throw typeMismatch(`Function ${name} got incompatible types.`);
       }
@@ -1031,15 +1031,13 @@ export function evaluateScalarFunction(
     case "NULLIF": {
       requireArgCount(name, args, 2, 2);
       const [leftArg, rightArg] = args as [TypedValue, TypedValue];
-      if (leftArg.value === null) {
-        const other = rightArg.value === null ? varcharType(1) : rightArg.type;
-        return { value: null, type: other };
-      }
-      if (rightArg.value === null) {
-        return { value: castValue(leftArg.value, leftArg.type, leftArg.type, ctx.typeCtx), type: leftArg.type };
-      }
+      // 결과 타입은 값이 NULL 인지와 무관하게 두 인자의 공통 타입이다. (inferScalarType 과 같다)
       const common = commonType(leftArg.type, rightArg.type);
       if (common === null) throw typeMismatch(`Function ${name} got incompatible types.`);
+      if (leftArg.value === null) return { value: null, type: common };
+      if (rightArg.value === null) {
+        return { value: castValue(leftArg.value, leftArg.type, common, ctx.typeCtx), type: common };
+      }
       const left = castValue(leftArg.value, leftArg.type, common, ctx.typeCtx);
       const right = castValue(rightArg.value, rightArg.type, common, ctx.typeCtx);
       const bothChar = common.kind === "CHAR";
@@ -1049,16 +1047,14 @@ export function evaluateScalarFunction(
     case "NVL": {
       requireArgCount(name, args, 2, 2);
       const [valueArg, altArg] = args as [TypedValue, TypedValue];
-      if (valueArg.value === null && altArg.value === null) return { value: null, type: varcharType(1) };
-      const common = valueArg.value === null
-        ? altArg.type
-        : altArg.value === null
-          ? valueArg.type
-          : commonType(valueArg.type, altArg.type);
+      // 결과 타입은 값이 NULL 인지와 무관하게 두 인자의 공통 타입이다. 안 그러면 NULL 인 행만 대체 값의 타입(정수 0 등)으로 나가
+      // 열 타입(DECIMAL)과 값이 어긋난다. 타입이 정해지지 않은 NULL 리터럴은 commonType 이 상대 타입으로 대신한다.
+      const common = commonType(valueArg.type, altArg.type);
       if (common === null) throw typeMismatch(`Function ${name} got incompatible types.`);
       if (valueArg.value !== null) {
         return { value: castValue(valueArg.value, valueArg.type, common, ctx.typeCtx), type: common };
       }
+      if (altArg.value === null) return { value: null, type: common };
       return { value: castValue(altArg.value as NonNullValue, altArg.type, common, ctx.typeCtx), type: common };
     }
     case "CURRENT_DATE": {

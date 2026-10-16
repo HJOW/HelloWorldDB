@@ -681,29 +681,31 @@ function indexEntryIds(
       upper === null ? { lower: prefix, lowerInclusive: true } : { lower: prefix, lowerInclusive: true, upper, upperInclusive: false },
     );
   } else {
-    // 범위 조건 : 앞쪽(prefix)과 그 다음 컬럼의 하한·상한으로 범위를 만든다.
+    // 범위 조건 : 앞쪽(prefix) 동등값과 그 다음 컬럼의 하한·상한을 키 바이트의 구간 [start, end) 로 바꾼다.
+    //  - 키는 컬럼 값을 이어 붙인 바이트열이고, 앞쪽 컬럼만으로 만든 키는 그것으로 시작하는 모든 (더 긴) 키보다 작다.
+    //    그래서 "이 키 값을 포함" 하려면 그 키로 시작하는 키를 모두 지난 위치(prefixUpperBound)까지 읽고,
+    //    "이 키 값을 제외" 하려면 그 위치부터 읽는다. 뒤에 컬럼이 더 있는 인덱스에서도 값이 같은 행을 놓치지 않는다.
+    //  - DESC 컬럼은 큰 값이 작은 바이트이므로 값의 하한이 바이트 구간의 끝이, 상한이 시작이 된다.
+    //    끝점이 없는 쪽은 prefix 가 차지하는 구간의 처음 또는 끝이다. (이 기본 경계는 뒤바꾸지 않는다)
+    //  - 구간은 후보를 줄이기만 한다. 조건은 호출자가 다시 걸므로 NULL 이나 경계 밖 행이 섞여도 괜찮고, 있어야 할 행이 빠지면 안 된다.
     const count = choice.prefixCount + 1;
     const descending = (choice.columns[choice.prefixCount] as { descending: boolean }).descending === true;
     const rangeType = (choice.columns[choice.prefixCount] as { type: DataType }).type;
-    const lowerValue = choice.lower === null ? null : coercePrefix(choice.lower.value, rangeType);
-    const upperValue = choice.upper === null ? null : coercePrefix(choice.upper.value, rangeType);
-    const lowerKey = lowerValue === null
-      ? (choice.prefixCount > 0 ? encodeKey(prefixValues, keyColumns.slice(0, choice.prefixCount)) : undefined)
-      : encodeKey([...prefixValues, lowerValue], keyColumns.slice(0, count));
-    const upperKey = upperValue === null
-      ? (choice.prefixCount > 0 ? prefixUpperBound(encodeKey(prefixValues, keyColumns.slice(0, choice.prefixCount))) : undefined)
-      : encodeKey([...prefixValues, upperValue], keyColumns.slice(0, count));
-    // DESC 컬럼은 바이트 순서가 뒤집히므로 하한·상한을 바꾼다.
-    let lower = lowerKey === undefined ? undefined : { key: lowerKey, inclusive: choice.lower !== null ? choice.lower.inclusive : true };
-    let upper = upperKey === undefined || upperKey === null ? undefined : { key: upperKey, inclusive: choice.upper !== null ? choice.upper.inclusive : false };
-    if (descending) {
-      const swapped = lower;
-      lower = upper === undefined ? undefined : { key: upper.key, inclusive: upper.inclusive };
-      upper = swapped === undefined ? undefined : { key: swapped.key, inclusive: swapped.inclusive };
-    }
+    const edge = (bound: { value: TypedValue; inclusive: boolean } | null): { key: Buffer; inclusive: boolean } | null =>
+      bound === null ? null : { key: encodeKey([...prefixValues, coercePrefix(bound.value, rangeType)], keyColumns.slice(0, count)), inclusive: bound.inclusive };
+    const valueLow = edge(choice.lower);
+    const valueHigh = edge(choice.upper);
+    const first = descending ? valueHigh : valueLow; // 바이트가 작은 쪽의 끝점
+    const last = descending ? valueLow : valueHigh; // 바이트가 큰 쪽의 끝점
+    const prefixKey = choice.prefixCount > 0 ? encodeKey(prefixValues, keyColumns.slice(0, choice.prefixCount)) : null;
+    const start = first === null ? prefixKey ?? undefined : first.inclusive ? first.key : prefixUpperBound(first.key);
+    if (start === null) return []; // 제외할 키 뒤에는 읽을 키가 없다.
+    const end = last === null
+      ? (prefixKey === null ? undefined : prefixUpperBound(prefixKey) ?? undefined)
+      : last.inclusive ? prefixUpperBound(last.key) ?? undefined : last.key;
     entries = space.index(choice.indexRoot).range({
-      ...(lower !== undefined ? { lower: lower.key, lowerInclusive: lower.inclusive } : {}),
-      ...(upper !== undefined ? { upper: upper.key, upperInclusive: upper.inclusive } : {}),
+      ...(start !== undefined ? { lower: start, lowerInclusive: true } : {}),
+      ...(end !== undefined ? { upper: end, upperInclusive: false } : {}),
     });
   }
   return entries.map((entry) => entry.rowId);

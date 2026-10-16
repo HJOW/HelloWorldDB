@@ -7,6 +7,11 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { formatDataType } from "../../src/types/dataType.js";
+import type { DataType } from "../../src/types/dataType.js";
+import { conformValue, formatValue } from "../../src/types/value.js";
+import type { NonNullValue } from "../../src/types/value.js";
+import type { ExecuteResult, Session } from "../../src/session/session.js";
 import { openTestDb, selectStrings, setupApp, state, tempDir } from "./helpers.js";
 
 test("끝 필드가 없는 단일 필드 INTERVAL 리터럴을 받는다", (t) => {
@@ -265,6 +270,168 @@ test("CHAR 키는 뒤쪽 공백을 무시하고 중복을 판정한다", (t) => 
     session.execute("CREATE TABLE C4 (K CHAR(3))");
     session.execute("INSERT INTO C4 VALUES ('x'), ('z')");
     assert.throws(() => session.execute("ALTER TABLE C4 ADD FOREIGN KEY (K) REFERENCES C2"), state("23503"));
+  } finally {
+    db.close();
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// 11단계(통합 검증)에서 찾은 결함 : 타입이 정해지지 않은 NULL 리터럴과 NVL·COALESCE 의 행별 타입
+// ---------------------------------------------------------------------------
+
+/** 결과의 모든 값이 그 열의 타입에 맞는 JavaScript 값이고 자릿수까지 맞춘 모양인지 본다. (네트워크 인코더가 하는 검사와 같다) */
+function assertConformsToColumns(result: ExecuteResult, what: string): void {
+  assert.equal(result.kind, "select", what);
+  if (result.kind !== "select") return;
+  const columns: DataType[] = result.columns.map((column) => column.dataType);
+  result.rows.forEach((row, rowIndex) => {
+    row.forEach((value, columnIndex) => {
+      if (value === null) return;
+      const columnType = columns[columnIndex] as DataType;
+      const conformed = conformValue(value, columnType) as NonNullValue;
+      assert.equal(
+        formatValue(conformed, columnType),
+        formatValue(value, columnType),
+        `${what}: 행 ${rowIndex} 열 ${columnIndex} 가 열 타입 ${formatDataType(columnType)} 에 맞게 만들어져 있어야 한다`,
+      );
+    });
+  });
+}
+
+/** 조회하여 값을 문자열로(NULL 은 null 로) 돌려준다. 결과가 열 타입에 맞는지도 함께 본다. */
+function nullableRows(session: Session, sql: string): Array<Array<string | null>> {
+  const result = session.execute(sql);
+  assertConformsToColumns(result, sql);
+  if (result.kind !== "select") return [];
+  const types = result.columns.map((column) => column.dataType);
+  return result.rows.map((row) => row.map((value, index) => (value === null ? null : formatValue(value, types[index] as DataType))));
+}
+
+function firstColumnType(session: Session, sql: string): string {
+  const result = session.execute(sql);
+  assert.equal(result.kind, "select", sql);
+  return result.kind === "select" ? formatDataType((result.columns[0] as { dataType: DataType }).dataType) : "";
+}
+
+test("NVL·COALESCE 의 결과는 NULL 인 행도 열 타입(DECIMAL 의 소수 자릿수 포함)에 맞는다", (t) => {
+  const { db, session } = setupApp(t);
+  try {
+    session.execute("CREATE TABLE T (ID INTEGER, S NUMERIC(10,2), F DOUBLE PRECISION, V VARCHAR(5), D DATE)");
+    session.execute("INSERT INTO T VALUES (1, 100.5, 1.5, 'a', DATE '2026-01-01')");
+    session.execute("INSERT INTO T VALUES (2, NULL, NULL, NULL, NULL)");
+    // 값이 열 타입에 맞는지 (예전에는 NULL 인 행만 대체 값의 타입 그대로 나가 네트워크로 보낼 때 XX000 이었다)
+    for (const sql of [
+      "SELECT NVL(S, 0) FROM T ORDER BY ID",
+      "SELECT NVL(S, 0.5) FROM T ORDER BY ID",
+      "SELECT NVL(F, 0) FROM T ORDER BY ID",
+      "SELECT NVL(ID, 0.5) FROM T ORDER BY ID",
+      "SELECT NVL(V, 'zz') FROM T ORDER BY ID",
+      "SELECT NVL(D, DATE '2000-01-01') FROM T ORDER BY ID",
+      "SELECT COALESCE(S, 0) FROM T ORDER BY ID",
+      "SELECT COALESCE(NULL, S, 0) FROM T ORDER BY ID",
+      "SELECT COALESCE(S, F, 0) FROM T ORDER BY ID",
+      "SELECT NULLIF(S, 0) FROM T ORDER BY ID",
+      "SELECT NULLIF(S, 100.5) FROM T ORDER BY ID",
+    ]) {
+      nullableRows(session, sql);
+    }
+    // 값도 맞다. NULL 인 행은 대체 값이 열 타입(DECIMAL(12,2) 등)으로 바뀐다.
+    assert.deepEqual(nullableRows(session, "SELECT NVL(S, 0) FROM T ORDER BY ID"), [["100.50"], ["0.00"]]);
+    assert.deepEqual(nullableRows(session, "SELECT NVL(S, 0.5) FROM T ORDER BY ID"), [["100.50"], ["0.50"]]);
+    assert.deepEqual(nullableRows(session, "SELECT COALESCE(S, 0) FROM T ORDER BY ID"), [["100.50"], ["0.00"]]);
+    assert.deepEqual(nullableRows(session, "SELECT COALESCE(NULL, S, 7) FROM T ORDER BY ID"), [["100.50"], ["7.00"]]);
+    assert.deepEqual(nullableRows(session, "SELECT NVL(F, 0) FROM T ORDER BY ID"), [["1.5"], ["0"]]);
+    assert.deepEqual(nullableRows(session, "SELECT NVL(S, NULL) FROM T ORDER BY ID"), [["100.50"], [null]]);
+    assert.deepEqual(nullableRows(session, "SELECT NVL(NULL, S) FROM T ORDER BY ID"), [["100.50"], [null]]);
+    assert.deepEqual(nullableRows(session, "SELECT NULLIF(S, 100.5) FROM T ORDER BY ID"), [[null], [null]]);
+    // 열 타입은 값이 NULL 인지와 무관하게 모든 인자의 공통 타입이다.
+    assert.equal(firstColumnType(session, "SELECT NVL(S, 0) FROM T"), "DECIMAL(12,2)");
+    assert.equal(firstColumnType(session, "SELECT NVL(NULL, S) FROM T"), "DECIMAL(10,2)");
+    assert.equal(firstColumnType(session, "SELECT COALESCE(S, F, 0) FROM T"), "DOUBLE PRECISION");
+  } finally {
+    db.close();
+  }
+});
+
+test("타입이 정해지지 않은 NULL 리터럴은 상대 타입에 맞추어 계산된다 (연산에 NULL 이 섞이면 결과는 NULL)", (t) => {
+  const { db, session } = setupApp(t);
+  try {
+    session.execute("CREATE TABLE T (ID INTEGER, S NUMERIC(10,2), D DATE)");
+    session.execute("INSERT INTO T VALUES (1, 100.5, DATE '2026-01-01')");
+    // 사칙연산 (예전에는 INTEGER 와 VARCHAR(1) 의 연산이 정의되지 않았다는 42804 였다)
+    assert.deepEqual(nullableRows(session, "SELECT 1 + NULL, NULL + 1, S * NULL, NULL - S, -NULL, NULL / 2 FROM T"), [[null, null, null, null, null, null]]);
+    assert.deepEqual(nullableRows(session, "SELECT D + NULL, NULL + D FROM T"), [[null, null]]);
+    // 결과 타입은 상대 피연산자를 따른다.
+    assert.equal(firstColumnType(session, "SELECT 1 + NULL FROM T"), "INTEGER");
+    assert.equal(firstColumnType(session, "SELECT S + NULL FROM T"), "DECIMAL(11,2)");
+    // 비교는 UNKNOWN 이고, 선택 목록에서도 오류가 아니다.
+    assert.deepEqual(nullableRows(session, "SELECT ID = NULL, NULL <> S, S > NULL FROM T"), [[null, null, null]]);
+    // CASE 의 THEN, ELSE 에 NULL 이 있어도 나머지 분기의 타입이 된다.
+    assert.deepEqual(
+      nullableRows(session, "SELECT CASE WHEN ID = 1 THEN NULL ELSE 5 END, CASE WHEN ID = 2 THEN 1 ELSE NULL END, CASE WHEN ID = 1 THEN S ELSE NULL END FROM T"),
+      [[null, null, "100.50"]],
+    );
+    assert.equal(firstColumnType(session, "SELECT CASE WHEN ID = 1 THEN NULL ELSE 5 END FROM T"), "INTEGER");
+    // 집합 연산
+    assert.deepEqual(nullableRows(session, "SELECT NULL FROM T UNION ALL SELECT 1 FROM T"), [[null], ["1"]]);
+    assert.deepEqual(nullableRows(session, "SELECT 1 FROM T UNION ALL SELECT NULL FROM T"), [["1"], [null]]);
+    assert.deepEqual(nullableRows(session, "SELECT NULL, NULL FROM T UNION ALL SELECT 'a', DATE '2026-02-02' FROM T"), [[null, null], ["a", "2026-02-02"]]);
+    // NULL 만 있는 식은 예전처럼 VARCHAR(1) 이다.
+    assert.equal(firstColumnType(session, "SELECT NULL FROM T"), "VARCHAR(1)");
+    assert.equal(firstColumnType(session, "SELECT COALESCE(NULL, NULL) FROM T"), "VARCHAR(1)");
+    assert.equal(firstColumnType(session, "SELECT NVL(NULL, NULL) FROM T"), "VARCHAR(1)");
+    // 서로 다른 계열은 NULL 이 아닌 값끼리라면 여전히 오류이다.
+    assert.throws(() => session.execute("SELECT COALESCE(1, DATE '2026-01-01') FROM T"), state("42804"));
+    assert.throws(() => session.execute("SELECT CASE WHEN ID = 1 THEN 1 ELSE DATE '2026-01-01' END FROM T"), state("42804"));
+    assert.throws(() => session.execute("SELECT 1 + TRUE FROM T"), state("42804"));
+  } finally {
+    db.close();
+  }
+});
+
+/** 조회 결과의 첫 열을 정수로 모아 정렬한 문자열이다. */
+function idList(session: Session, sql: string): string {
+  return selectStrings(session.execute(sql)).rows.map((row) => Number(row[0])).sort((a, b) => a - b).join(",");
+}
+
+test("인덱스를 쓰는 범위 조건의 결과는 인덱스를 쓸 수 없게 만든 같은 뜻의 조건과 같다 (DESC 컬럼, 컬럼이 더 있는 복합 인덱스, NULL, 갱신·삭제)", (t) => {
+  const { db, session } = setupApp(t);
+  try {
+    session.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, A INTEGER, B INTEGER, C INTEGER)");
+    const rows: string[] = [];
+    for (let id = 1; id <= 400; id++) rows.push(`(${id}, ${id % 3}, ${id % 17 === 0 ? "NULL" : id % 10}, ${id % 13 === 0 ? "NULL" : id % 5})`);
+    session.execute(`INSERT INTO T VALUES ${rows.join(", ")}`);
+    // 예전에는 DESC 컬럼의 한쪽만 있는 범위(A = 1 AND B > 3 등)가 빈 결과였고, 뒤에 컬럼이 더 있는 인덱스의 경계값 행을 놓칠 수 있었다.
+    const comparisons = [">", ">=", "<", "<=", "="].flatMap((op) => [3, 0, 9, 10, -1].map((value) => `B ${op} ${value}`));
+    comparisons.push("B BETWEEN 2 AND 6", "B BETWEEN 0 AND 0", "B BETWEEN 9 AND 12", "B BETWEEN 5 AND 5", "3 < B", "6 >= B");
+    const plain = (where: string): string => where.replace(/\bA = (\d)/, "A + 0 = $1").replace(/\bB\b(?! BETWEEN)/g, "B + 0");
+    let compared = 0;
+    for (const definition of ["(A, B)", "(A, B DESC)", "(A DESC, B)", "(A, B, C)", "(A, B DESC, C)", "(A, B, C DESC)", "(A DESC, B DESC, C DESC)", "(B)", "(B DESC)", "(B, C)", "(B DESC, C)"]) {
+      session.execute(`CREATE INDEX IX ON T ${definition}`);
+      const prefixes = definition.startsWith("(B") ? [null] : ["A = 1", "A = 0", "A = 2"];
+      for (const prefix of prefixes) {
+        for (const comparison of comparisons) {
+          const where = prefix === null ? comparison : `${prefix} AND ${comparison}`;
+          assert.equal(idList(session, `SELECT ID FROM T WHERE ${where}`), idList(session, `SELECT ID FROM T WHERE ${plain(where)}`), `인덱스 ${definition}, WHERE ${where}`);
+          compared++;
+        }
+      }
+      session.execute("DROP INDEX IX");
+    }
+    assert.ok(compared > 500);
+
+    // 갱신과 삭제도 같은 후보 탐색을 쓴다. 인덱스가 DESC 인 상태에서 조건에 맞는 행만 바뀌고 지워진다.
+    session.execute("CREATE INDEX IX ON T (A, B DESC)");
+    const expectedUpdate = Number(selectStrings(session.execute("SELECT COUNT(*) FROM T WHERE A + 0 = 1 AND B + 0 > 3")).rows[0]?.[0]);
+    assert.ok(expectedUpdate > 0);
+    const updated = session.execute("UPDATE T SET C = 99 WHERE A = 1 AND B > 3");
+    assert.equal(updated.kind === "ok" ? updated.rowCount : -1, expectedUpdate);
+    assert.equal(idList(session, "SELECT ID FROM T WHERE C = 99"), idList(session, "SELECT ID FROM T WHERE A + 0 = 1 AND B + 0 > 3"));
+    const expectedDelete = Number(selectStrings(session.execute("SELECT COUNT(*) FROM T WHERE A + 0 = 2 AND B + 0 <= 4")).rows[0]?.[0]);
+    const deleted = session.execute("DELETE FROM T WHERE A = 2 AND B <= 4");
+    assert.equal(deleted.kind === "ok" ? deleted.rowCount : -1, expectedDelete);
+    assert.equal(selectStrings(session.execute("SELECT COUNT(*) FROM T WHERE A + 0 = 2 AND B + 0 <= 4")).rows[0]?.[0], "0");
   } finally {
     db.close();
   }

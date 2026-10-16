@@ -1,0 +1,26 @@
+{
+  "port": 7410,
+  "dataDir": "./data",
+  "maxConnections": 10,
+  "timeZone": "local",
+  "tcp": {
+    "enabled": true,
+    "host": "0.0.0.0"
+  },
+  "udp": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "maxPacketSize": 1200,
+    "sessionTimeoutMs": 60000
+  },
+  "transaction": {
+    "lockTimeoutMs": 30000
+  },
+  "session": {
+    "idleTimeoutMs": 0
+  },
+  "log": {
+    "level": "info",
+    "dir": "./logs"
+  }
+}

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/config/config.js";
 import { StartupError } from "../../src/common/errors.js";
 
@@ -152,4 +153,24 @@ test("타임존과 큰 정수의 범위를 검증한다", (t) => {
     writeConfig(dir, { timeZone }); assert.throws(() => loadConfig(dir), StartupError);
   }
   writeConfig(dir, { maxConnections: 1e30 }); assert.throws(() => loadConfig(dir), StartupError);
+});
+
+test("config.sample.json 은 경고 없이 읽히고 모든 값이 기본값과 같다 (사용 설명서의 예시와 어긋나지 않게 한다)", () => {
+  const sample = fileURLToPath(new URL("../../../config.sample.json", import.meta.url));
+  const withDir = makeTempDir();
+  fs.copyFileSync(sample, path.join(withDir, "config.json"));
+  const withSample = loadConfig(withDir);
+  assert.deepEqual(withSample.warnings, []);
+  const defaultsDir = makeTempDir();
+  const defaults = loadConfig(defaultsDir);
+  // 설정 파일 경로와, 설치 디렉토리 기준으로 풀린 경로(상대 경로로 바꾸어 비교)만 다르다.
+  const comparable = (loaded: typeof withSample, base: string): unknown => {
+    const copy = JSON.parse(JSON.stringify(loaded.config)) as Record<string, unknown> & { log: Record<string, unknown> };
+    delete copy["configFilePath"];
+    delete copy["installDir"];
+    copy["dataDir"] = path.relative(base, loaded.config.dataDir);
+    copy.log["dir"] = path.relative(base, loaded.config.log.dir);
+    return copy;
+  };
+  assert.deepEqual(comparable(withSample, withDir), comparable(defaults, defaultsDir));
 });

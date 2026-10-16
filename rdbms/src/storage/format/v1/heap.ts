@@ -13,17 +13,23 @@
  */
 
 import type { Heap, RowId, StoredRow } from "../format.js";
-import type { ReadContext, WriteContext } from "./context.js";
+import type { HeapSpace, ReadContext, WriteContext } from "./context.js";
 import { BODY, CAPACITY, END, Kind } from "./pages.js";
 import { argument, corrupt, uint } from "../../errors.js";
 import { freeOverflow, readOverflow, writeOverflow } from "./overflow.js";
 
 const SLOT_SIZE = 12;
+/** 이만큼 이상 남은 페이지만 빈자리 지도에 모아 둔다. 이보다 작은 조각은 삭제로 더 커지기 전까지 쓰지 않는다. */
+const MIN_ROOM = SLOT_SIZE + 16;
 interface Slot { inline: Buffer; overflow: number; length: number; }
 interface HeapPage { slots: (Slot | null)[]; next: number; previous: number; }
 
 function used(slots: (Slot | null)[]): number {
   return slots.length * SLOT_SIZE + slots.reduce((sum, slot) => sum + (slot?.inline.length ?? 0), 0);
+}
+
+function hasRoom(slots: (Slot | null)[]): boolean {
+  return CAPACITY - used(slots) >= MIN_ROOM;
 }
 
 /** 루트 번호를 소유자로 쓰므로 다른 힙의 행 식별자로 접근할 수 없다. */
@@ -64,34 +70,88 @@ export class V1Heap implements Heap {
     }
   }
 
+  /**
+   * 행을 넣는다. 빈자리 지도(HeapSpace)가 가리키는 페이지에 먼저 넣고, 들어갈 곳이 없으면 체인 끝에 새 페이지를 잇는다.
+   * 지도는 힙당 한 번만 체인을 훑어 만든다. 매번 루트부터 체인을 따라가면 행 하나의 삽입 비용이 테이블 크기에 비례한다.
+   */
   insert(data: Buffer): RowId {
     const writer = this.requireWriter();
     uint(data.length);
     const inlineLength = data.length <= CAPACITY - SLOT_SIZE ? data.length : 0;
+    const space = this.spaceOf(writer);
+    for (const pageId of space.candidates) {
+      const page = this.tryDecode(pageId);
+      if (page === null) return this.insertAfterRebuild(writer, data);
+      const placed = this.place(writer, pageId, page, data, inlineLength);
+      if (placed === null) { space.candidates.delete(pageId); continue; }
+      if (!hasRoom(page.slots)) space.candidates.delete(pageId);
+      return placed;
+    }
+    const tail = this.tryDecode(space.tail);
+    if (tail === null || tail.next !== 0) return this.insertAfterRebuild(writer, data);
+    const next = writer.allocate(Kind.Heap, this.root);
+    tail.next = next;
+    this.encode(space.tail, tail);
+    const fresh: HeapPage = { slots: [], next: 0, previous: space.tail };
+    space.tail = next;
+    const placed = this.place(writer, next, fresh, data, inlineLength);
+    if (placed === null) throw argument("A row does not fit in an empty heap page.");
+    if (hasRoom(fresh.slots)) space.candidates.add(next);
+    return placed;
+  }
+
+  /** 페이지에 행을 넣어 본다. 들어가지 않으면 null 이고, 들어가면 페이지에 쓴다. */
+  private place(writer: WriteContext, pageId: number, page: HeapPage, data: Buffer, inlineLength: number): RowId | null {
+    let slotId = page.slots.indexOf(null);
+    if (slotId < 0) slotId = page.slots.length;
+    const directoryGrowth = slotId === page.slots.length ? SLOT_SIZE : 0;
+    if (used(page.slots) + directoryGrowth + inlineLength > CAPACITY) return null;
+    page.slots[slotId] = inlineLength === data.length
+      ? { inline: Buffer.from(data), overflow: 0, length: data.length }
+      : { inline: Buffer.alloc(0), overflow: writeOverflow(writer, data, this.root), length: data.length };
+    this.encode(pageId, page);
+    return { pageId, slotId };
+  }
+
+  /** 지도가 현재 페이지 상태와 맞지 않으면(다른 배치의 변경, 롤백된 페이지 등) 지도를 버리고 체인을 다시 훑어 넣는다. */
+  private insertAfterRebuild(writer: WriteContext, data: Buffer): RowId {
+    writer.setHeapSpace(this.root, undefined);
+    return this.insert(data);
+  }
+
+  /** 이 힙의 빈자리 지도를 돌려준다. 없으면 체인을 한 번 훑어 만든다. */
+  private spaceOf(writer: WriteContext): HeapSpace {
+    const existing = writer.heapSpace(this.root);
+    if (existing !== undefined) return existing;
+    const candidates = new Set<number>();
     const visited = new Set<number>();
-    let pageId = this.root;
-    while (true) {
+    let tail = this.root;
+    for (let pageId = this.root; pageId !== 0;) {
       if (visited.has(pageId)) throw corrupt("Cyclic heap page chain.");
       visited.add(pageId);
       const page = this.decode(pageId);
-      let slotId = page.slots.indexOf(null);
-      if (slotId < 0) slotId = page.slots.length;
-      const directoryGrowth = slotId === page.slots.length ? SLOT_SIZE : 0;
-      if (used(page.slots) + directoryGrowth + inlineLength <= CAPACITY) {
-        page.slots[slotId] = inlineLength === data.length
-          ? { inline: Buffer.from(data), overflow: 0, length: data.length }
-          : { inline: Buffer.alloc(0), overflow: writeOverflow(writer, data, this.root), length: data.length };
-        this.encode(pageId, page);
-        return { pageId, slotId };
-      }
-      if (page.next === 0) {
-        const next = writer.allocate(Kind.Heap, this.root);
-        page.next = next;
-        this.encode(pageId, page);
-        this.encode(next, { slots: [], next: 0, previous: pageId });
-      }
+      if (hasRoom(page.slots)) candidates.add(pageId);
+      tail = pageId;
       pageId = page.next;
     }
+    const space: HeapSpace = { candidates, tail };
+    writer.setHeapSpace(this.root, space);
+    return space;
+  }
+
+  /** 페이지를 해석한다. 이 힙의 페이지가 아니거나 해석할 수 없으면 null 이다. (오래된 지도 항목을 걸러내는 데 쓴다) */
+  private tryDecode(id: number): HeapPage | null {
+    try {
+      return this.decode(id);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 페이지에 빈자리가 생겼음을 지도에 알린다. */
+  private noteRoom(pageId: number, page: HeapPage): void {
+    const space = this.writer?.heapSpace(this.root);
+    if (space !== undefined && hasRoom(page.slots)) space.candidates.add(pageId);
   }
 
   update(id: RowId, data: Buffer): boolean {
@@ -106,6 +166,7 @@ export class V1Heap implements Heap {
     if (old.overflow !== 0) freeOverflow(writer, old.overflow, this.root);
     page.slots[id.slotId] = replacement;
     this.encode(id.pageId, page);
+    if (replacement.inline.length < old.inline.length) this.noteRoom(id.pageId, page);
     return true;
   }
 
@@ -118,6 +179,7 @@ export class V1Heap implements Heap {
     if (old.overflow !== 0) freeOverflow(writer, old.overflow, this.root);
     page.slots[id.slotId] = null;
     this.encode(id.pageId, page);
+    this.noteRoom(id.pageId, page);
     return true;
   }
 
@@ -132,6 +194,7 @@ export class V1Heap implements Heap {
       writer.free(id);
       id = page.next;
     }
+    writer.setHeapSpace(this.root, undefined);
   }
 
   private decode(id: number): HeapPage {

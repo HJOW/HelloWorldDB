@@ -10,7 +10,7 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 - 최종 갱신 : 2026-10-16
 - 진행 단계 : 계획 작성 (코드 없음)
 - 이 PC 의 Python : **3.2 는 `C:\Python\Py302\python.exe`**, 최신은 3.13.1 (`C:\Python\python.exe`, PATH 의 `python`). 2026-10-16 에 직접 실행해 확인했다. "이 PC 의 시험 환경" 절을 본다
-- 착수 조건 : (1) `rdbms` 11단계 완료. 프로토콜 명세 [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)(버전 1)와 참고 클라이언트 `rdbms/src/client` 는 이미 있다. (2) 사용자가 일정(`nodejsDriver` 와의 선후)을 정하고 AGENTS.md "구현 계획"에 이 프로젝트의 단계를 더한다. "미결 사항" 1.
+- 착수 조건 : (1) `rdbms` 11단계 완료 (**충족**, 2026-10-16). 프로토콜 명세 [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)(버전 1)와 참고 클라이언트 `rdbms/src/client` 는 이미 있다. (2) 사용자가 일정(`nodejsDriver` 와의 선후)을 정하고 AGENTS.md "구현 계획"에 이 프로젝트의 단계를 더한다. "미결 사항" 1.
 - 다음 작업 : 사용자 확인이 필요한 "미결 사항" 1, 2 를 정한 뒤 PY-1 (패키지 구성과 호환 계층). Python 3.2 시험 환경(미결 사항 3)은 이 PC 에서 해결되었다
 
 ## 작업 규칙

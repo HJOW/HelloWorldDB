@@ -146,7 +146,7 @@ export function normalizeSystemRegistry(raw: Partial<SystemRegistry> | undefined
   };
 }
 
-/** 테이블스페이스 목록의 한 행이다. dataFile 은 절대 경로로 둔다. */
+/** 테이블스페이스 목록의 한 행이다. dataFile 은 데이터 디렉토리 안의 파일이면 데이터 디렉토리 기준의 상대 경로(`/` 구분), 밖의 파일이면 절대 경로이다. */
 export interface TablespaceRecord {
   name: string;
   dataFile: string;

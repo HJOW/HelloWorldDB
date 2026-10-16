@@ -19,7 +19,7 @@
 
 import type { CreateTablespaceOptions, HeapReader, IndexReader, OpenTablespaceOptions, StorageBatch,
   Tablespace, TablespaceHeader } from "../format.js";
-import type { ReadContext, WriteContext } from "./context.js";
+import type { HeapSpace, ReadContext, WriteContext } from "./context.js";
 import { BufferCache } from "../../bufferCache.js";
 import type { PageBatch } from "../../bufferCache.js";
 import { PageFile, PAGE_SIZE } from "../../pageFile.js";
@@ -36,6 +36,8 @@ const FEATURES = new Set(["heap", "overflow", "btree", "catalog", "batch"]);
 
 export class V1Tablespace implements Tablespace, ReadContext {
   private closed = false;
+  /** 힙별 빈자리 지도이다. 메모리에만 있는 힌트이며 쓸 때마다 실제 페이지로 검증한다. (heap.ts 의 insert 를 본다) */
+  private readonly heapSpaces = new Map<number, HeapSpace>();
   private constructor(private readonly cache: BufferCache) {}
 
   static create(filePath: string, options: CreateTablespaceOptions): V1Tablespace {
@@ -99,7 +101,7 @@ export class V1Tablespace implements Tablespace, ReadContext {
 
   begin(): StorageBatch {
     this.checkOpen();
-    return new V1Batch(this.cache.begin());
+    return new V1Batch(this.cache.begin(), this.heapSpaces);
   }
   heap(root: number): HeapReader { return new V1Heap(this, root); }
   index(root: number): IndexReader { return new V1Index(this, root); }
@@ -140,7 +142,22 @@ function checkedPage(reader: { read(id: number): Buffer }, header: TablespaceHea
 
 class V1Batch implements StorageBatch, WriteContext {
   private readonly header: TablespaceHeader;
-  constructor(private readonly batch: PageBatch) { this.header = decodeHeader(batch.read(0)); }
+  /** 이 배치가 읽거나 만든 빈자리 지도의 힙 루트들이다. 롤백하면 이 지도들은 배치 안의 변경을 반영하고 있으므로 버린다. */
+  private readonly touchedSpaces = new Set<number>();
+  constructor(private readonly batch: PageBatch, private readonly spaces: Map<number, HeapSpace>) {
+    this.header = decodeHeader(batch.read(0));
+  }
+
+  heapSpace(root: number): HeapSpace | undefined {
+    const space = this.spaces.get(root);
+    if (space !== undefined) this.touchedSpaces.add(root);
+    return space;
+  }
+  setHeapSpace(root: number, space: HeapSpace | undefined): void {
+    this.touchedSpaces.add(root);
+    if (space === undefined) this.spaces.delete(root);
+    else this.spaces.set(root, space);
+  }
 
   page(id: number, kind?: PageKind, owner?: number): Buffer {
     return checkedPage(this.batch, this.header, id, kind, owner);
@@ -203,6 +220,10 @@ class V1Batch implements StorageBatch, WriteContext {
     this.writeHeader();
   }
   commit(): void { this.writeHeader(); this.batch.commit(); }
-  rollback(): void { this.batch.rollback(); }
+  rollback(): void {
+    for (const root of this.touchedSpaces) this.spaces.delete(root);
+    this.touchedSpaces.clear();
+    this.batch.rollback();
+  }
   private writeHeader(): void { this.batch.write(0, encodeHeader(this.header)); }
 }

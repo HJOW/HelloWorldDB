@@ -9,11 +9,12 @@
 # 디렉토리 구조 및 개별 목표
 
 1. rdbms - RDBMS 본체 구현, 접속용 CLI 프로그램 포함
-2. jdbc6 - JDBC (자바 6 ~ 7 지원) 개발 - JDBC 인터페이스 4.0 버전으로 개발, 자바 8 이상 버전에서도 사용은 가능해야 함.
-3. nodejsDriver - Node.js 용 드라이버 개발
+2. nodejsDriver - Node.js 용 드라이버 개발 (Node.js 버전 최소 기준은 rdbms 와 동일, bun 호환성 필요)
+3. jdbc6 - JDBC (자바 6 ~ 7 지원) 개발 - JDBC 인터페이스 4.0 버전으로 개발, 자바 8 이상 버전에서도 사용은 가능해야 함.
 4. gui - GUI DB툴 개발 - 개발된 드라이버를 활용하여야 함
 5. pythonDriver - Python 용 드라이버 개발, 3.2 이상 버전 지원, DB-API 표준 준수
 6. jdbc8 - JDBC (자바 8 이상 지원) 개발 - JDBC 인터페이스 4.2 버전으로 개발
+7. hwdbBench - Node.js 기반 HelloWorldDB 벤치마크 도구 - TEST 1 (단순 1,000,000건 등록, 일괄수정, 일괄삭제 테스트), TEST 2 (테이블 3개 조인된 상태로 가장 자식(Child) 테이블 기준 2,000,000건 등록, 일괄수정, 일괄삭제 테스트), 두 테스트 모두 정수 PK 를 가지고, 1000 크기의 VARCHAR 컬럼 하나, TIMESTAMP 또는 DATETIME 타입 컬럼 하나, 자식 테이블의 경우에는 추가로 부모 테이블 참조 FK 컬럼들을 포함하여 테이블을 구성해 테스트
 
 # RDBMS 에 구현되어야 할 사항 (개요)
 

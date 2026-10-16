@@ -32,6 +32,7 @@ import {
   formatDataType,
   integerType,
   intervalType,
+  isNullLiteralType,
   timeType,
   timestampType,
   varbinaryType,
@@ -375,6 +376,19 @@ function bindDatetime(operator: ArithmeticOperator, left: DataType, right: DataT
  * 결과 타입은 `resultType` 으로 미리 알 수 있고, 행마다 `evaluate` 만 부른다.
  */
 export function bindArithmetic(operator: ArithmeticOperator, left: DataType, right: DataType): BinaryOperation {
+  // 타입이 정해지지 않은 NULL 리터럴은 상대 피연산자의 타입으로 본다. 결과가 NULL 이 되는 것은 값 계산에서 정해진다.
+  // 상대가 수가 아닌 날짜시간이면 정수로 본다. (DATE + NULL 은 DATE ± 정수와 같이 DATE 이다)
+  if (isNullLiteralType(left) || isNullLiteralType(right)) {
+    const other = isNullLiteralType(left) ? right : left;
+    const candidates: DataType[] = isNullLiteralType(other) ? [integerType(32)] : [other, integerType(32)];
+    for (const candidate of candidates) {
+      try {
+        return bindArithmetic(operator, isNullLiteralType(left) ? candidate : left, isNullLiteralType(right) ? candidate : right);
+      } catch (error) {
+        if (candidate === candidates[candidates.length - 1]) throw error;
+      }
+    }
+  }
   if (isNumericType(left) && isNumericType(right)) {
     return bindNumeric(operator, left, right);
   }
@@ -398,7 +412,9 @@ export function evaluateArithmetic(
 }
 
 /** 단항 `-` 를 타입에 묶는다. 수 계열과 INTERVAL 에만 정의된다. */
-export function bindNegate(type: DataType): UnaryOperation {
+export function bindNegate(inputType: DataType): UnaryOperation {
+  // 타입이 정해지지 않은 NULL 리터럴(-NULL)은 정수로 본다.
+  const type = isNullLiteralType(inputType) ? integerType(32) : inputType;
   let resultType: DataType;
   let compute: (value: NonNullValue) => SqlValue;
   if (type.kind === "INTEGER") {

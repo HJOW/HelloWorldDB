@@ -8,7 +8,8 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 
 - 최종 갱신 : 2026-10-16
 - 진행 단계 : 착수 전 (코드 없음)
-- 착수 조건 : `rdbms` 11단계 완료. 프로토콜 명세 문서는 `rdbms` 9단계에서 확정되어 있다(2026-10-16): [rdbms/docs/protocol.md](../rdbms/docs/protocol.md). 클라이언트 구현의 참고 코드도 `rdbms/src/client` 에 있다.
+- 착수 조건 : `rdbms` 11단계 완료 (**충족**, 2026-10-16). 프로토콜 명세 문서는 `rdbms` 9단계에서 확정되어 있다(2026-10-16): [rdbms/docs/protocol.md](../rdbms/docs/protocol.md). 클라이언트 구현의 참고 코드도 `rdbms/src/client` 에 있다.
+  11단계 인수인계는 [rdbms/PROGRESS.md](../rdbms/PROGRESS.md)의 "인수인계 사항" 첫 항목이다. 서버를 띄우는 방법과 동작은 [rdbms/docs/manual.md](../rdbms/docs/manual.md), 통합 시험을 짜는 방법은 `rdbms/test/integration/helpers.ts`(`Daemon`)를 본뜬다. 드라이버가 알아 둘 서버 동작의 변화(데이터 디렉토리 이동 가능, 인덱스 범위 조건 수정, NULL 타입)는 프로토콜을 바꾸지 않았다.
 - 다음 작업 : 12-1 패키지 구성
 
 ## 작업 규칙
@@ -95,3 +96,4 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 - 2026-10-08 : 사양 변경 반영. 패키지명 확정, 포트 번호 하나로 대상 지정(TCP 와 UDP 포트 통합).
 - 2026-10-08 : 변경된 타입 기본값과 메타데이터 사용 규칙을 인수인계에 반영했다. 구현 착수 조건은 rdbms 11단계 완료이다.
 - 2026-10-16 : `rdbms` 9단계 완료로 프로토콜 명세(`rdbms/docs/protocol.md`)와 클라이언트 참고 코드(`rdbms/src/client`)가 준비되었음을 인수인계에 반영했다. 착수 조건은 그대로 `rdbms` 11단계 완료이다.
+- 2026-10-16 : `rdbms` 11단계(통합 검증) 완료로 착수 조건을 채웠음을 반영했다. 사용 설명서(`rdbms/docs/manual.md`)와 통합 시험의 도우미(`rdbms/test/integration/helpers.ts`)가 생겼고, 서버 동작이 바뀐 점(데이터 디렉토리 이동 가능, 인덱스 범위 조건 수정, NULL 타입)은 프로토콜에 영향이 없다. 코드는 바꾸지 않았다.

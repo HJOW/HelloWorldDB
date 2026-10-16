@@ -27,6 +27,7 @@ import {
   timestampType,
   varbinaryType,
   varcharType,
+  isNullLiteralType,
 } from "./dataType.js";
 import type {
   DataType,
@@ -171,6 +172,9 @@ export function mergeIntervalTypes(left: IntervalDataType, right: IntervalDataTy
  * 계열이 다르면 null 이다.
  */
 export function commonType(left: DataType, right: DataType): DataType | null {
+  // 타입이 정해지지 않은 NULL 리터럴은 상대 타입에 맞춘다. (둘 다이면 그대로 NULL 리터럴의 타입)
+  if (isNullLiteralType(left)) return right;
+  if (isNullLiteralType(right)) return left;
   const family = typeFamily(left);
   if (family !== typeFamily(right)) return null;
 

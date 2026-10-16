@@ -15,6 +15,8 @@ import { createTablespace, openTablespace } from "../../src/storage/format/forma
 import type { RowId } from "../../src/storage/format/format.js";
 import { DbError } from "../../src/common/errors.js";
 import { checksum, END, seal } from "../../src/storage/format/v1/pages.js";
+import { V1Heap } from "../../src/storage/format/v1/heap.js";
+import type { HeapSpace, WriteContext } from "../../src/storage/format/v1/context.js";
 import { PageFile, PAGE_SIZE } from "../../src/storage/pageFile.js";
 import { BufferCache } from "../../src/storage/bufferCache.js";
 
@@ -139,6 +141,166 @@ test("힙 갱신은 행 식별자를 유지하고 슬롯과 오버플로 페이�
     batch = space.begin(); batch.dropHeap(root); batch.commit();
     batch = space.begin(); const replacement = batch.createHeap(); batch.heap(replacement).insert(Buffer.alloc(50000)); batch.commit();
     assert.equal(space.header.pageCount, after);
+  } finally { space.close(); }
+});
+
+function rowKey(id: RowId): string { return `${id.pageId}:${id.slotId}`; }
+
+test("힙 삽입은 테이블이 커져도 행마다 페이지 체인을 다시 훑지 않는다", (t) => {
+  const filePath = temp(t);
+  let space = createTablespace(filePath, { name: "TEST" });
+  const decode = t.mock.method(V1Heap.prototype as unknown as { decode(id: number): unknown }, "decode");
+  try {
+    let batch = space.begin(); const root = batch.createHeap(); let heap = batch.heap(root);
+    // 200바이트 행 2000개는 약 50개 페이지이다. 예전에는 행마다 체인을 처음부터 따라가 수만 번 해석했다.
+    const rows = 2000, ids: RowId[] = [];
+    decode.mock.resetCalls();
+    for (let n = 0; n < rows; n++) ids.push(heap.insert(Buffer.alloc(200, n % 251)));
+    assert.ok(decode.mock.callCount() <= 2 * rows + 10, `같은 배치에서 해석 ${decode.mock.callCount()}번`);
+    batch.commit();
+    const pages = space.header.pageCount;
+    assert.ok(pages > 40);
+    // 커밋 뒤 다음 배치도 지도를 이어 쓴다.
+    batch = space.begin(); heap = batch.heap(root);
+    decode.mock.resetCalls();
+    for (let n = 0; n < 100; n++) ids.push(heap.insert(Buffer.alloc(200, 7)));
+    assert.ok(decode.mock.callCount() <= 2 * 100 + 10, `다음 배치에서 해석 ${decode.mock.callCount()}번`);
+    batch.commit();
+    // 다시 열면 지도가 없으므로 첫 삽입에서 체인을 한 번만 훑는다.
+    space.close();
+    space = openTablespace(filePath);
+    batch = space.begin(); heap = batch.heap(root);
+    decode.mock.resetCalls();
+    for (let n = 0; n < 100; n++) ids.push(heap.insert(Buffer.alloc(200, 9)));
+    assert.ok(decode.mock.callCount() <= space.header.pageCount + 2 * 100 + 10, `재열기 뒤 해석 ${decode.mock.callCount()}번`);
+    batch.commit();
+    assert.equal(new Set(ids.map(rowKey)).size, ids.length, "행 식별자가 겹치지 않는다");
+    assert.equal(space.heap(root).scan().length, ids.length);
+  } finally { space.close(); }
+});
+
+test("삭제로 빈 자리는 다시 쓰고 재열기 뒤에도 파일이 자라지 않는다", (t) => {
+  const filePath = temp(t);
+  let space = createTablespace(filePath, { name: "TEST" });
+  try {
+    let batch = space.begin(); const root = batch.createHeap(); let heap = batch.heap(root);
+    const live = new Map<string, number>();
+    const add = (value: number) => { const id = heap.insert(Buffer.alloc(100, value)); live.set(rowKey(id), value); return id; };
+    const ids: RowId[] = [];
+    for (let n = 0; n < 400; n++) ids.push(add(n % 200));
+    batch.commit();
+    const pages = space.header.pageCount;
+    for (let round = 0; round < 2; round++) {
+      batch = space.begin(); heap = batch.heap(root);
+      const removed: RowId[] = [];
+      for (let n = round; n < ids.length; n += 4) { heap.delete(ids[n]!); live.delete(rowKey(ids[n]!)); removed.push(ids[n]!); }
+      for (let n = 0; n < removed.length; n++) ids[ids.indexOf(removed[n]!)] = add(200 + round);
+      batch.commit();
+      assert.equal(space.header.pageCount, pages, `${round + 1}번째 삭제 뒤 같은 양을 다시 넣어도 파일이 자라지 않는다`);
+      // 두 번째 라운드는 지도가 없는 상태(재열기)에서 시작한다.
+      if (round === 0) { space.close(); space = openTablespace(filePath); }
+    }
+    assert.equal(live.size, 400);
+    const reader = space.heap(root);
+    for (const [id, value] of live) {
+      const [pageId, slotId] = id.split(":").map(Number);
+      assert.deepEqual(reader.get({ pageId: pageId!, slotId: slotId! }), Buffer.alloc(100, value));
+    }
+    assert.equal(reader.scan().length, 400);
+  } finally { space.close(); }
+});
+
+test("롤백한 배치와 동시에 열린 배치가 만든 페이지가 빈자리 지도를 어지럽히지 않는다", (t) => {
+  const filePath = temp(t), space = createTablespace(filePath, { name: "TEST" });
+  try {
+    let batch = space.begin(); const root = batch.createHeap(); batch.heap(root).insert(Buffer.from("base")); batch.commit();
+    // 1. 체인을 늘리고 롤백한다. 다음 배치는 롤백된 페이지를 이어 붙이려 해서는 안 된다.
+    batch = space.begin();
+    for (let n = 0; n < 300; n++) batch.heap(root).insert(Buffer.alloc(200, 1));
+    batch.rollback();
+    batch = space.begin();
+    for (let n = 0; n < 300; n++) batch.heap(root).insert(Buffer.alloc(200, 2));
+    batch.commit();
+    assert.equal(space.heap(root).scan().length, 301);
+    // 2. 같은 시점에서 시작한 두 배치가 각자 체인을 늘린다. 먼저 커밋한 쪽만 남고 나중 쪽은 충돌한다.
+    const first = space.begin(), second = space.begin();
+    for (let n = 0; n < 100; n++) first.heap(root).insert(Buffer.alloc(200, 3));
+    for (let n = 0; n < 100; n++) second.heap(root).insert(Buffer.alloc(200, 4));
+    first.commit();
+    assert.throws(() => second.commit(), state("40001")); second.rollback();
+    batch = space.begin();
+    for (let n = 0; n < 100; n++) batch.heap(root).insert(Buffer.alloc(200, 5));
+    batch.commit();
+    const rows = space.heap(root).scan();
+    assert.equal(rows.length, 501);
+    const counts = new Map<number, number>();
+    for (const row of rows) if (row.data.length === 200) counts.set(row.data[0]!, (counts.get(row.data[0]!) ?? 0) + 1);
+    assert.deepEqual([...counts.entries()].sort(), [[2, 300], [3, 100], [5, 100]]);
+  } finally { space.close(); }
+});
+
+test("힙을 지우거나 롤백한 뒤 같은 번호로 만든 새 힙은 이전 지도를 물려받지 않는다", (t) => {
+  const filePath = temp(t), space = createTablespace(filePath, { name: "TEST" });
+  try {
+    // 만들기를 롤백하면 같은 루트 번호가 다시 나온다.
+    let batch = space.begin(); let root = batch.createHeap();
+    for (let n = 0; n < 200; n++) batch.heap(root).insert(Buffer.alloc(200, 1));
+    batch.rollback();
+    assert.equal(spaceOf(space.begin(), root), undefined, "롤백한 배치가 만든 지도는 버린다");
+    batch = space.begin(); const again = batch.createHeap();
+    assert.equal(again, root);
+    for (let n = 0; n < 50; n++) batch.heap(again).insert(Buffer.alloc(200, 2));
+    batch.commit();
+    assert.equal(space.heap(again).scan().length, 50);
+    assert.notEqual(spaceOf(space.begin(), again), undefined, "커밋한 배치의 지도는 다음 배치가 이어 쓴다");
+    // 지운 힙의 루트 번호도 비어 있다가 다시 쓰인다.
+    batch = space.begin(); batch.dropHeap(again);
+    assert.equal(spaceOf(batch, again), undefined, "힙을 지우면 지도도 지운다");
+    batch.commit();
+    batch = space.begin(); root = batch.createHeap();
+    for (let n = 0; n < 120; n++) batch.heap(root).insert(Buffer.alloc(200, 3));
+    batch.commit();
+    assert.equal(space.heap(root).scan().length, 120);
+    assert.ok(space.heap(root).scan().every((row) => row.data[0] === 3));
+  } finally { space.close(); }
+});
+
+/** 시험용으로 배치의 빈자리 지도에 접근한다. (공통 인터페이스에는 없는 v1 내부 기능이다) */
+function spaceOf(batch: unknown, root: number): HeapSpace | undefined {
+  return (batch as WriteContext).heapSpace(root);
+}
+
+test("빈자리 지도가 틀려도 행을 잃거나 체인을 끊지 않는다", (t) => {
+  const filePath = temp(t), space = createTablespace(filePath, { name: "TEST" });
+  try {
+    let batch = space.begin(); const root = batch.createHeap(), other = batch.createHeap(), index = batch.createIndex();
+    batch.heap(other).insert(Buffer.from("other heap"));
+    for (let n = 0; n < 120; n++) batch.heap(root).insert(Buffer.alloc(200, 1));
+    batch.commit();
+    const before = space.heap(root).scan().length;
+    assert.equal(before, 120);
+    const wrongs: Array<[string, HeapSpace]> = [
+      ["꼬리가 체인의 중간을 가리킨다", { candidates: new Set(), tail: root }],
+      ["꼬리가 다른 힙의 페이지이다", { candidates: new Set(), tail: other }],
+      ["꼬리가 인덱스 페이지이다", { candidates: new Set(), tail: index }],
+      ["꼬리가 없는 페이지이다", { candidates: new Set(), tail: 99999 }],
+      ["후보가 없는 페이지와 다른 힙의 페이지이다", { candidates: new Set([99999, other, index, 0]), tail: root }],
+      ["후보가 꽉 찬 페이지이다", { candidates: new Set([root]), tail: root }],
+    ];
+    let expected = before;
+    for (const [label, wrong] of wrongs) {
+      batch = space.begin();
+      (batch as unknown as WriteContext).setHeapSpace(root, wrong);
+      for (let n = 0; n < 30; n++) batch.heap(root).insert(Buffer.alloc(200, 2));
+      batch.commit();
+      expected += 30;
+      // scan 은 페이지 체인과 이전 포인터를 모두 검증한다.
+      assert.equal(space.heap(root).scan().length, expected, label);
+    }
+    const counts = new Map<number, number>();
+    for (const row of space.heap(root).scan()) counts.set(row.data[0]!, (counts.get(row.data[0]!) ?? 0) + 1);
+    assert.deepEqual([...counts.entries()].sort(), [[1, 120], [2, 180]]);
+    assert.equal(space.heap(other).scan().length, 1);
   } finally { space.close(); }
 });
 
