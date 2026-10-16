@@ -35,7 +35,13 @@ export interface IndexRange {
 }
 export interface HeapReader {
   get(id: RowId): Buffer | null;
+  /** 모든 행을 한 번에 읽어 배열로 돌려준다. 행이 많으면 `iterate` 를 쓴다. */
   scan(): StoredRow[];
+  /**
+   * 페이지 순서대로 행을 하나씩 돌려준다. 행 전체를 메모리에 올리지 않는다. (DML 의 전체 탐색이 쓴다)
+   * 순회하는 동안 이 힙을 고치면 안 된다. 호출자는 읽기만 하고, 변경은 순회가 끝난 뒤에 한다.
+   */
+  iterate(): IterableIterator<StoredRow>;
 }
 export interface Heap extends HeapReader {
   insert(data: Buffer): RowId;

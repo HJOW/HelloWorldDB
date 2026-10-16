@@ -31,7 +31,7 @@ async function setup(t: { after(fn: () => unknown): void }, options: DatabaseOpt
   const control = {
     stops: 0,
     controlToken: (): string => "local-test-token",
-    status: () => ({ running: true, port, pid: process.pid, startedAt: "now", version: "0.1.0", dataDir: dir, tcpEnabled: false, udpEnabled: false, sessionCount: db.sessions.count }),
+    status: () => ({ running: true, port, pid: process.pid, startedAt: "now", version: "0.1.0", dataDir: dir, tcpEnabled: false, udpEnabled: false, sessionCount: db.sessions.count, ready: true, systemPasswordInitial: false }),
     requestStop: (): void => {
       control.stops++;
     },

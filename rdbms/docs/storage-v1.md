@@ -171,7 +171,8 @@ AGENTS.md 상세 2, 3, 10, 12를 구현하는 저장 계층의 명세이다. SQL
 
 ## API 사용 원칙
 
-상위 계층은 `storage/format/format.ts`의 `createTablespace`, `openTablespace`, `Tablespace`, `StorageBatch`를 사용한다. `Tablespace.heap/index`는 읽기 전용이고 변경은 `begin()`으로 만든 배치의 `heap/index`를 통해 한다. 배치에서 오류가 나면 호출자가 롤백한다. SQL의 문장별 undo와 잠금은 7단계의 책임이다. 테이블스페이스 파일은 호출자가 독점 사용해야 하며 데몬에서는 데이터 디렉토리 잠금을 먼저 확보한다.
+상위 계층은 `storage/format/format.ts`의 `createTablespace`, `openTablespace`, `Tablespace`, `StorageBatch`를 사용한다. `Tablespace.heap/index`는 읽기 전용이고 변경은 `begin()`으로 만든 배치의 `heap/index`를 통해 한다.
+힙을 읽는 방법은 `get(RowId)`(한 행), `scan()`(모든 행을 배열로), `iterate()`(모든 행을 페이지 순서로 하나씩 돌려주는 지연 순회)이다. 행이 많을 때는 `iterate()` 를 쓴다. (`scan()` 은 `iterate()` 를 모은 것이다. 순회하는 동안 그 힙을 고치면 안 된다. `iterate` 는 2026-10-16 에 더했고 포맷 번호는 올리지 않았다.) 배치에서 오류가 나면 호출자가 롤백한다. SQL의 문장별 undo와 잠금은 7단계의 책임이다. 테이블스페이스 파일은 호출자가 독점 사용해야 하며 데몬에서는 데이터 디렉토리 잠금을 먼저 확보한다.
 
 ```ts
 const space = createTablespace(filePath, { name: "APP" });

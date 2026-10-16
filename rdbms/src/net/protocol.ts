@@ -272,6 +272,10 @@ export interface StatusResponse {
   tcpEnabled: boolean;
   udpEnabled: boolean;
   sessionCount: number;
+  /** 모든 접속 경로가 열려 접속을 받을 수 있게 되었는지이다. 구동 중에는 false 이다. (`hwdb start` 가 구동 완료를 기다리는 데 쓴다) */
+  ready: boolean;
+  /** SYSTEM 계정이 초기 암호 그대로인지이다. (`hwdb start` 와 `hwdb status` 가 변경을 안내하는 데 쓴다) */
+  systemPasswordInitial: boolean;
 }
 
 export interface StoppingResponse {

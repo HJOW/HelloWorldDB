@@ -10,13 +10,15 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 진행 단계 : 1 ~ 9단계 완료. 9단계(통신)는 로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)로 로그인, 질의, 대량 결과, 트랜잭션이 동작하고, 데몬(`Server`)이 세 경로를 열고 닫으며 제어 요청(상태 조회, 종료)을 처리한다.
   완료 기준(세 경로의 로그인·질의·대량 결과·트랜잭션, UDP 는 패킷 유실과 중복 조건 포함)을 채웠다. 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)로 확정했다.
 - 착수 조건 : 없음
-- 다음 작업 : **DML 행 단위 접근**(사용자 결정 2026-10-16, 아래 7단계 항목과 "결정 사항") → 10단계(데몬 제어와 CLI).
-  10단계의 `hwdb` 는 `client/connection.ts` 를 그대로 쓴다. 인수인계는 "인수인계 사항"의 9단계 항목.
+- 다음 작업 : **DML 행 단위 접근 2부**(제약 검사·참조동작·커밋 쓰기를 행 단위로. 계획은 7단계 항목) → 10단계(데몬 제어와 CLI).
+  1부(읽기와 오버레이 계층)는 2026-10-16 에 끝냈다. 10단계의 `hwdb` 는 `client/connection.ts` 를 그대로 쓴다. 인수인계는 "인수인계 사항"의 9단계 항목.
+- 10단계 사전 작업(2026-10-16, 코드 일부) : 제어 요청 `status` 응답에 `ready`(모든 접속 경로가 열렸는지. `hwdb start` 가 구동 완료를 기다리는 데 쓴다)와 `systemPasswordInitial`(SYSTEM 이 초기 암호인지.
+  `hwdb start`·`status` 가 변경을 안내한다)을 더했다(`net/protocol.ts`, `daemon/server.ts`, [docs/protocol.md](docs/protocol.md)). `hwdb --ssl` 의 CA 지정과 검증 끄기 옵션(`--ssl-ca`, `--ssl-no-verify`)과 옵션 조합 규칙을 AGENTS.md 14-2 에 먼저 정했다. `hwdb` 명령 자체(`start`·`stop`·`status`·SQL 접속)는 아직 구현하지 않았다.
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
 - 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
-- 검증 : Windows의 Node.js 24.22.0 / TypeScript 6.0.3에서 `npm test` 631개 통과(9단계 신규 248개 포함). 빌드에 오류와 경고가 없다.
-  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 631개 중 630개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다.
+- 검증 : Windows의 Node.js 24.22.0 / TypeScript 6.0.3에서 `npm test` 642개 통과(9단계 신규 248개, 행 단위 접근 1부 신규 11개 포함). 빌드에 오류와 경고가 없다.
+  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 642개 중 641개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다.
   TLS 시험의 일부(서버 쪽 핸드셰이크 실패 이벤트, 클라이언트의 `maxVersion`, 서버 인증서 교체)는 bun 에서 동작이 달라 Node.js 에서만 본다. 제품 동작의 차이는 [docs/protocol.md](docs/protocol.md) 16절.
   결함을 일부러 주입한 빌드에서 시험이 실패하는지 확인했다(통신 22개 항목 : nonce·채널 바인딩·제어 토큰 비교·접속 수 제한·CONNECT 검사·UDP 주소 고정·재전송·중복 제거·TLS 최소 버전·클라이언트의 서버 서명 검증 등. 모두 잡혔다).
   권한 검사기를 일부러 무력화한 빌드에서 `test/auth/privileges.test.ts` 24개 중 18개가 실패하는 것도 확인했다(8단계).
@@ -41,7 +43,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 잠금은 전부 배타 잠금이다. FK 의 부모 행을 읽는 것만으로는 잠그지 않고, 대신 커밋 직전에 FK 를 다시 확인한다. (`exec/dml.ts` 의 `revalidateReferences`)
   그래서 부모를 지우는 트랜잭션과 자식을 넣는 트랜잭션이 겹치면 한쪽이 커밋에서 `23503` 으로 실패한다. 기다리게 하는 방식이 아니다.
 - 테이블스페이스를 둘 이상 건드린 트랜잭션의 커밋은 테이블스페이스마다 배치 하나씩이며 서로 원자적이지 않다. (사양 12 의 "커밋 도중 중단" 범위. WAL 이 없다)
-- 한 문장이 읽고 쓰는 테이블 전체를 메모리 이미지로 읽는다. (6단계부터의 방식) 큰 테이블에서는 느리다. 성능 개선은 미결 사항(행 단위 접근)에 남긴다.
+- DML(INSERT·UPDATE·DELETE)의 제약 검사와 쓰기는 아직 대상 테이블과 FK 로 엮인 테이블 전체를 메모리 이미지로 읽는다(6단계부터의 방식). 큰 테이블에서는 느리다. 읽기(조회, 대상 찾기)와 오버레이는 행 단위로 바뀌었다(행 단위 접근 1부). 제약 검사 쪽은 2부에서 바꾼다.
 - 동기 `Session.execute` 와 비동기 `Session.executeAsync` 를 같은 세션에서 섞어 쓰면 안 된다. 비동기 문장이 기다리는 동안의 동기 호출은 막지 않는다.
 - 트랜잭션 크기는 메모리에 제한된다. (사양 10 이 인정한 제한)
 
@@ -116,7 +118,8 @@ rdbms/
                          planner.ts(규칙 기반 인덱스 선택), expression.ts(식 계산과 3값 논리),
                          functions.ts(내장 함수와 집계), executor.ts(조회 실행), dml.ts(INSERT·UPDATE·DELETE·TRUNCATE),
                          accounts.ts(CREATE·ALTER·DROP USER, GRANT, REVOKE 실행)
-    txn/                 transaction.ts(트랜잭션의 미커밋 변경 오버레이, 되돌리기 기록, 세이브포인트, 커밋 값과 합쳐 읽기),
+    txn/                 transaction.ts(트랜잭션과 미커밋 변경 오버레이(PK 맵 포함, 행 단위 변경 API), 되돌리기 기록, 세이브포인트),
+                         rowAccess.ts(커밋 값에 자기 변경을 합친 읽기. 지연 순회, PK 조회, 인덱스 조회, 인덱스 후보 합치기),
                          lockManager.ts(행·PK·객체 배타 잠금, 대기열, 제한 시간, 교착 감지)
     auth/                scram.ts(SCRAM-SHA-256 계산과 메시지), users.ts(계정 저장소, SYSTEM 계정, 비밀번호 확인),
                          privileges.ts(부여 기록, 권한 판정, 권한 그룹, 이름 해석, 기록 정리),
@@ -134,7 +137,7 @@ rdbms/
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
                            regression.test.ts 는 6단계 점검에서 찾은 결함의 회귀 테스트이다
-    txn/                   트랜잭션 테스트. lockManager(잠금 단위), transaction(커밋·롤백·세이브포인트·가시성·동기 잠금 충돌·DDL),
+    txn/                   트랜잭션 테스트. rowAccess(오버레이 PK 맵, 행 단위 읽기, 인덱스 읽기와 전체 스캔의 일치), lockManager(잠금 단위), transaction(커밋·롤백·세이브포인트·가시성·동기 잠금 충돌·DDL),
                            concurrency(비동기 대기·제한 시간·교착, 10개 세션 동시성). exec/helpers.ts 를 함께 쓴다
     auth/                  계정과 권한 테스트. scram(RFC 7677 시험 벡터), accounts(SYSTEM 계정, 사용자 문장, 인증, CONNECT, 영속성, 가시성),
                            privileges(권한 조합별 허용·거부, 수준별 독립, 소유자, OFFICER·DBA, 뷰 규칙, 딕셔너리 가시성, 기록 정리). helpers.ts 는 공용 도우미
@@ -279,7 +282,11 @@ rdbms/
 - [x] 10개 세션 동시성 테스트 (상세 9)
 - [x] 세션 목록, 유휴 세션 종료(`session.idleTimeoutMs`), 세션을 닫을 때의 롤백, 데몬 정상 종료 때의 롤백
 - [x] 6단계 점검 보완에서 `0A000` 으로 막아 둔 문장을 풀었다 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF`. `regression.test.ts` 와 `catalog.test.ts` 의 단언을 7단계 동작으로 바꾸었다
-- [ ] DML 행 단위 접근 (7단계 계획의 "DML 구조 재설계") : **하기로 정했다**(사용자 결정 2026-10-16. 보편적인 RDBMS 처럼 대상 행 단위로 접근하고 테이블 전체를 메모리 이미지로 올리지 않는다). 9단계 다음, 10단계 전에 한다. 아직 하지 않았다. "인수인계 사항"의 "DML 구조와 성능" 참고
+- [x] DML 행 단위 접근 1부 : 읽기와 오버레이 계층 (2026-10-16 완료. 사용자 결정 : 보편적인 RDBMS 처럼 대상 행 단위로 접근하고 테이블 전체를 메모리 이미지로 올리지 않는다)
+  - `Heap.iterate()` 지연 순회(`storage/format`), 오버레이를 PK 맵을 가진 클래스로(`txn/transaction.ts`, 행 단위 변경 `insertRow`·`updateRow`·`deleteRow`),
+    읽기 계층 `txn/rowAccess.ts`(`visibleRows`, `visibleRowById`, `findVisibleByPk`, `findVisibleByIndex`, `mergeIndexEntries`), 조회와 DML 대상 찾기가 인덱스를 타고(자기 트랜잭션이 건드린 테이블 포함) 못 타면 지연 순회.
+  - 시험 : `test/txn/rowAccess.test.ts` 11개(오버레이 PK 맵과 되돌리기, 읽기 함수, 인덱스 읽기와 전체 스캔이 같은 결과(무작위 시드 40개), PK 조회가 힙을 훑지 않음, 결함 주입 8건 모두 잡힘). 기존 시험 631개는 그대로 통과.
+- [ ] DML 행 단위 접근 2부 : **제약 검사, 참조동작, 커밋 쓰기, 커밋 때의 FK 재확인을 행 단위로** (`exec/dml.ts` 의 `StatementImages` 를 없앤다). 아직 하지 않았다. 설계는 "결정 사항"의 "행 단위 접근 2부 설계"
 - [x] 남은 마무리 : `SYS_SESSIONS` 연결과 문서를 8단계 착수 전에 끝냈다 (현재 상태 절의 "7단계 남은 마무리")
 - 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과. (충족)
   (`test/txn` 48개 + 데몬 1개. 잠금 관리자 단위 11개, 트랜잭션 시나리오 24개, 비동기 대기·제한 시간·교착·세션 종료 중 대기 12개, 10개 세션 동시성 1개.
@@ -513,6 +520,20 @@ SQL 접속 (상세 14-2)
     지금 있는 `hwdb` 문구(사용법, 명령행 오류, `status` 출력, 구동 안내)를 모두 카탈로그로 옮겼고 영어 문구는 그대로이다. 초기 암호 경고는 서버 로그의 `INITIAL_PASSWORD_WARNING` 과 같은 영어 문구를 카탈로그에도 두었고, 같은 문구인지 시험한다.
   - DML 의 행 단위 접근 : 보편적인 RDBMS 처럼 **대상 행 단위로 접근**한다. INSERT·UPDATE·DELETE 가 테이블 전체(와 FK 로 얽힌 테이블)를 메모리 이미지로 올려 제약을 검사하고 되쓰는 지금의 방식(6단계)은 버린다.
     할 일 : 인덱스나 힙에서 대상 행만 읽기, 제약 검사(PK 유일성은 인덱스, FK 는 부모·자식의 인덱스나 부분 스캔), 트랜잭션 오버레이의 행 단위 합쳐 읽기와 잠금 키는 7단계 구조를 유지. 시기는 9단계 다음, 10단계 전이다. 이 작업이 끝나면 위 "알려진 한계"의 메모리 이미지 항목이 사라진다.
+  - **행 단위 접근 1부 구현(2026-10-16)** : 읽기 쪽과 오버레이를 행 단위로 바꿨다. 오버레이는 `TableOverlay` 클래스이고 PK 값 → 오버레이 행 맵(`pkRefs`)을 변경과 되돌리기마다 같이 고친다. 읽기 계층은 `txn/rowAccess.ts` 이며 설명은 [docs/transactions.md](docs/transactions.md) 2절.
+    인덱스로 얻은 후보에는 오버레이의 바뀐 행과 넣은 행이 모두 덧붙는다(상위 집합. 호출자가 조건을 다시 건다). `findVisibleByPk` 는 맵의 항목이 지금 값과 맞는지 한 번 더 확인한다.
+  - **행 단위 접근 2부 설계** (구현 전) : 지금 `exec/dml.ts` 는 `StatementImages` 로 테이블 전체를 읽어 제약을 검사하고 `fold` 한다. 다음처럼 바꾼다.
+    1. 문장 안에서 변경을 오버레이에 **바로 적용**한다(`txn.insertRow`·`updateRow`·`deleteRow`. 되돌리기 항목이 남는다). 새 값은 변경을 하나도 적용하기 전에 모두 계산한다(UPDATE 의 서브쿼리가 자기 변경을 보는 일이 없도록. 지금의 문장 단위 스냅샷과 같다).
+       문장이 실패하면 세션이 이미 `txn.truncateTo(mark)` 로 되돌린다(`attemptData`). 잠금은 지금처럼 **문장의 끝에서 한꺼번에**(`tryAcquireAll`) 걸고, 충돌하면 변경이 되돌려진 채로 충돌 오류를 던진다. 오류 우선순위(제약 위반이 잠금 충돌보다 먼저)도 지금과 같다.
+    2. 변경 목록(`Change` : 테이블, 종류, 옛 값, 새 값, 행 식별)을 모아 문장 끝에서 검사한다. NOT NULL 은 변경된 행만. **PK 유일성**은 새로 넣은 행과 PK 가 바뀐 행마다 `findVisibleByPk` 가 둘 이상이면 `23505`(PK 가 그대로인 행은 건너뜀. 같은 문장 안의 PK 맞바꾸기는 최종 상태로 판정).
+    3. **FK 자식 쪽** : 넣은 행과 FK 컬럼이 바뀐 행마다 부모를 `findVisibleByPk` 로 찾는다(`refColumns` 가 PK 컬럼의 순서만 다른 같은 집합이면 PK 순서로 바꿔 찾고, 그렇지 않으면 `visibleRows` 로 대조). NULL 이 섞이면 건너뜀. 없으면 `23503`.
+       **FK 부모 쪽** : 지워진 행과 참조되는 키가 바뀐 행의 옛 키를 모은다. 그 키가 지금도 부모에 있으면(`findVisibleByPk`) 할 일이 없다. 사라졌으면 자식 행을 찾는다 — FK 컬럼이 앞쪽 컬럼인 인덱스(PK 포함)가 있으면 `findVisibleByIndex`, 없으면 자식 테이블을 `visibleRows` 로 **한 번** 훑어 키 집합과 대조(문장당 한 번).
+       참조동작 : `CASCADE`(삭제는 자식 삭제, 갱신은 새 키로 바꿈), `SET NULL`(NOT NULL 컬럼이면 `23502`), 그 밖(`NO ACTION`, `RESTRICT`)은 `23503`. 자식 변경도 변경 목록에 들어가 같은 검사를 받고(자기 테이블 참조와 다단계 연쇄는 작업 목록으로 끝날 때까지),
+       부모 쪽 동작은 그 부모 행의 변경 종류(삭제는 `onDelete`, 키 갱신은 `onUpdate`)를 따른다. 연쇄가 끝나면 연쇄로 바뀐 행에도 NOT NULL·PK 검사를 한다. 오류 번호와 메시지는 지금과 같게 유지한다.
+    4. **커밋**(`commitTransaction`) : 오버레이에서 행을 바로 저장 배치에 쓴다(`writeImage` 를 오버레이 기준으로. 옛 인덱스 항목은 `heap.get(RowId)` 의 옛 값으로 지우고, 지우기를 먼저 모두 한 뒤 새 항목을 넣는 순서는 유지). `overlayToImage` 와 `ImageRow` 를 없앤다. 테이블 정의 서명 확인(`40001`)은 그대로.
+       **커밋 때의 FK 재확인**(`revalidateReferences`)도 오버레이의 변경 행만 본다 : 넣은·바꾼 자식 행의 부모 존재, 지운·키가 바뀐 부모 행의 자식 존재(연쇄 없이 위반이면 `23503`). 옛 값은 `heap.get` 으로 읽는다.
+    5. `TRUNCATE` 의 참조 검사는 "자식 테이블에 NULL 이 아닌 FK 값이 있는 행이 하나라도 있으면 막는다" 로 줄인다(참조 무결성이 지켜지면 그 행은 부모에 있다). 자식 힙을 `iterate` 로 훑다가 첫 행에서 멈춘다.
+    6. 시험 : 단위(변경 목록 검사), 기존 DML·제약·참조동작·트랜잭션 시험 전부, 큰 테이블(수만 행)에서 PK 로 1건 INSERT·UPDATE·DELETE 가 행 수와 무관하게 끝나는 것(힙 순회 횟수를 `V1Heap.prototype.iterate` 로 세어 0 을 확인), 무작위 DML 로 "행 단위 방식"과 "이전 이미지 방식"의 결과 비교는 기존 시험 전체로 갈음. 끝나면 이 문서의 7단계 한계 항목과 `docs/transactions.md` 9절을 지운다.
   - 사양이 정하지 않은 사용자·권한 규칙 : 보편적인 RDBMS 의 동작을 따른다. [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md) 8절의 규칙(대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 불필요, `SELECT ... FOR UPDATE` 는 UPDATE 요구, CASCADE 삭제는 별도 권한 없음,
     권한 없음과 객체 없음을 오류 번호로 구별 등)을 점검한 결과 PostgreSQL, Oracle 의 공통 동작이거나 AGENTS.md 개요 5 의 명시 문구를 따른 것이라 그대로 두었다. (대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 를 요구하지 않는 것은 Oracle 의 기본 동작이며, 개요 5 의 "뷰에 UPDATE 권한이 있으면 UPDATE 가 가능해야 한다" 를 조건 없이 지키기 위한 것이다.)
 - 9단계에서 정한 사항이다. 프로토콜의 규칙은 [docs/protocol.md](docs/protocol.md), 구조는 [docs/communication-design.md](docs/communication-design.md)(구현하며 달라진 점은 20절)가 기준이다.
@@ -566,7 +587,7 @@ SQL 접속 (상세 14-2)
 - **DML 구조와 성능** (6단계 점검 보완에서 기록, 7단계 이후에도 유효). `exec/dml.ts` 는 INSERT·UPDATE·DELETE 마다 대상 테이블(과 FK 로 얽힌 테이블)의 모든 행을 `readTableRows` 로 메모리 이미지에 올리고, 제약을 검사한 뒤 바뀐 행을 되쓴다. 7단계도 이 방식을 그대로 두고 결과를 트랜잭션 오버레이에 접는다. 행 단위 접근은 하지 않았다.
   - 16,384행 테이블에서 1건 INSERT 가 약 26ms, `INSERT ... SELECT` 로 8,192행을 더 넣는 데 약 17초가 걸린다. (6단계 점검 보완 시점의 측정)
   - CPU 프로파일에서 `v1/index.ts` 의 `checkedPage` 와 `v1/pages.ts` 의 `checksum` 이 상위였다. 페이지를 읽을 때마다 CRC-32 를 검증하므로, 디스크에서 올릴 때 한 번만 검증하는 쪽으로 바꾸면 줄어든다. 체크섬은 손상 감지 규칙(상세 3, 12)이므로 바꿀 때 `storage.test.ts` 의 손상 감지 테스트를 유지한다.
-  - 행 단위 접근(7단계 계획의 "DML 구조 재설계")은 하지 않았다. 10개 세션 테스트 규모에서는 견디지만, 큰 테이블에서 잠금 대기가 길어질 수 있다. 할지 여부는 사용자 확인이 필요하다 (미결 사항).
+  - 행 단위 접근 1부(읽기와 오버레이)는 끝났고 2부(제약 검사, 참조동작, 커밋 쓰기)가 남았다(2026-10-16. 위 "결정 사항"의 2부 설계). 지금의 `exec/dml.ts` 는 여전히 이미지 방식이며, 오버레이에는 `foldImageRow` 가 이미지의 행을 행 단위 API 로 접어 넣는다.
 - **bun 에서의 테스트** (2026-10-11 확인). `node:test` 의 `t.mock` 은 bun 에서 구현되지 않아 `test/storage/storage.test.ts` 의 fsync 실패 테스트가 bun 에서만 실패한다. 이 테스트를 bun 에서도 돌리려면 `t.mock` 대신 메서드를 직접 바꾸고 `finally` 로 되돌리는 방식으로 고쳐야 한다. B+Tree 스트레스 테스트는 bun 기본 제한 시간(5초)을 넘으므로 `bun test --timeout 120000 dist/test/` 로 돌린다. `runtime-smoke.mjs` 는 Node.js 와 bun 양쪽에서 통과한다.
 - 7단계는 구현과 테스트를 마쳤고 "7단계 남은 마무리"만 남았다. 이어받을 때 알아 둘 점이다.
   - 작업을 중단한 시점의 코드는 컴파일에 오류가 없고 `npm test` 322개가 모두 통과한다. 반쯤 고친 파일은 없다. 다만 `catalog/dictionaryViews.ts` 가 `SYS_SESSIONS` 용 인자와 컬럼을 받도록 먼저 고쳐져 있어, 연결을 끝내기 전에는 그 뷰가 빈 결과이다. (해가 없는 상태)
@@ -648,3 +669,7 @@ SQL 접속 (상세 14-2)
   오류 번호 8000 ~ 8007 을 배정했다. 시험 248개를 더해 `npm test` 631개 통과, bun 630개 통과(`t.mock` 1개 제외). 결함을 일부러 주입한 빌드로 시험이 통신 결함 22건을 모두 잡는 것을 확인했다.
   bun 확인 결과 : TLS 서버의 `minVersion` 을 적용하지 못한다(기본 TLS 1.2 이상, 구버전 허용 불가). 구동 로그에 경고한다. 그 밖의 통신은 Node.js 와 같다. 이 과정에서 UDP 신뢰성 계층의 RTT 표본 누락(마지막 조각의 ACK 가 누적 확인에 먼저 걸려 표본이 되지 않음)을 찾아 고쳤다.
   통신 시험 중 Windows 의 TCP·UDP 제외 포트 범위와 `net.Server.close` 콜백이 모든 접속 종료를 기다리는 것을 확인하여 시험 도우미와 `stopAccepting` 에 반영했다. 커밋은 하지 않았다.
+- 2026-10-16 : DML 행 단위 접근 1부(읽기와 오버레이 계층). (사용자가 DML 을 10단계보다 먼저 하라고 하여 10단계는 미뤘고, 작업을 나눌 수 있는 지점까지만 했다.)
+  `Heap.iterate()` 지연 순회, `TableOverlay` 클래스(PK 맵, 행 단위 변경과 되돌리기), `txn/rowAccess.ts`(`visibleRows`, `findVisibleByPk`, `findVisibleByIndex`, `mergeIndexEntries`), 조회와 DML 대상 찾기가 인덱스를 타고(자기 트랜잭션이 건드린 테이블 포함) 못 타면 지연 순회하도록 `exec/executor.ts` 를 바꿨다.
+  `exec/dml.ts` 는 새 오버레이 API 에 맞춰 최소만 고쳤다(`foldImageRow`, 커밋 때 오버레이 읽기). 제약 검사와 쓰기는 이미지 방식 그대로이다(2부). 시험 11개를 더해 `npm test` 642개, bun 641개(`t.mock` 1개 제외)이다. 오버레이와 읽기 계층의 결함 주입 8건을 모두 잡는 것을 확인했다.
+  10단계 사전 작업 : `control status` 응답에 `ready`, `systemPasswordInitial` 을 더했고 AGENTS.md 14-2 에 `--ssl-ca`, `--ssl-no-verify` 와 옵션 조합 규칙을 정했다. 커밋은 하지 않았다.

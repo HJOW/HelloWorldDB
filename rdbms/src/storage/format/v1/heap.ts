@@ -41,7 +41,10 @@ export class V1Heap implements Heap {
   }
 
   scan(): StoredRow[] {
-    const rows: StoredRow[] = [];
+    return [...this.iterate()];
+  }
+
+  *iterate(): IterableIterator<StoredRow> {
     const visited = new Set<number>();
     let previous = 0;
     for (let pageId = this.root; pageId !== 0;) {
@@ -52,14 +55,13 @@ export class V1Heap implements Heap {
       for (let slotId = 0; slotId < page.slots.length; slotId++) {
         const slot = page.slots[slotId];
         if (slot !== null && slot !== undefined) {
-          rows.push({ id: { pageId, slotId }, data: slot.overflow === 0 ? Buffer.from(slot.inline)
-            : readOverflow(this.context, slot.overflow, this.root, slot.length) });
+          yield { id: { pageId, slotId }, data: slot.overflow === 0 ? Buffer.from(slot.inline)
+            : readOverflow(this.context, slot.overflow, this.root, slot.length) };
         }
       }
       previous = pageId;
       pageId = page.next;
     }
-    return rows;
   }
 
   insert(data: Buffer): RowId {

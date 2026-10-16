@@ -52,6 +52,10 @@ export interface ServerStatus {
   tcpEnabled: boolean;
   udpEnabled: boolean;
   sessionCount: number;
+  /** 모든 접속 경로를 열고 접속을 받을 수 있게 되었는지이다. 구동 중에는 false 이다. */
+  ready: boolean;
+  /** SYSTEM 계정이 초기 암호 그대로인지이다. */
+  systemPasswordInitial: boolean;
 }
 
 /**
@@ -69,6 +73,7 @@ export class Server {
   private tcpServer: TcpServer | undefined;
   private udpServer: UdpServer | undefined;
   private stopPromise: Promise<void> | undefined;
+  private ready = false;
   private stopRequestedResolve: (() => void) | undefined;
   /** `hwdb stop` 요청이 오면 풀리는 약속이다. 종료 절차를 시작하는 것은 이것을 기다리는 데몬 본체(main.ts)이다. */
   readonly stopRequested: Promise<void>;
@@ -122,6 +127,7 @@ export class Server {
         this.logger.warn(INITIAL_PASSWORD_WARNING);
       }
       await this.openTransports(this.database, lock);
+      this.ready = true;
     } catch (error) {
       // 이미 연 접속 경로를 닫고, 데이터베이스를 닫고, 잠금 파일을 지운다.
       await this.closeTransports(0);
@@ -230,6 +236,7 @@ export class Server {
         // 닫기 중 하나의 실패가 잠금 해제를 막지 않는다.
       }
       this.database = undefined;
+      this.ready = false;
       // 4. 나가는 오류 메시지가 비워지도록 잠깐 기다린 뒤 남은 소켓을 닫는다. (소켓 파일도 지운다)
       await this.closeTransports(2000);
     } finally {
@@ -253,6 +260,8 @@ export class Server {
       tcpEnabled: this.config.tcp.enabled,
       udpEnabled: this.config.udp.enabled,
       sessionCount: this.database?.sessions.count ?? 0,
+      ready: this.running && this.ready,
+      systemPasswordInitial: this.database?.isInitialSystemPassword() ?? false,
     };
   }
 

@@ -188,7 +188,7 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 | `cursorClosed` | (없음) | `closeCursor` |
 | `pong` | (없음) | `ping` |
 | `bye` | (없음) | `close` |
-| `status` | `running, port, pid, startedAt, version, dataDir, tcpEnabled, udpEnabled, sessionCount` | `control` + `status` |
+| `status` | `running, port, pid, startedAt, version, dataDir, tcpEnabled, udpEnabled, sessionCount, ready, systemPasswordInitial` | `control` + `status` |
 | `stopping` | (없음) | `control` + `stop` |
 | `error` | 11절 | 어느 요청에든 |
 
@@ -345,7 +345,7 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 - 제어 요청은 **로컬 전용 채널의 `GREETED` 상태**(`hello` 직후, 로그인하지 않은 상태)에서만 받는다. TCP, UDP 로 오거나 다른 상태에서 오면 `42501`(7001)이다. (로그인하지 않은 상태에서는 접속을 닫고, `READY` 세션이면 세션은 유지한다)
 - 제어 토큰은 데이터 디렉토리의 잠금 파일(`helloworlddb.lock`)에 적힌 값이며 구동할 때마다 새로 만든다. 데이터 디렉토리를 읽을 수 있는 운영체제 사용자만 데몬을 제어할 수 있다.
   서버는 상수 시간으로 비교하고, 틀리면 인증 실패와 같은 오류(`28000`, 7000)로 접속을 끊는다. 로그에 토큰을 남기지 않는다.
-- `action: "status"` → `status` 응답. 같은 접속을 이어서 쓸 수 있다.
+- `action: "status"` → `status` 응답. 같은 접속을 이어서 쓸 수 있다. `ready` 는 모든 접속 경로가 열려 접속을 받을 수 있게 되었는지(구동 중에는 false, `hwdb start` 가 이것을 기다린다), `systemPasswordInitial` 은 SYSTEM 계정이 초기 암호 그대로인지(`hwdb` 가 변경을 안내한다)이다.
 - `action: "stop"` → `stopping` 응답을 쓰고 flush 한 뒤 접속을 닫고 종료 절차를 시작한다. 클라이언트는 프로세스가 사라지는 것을 기다려 확인한다.
 - 제어 요청은 `maxConnections` 와 인증 전 접속 수 제한을 받지 않는다.
 

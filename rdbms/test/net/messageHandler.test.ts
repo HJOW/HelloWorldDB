@@ -910,6 +910,8 @@ function controlPort(): ControlPort & { stops: number } {
       tcpEnabled: true,
       udpEnabled: false,
       sessionCount: 3,
+      ready: true,
+      systemPasswordInitial: false,
     }),
     requestStop: (): void => {
       port.stops++;

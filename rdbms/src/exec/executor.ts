@@ -49,8 +49,8 @@ import type { IndexChoice } from "./planner.js";
 import { atInnerLevel, containsAggregate, evaluateCondition, evaluateExpression } from "./expression.js";
 import type { EvalContext, RowScope } from "./expression.js";
 import type { TypedValue } from "./functions.js";
-import type { Transaction } from "../txn/transaction.js";
-import { readMergedRows } from "../txn/transaction.js";
+import type { OverlayRow, Transaction } from "../txn/transaction.js";
+import { mergeIndexEntries, readMergedRows, visibleRows } from "../txn/rowAccess.js";
 import { lockConflict, rowLockKey } from "../txn/lockManager.js";
 import type { LockSink } from "../txn/lockManager.js";
 
@@ -577,56 +577,84 @@ function scanSource(bound: BoundSource, ctx: QueryContext, where: Expression | n
   }
 }
 
-/** 테이블을 읽는다. 앞쪽 컬럼 조건에 맞는 인덱스가 있으면 탄다. */
+/** 상수를 평가하는 함수이다. 상수 평가는 바깥 범위만으로 하고, 행의 열이 섞이면 null 로 보고 pushdown 하지 않는다. */
+function constantEvaluator(ctx: QueryContext): (expression: Expression) => TypedValue | null {
+  return (expression) => {
+    try {
+      return evaluateExpression(expression, evalContextFor([], ctx, true));
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** 합친 행(커밋 값에 자기 변경을 덮은 것)으로 FROM 출처의 범위를 만든다. 커밋된 행은 FOR UPDATE 를 위해 행 식별자를 단다. */
+function rowToScope(
+  tablespace: string,
+  tableName: string,
+  alias: string | null,
+  table: StoredTable,
+  row: OverlayRow,
+): RowScope[] {
+  return [
+    {
+      tablespace,
+      table: tableName,
+      alias,
+      lockRef: row.id === null ? undefined : { tablespace, table: tableName, rowId: row.id },
+      slots: table.columns.map((column, index) => ({
+        column: column.name,
+        value: (row.values[index] ?? null) as SqlValue,
+        type: column.dataType,
+      })),
+    },
+  ];
+}
+
+/**
+ * 조건의 앞쪽 컬럼에 맞는 인덱스가 있으면 그 인덱스로 후보 행을 읽고 자기 트랜잭션의 변경을 합친다. (행 단위 접근)
+ * 없거나 인덱스 탐색에 실패하면 null 이다. 후보는 조건의 상위 집합이므로 호출자가 조건을 다시 건다.
+ */
+function indexedCandidates(
+  catalog: CatalogStore,
+  tablespace: string,
+  table: StoredTable,
+  alias: string,
+  where: Expression | null,
+  ctx: QueryContext,
+): OverlayRow[] | null {
+  const choice = chooseIndex(catalog, table, alias, where, constantEvaluator(ctx));
+  if (choice === null) return null;
+  try {
+    const ids = indexEntryIds(catalog, table, choice, ctx);
+    return mergeIndexEntries(catalog, tablespace, table, ctx.txn, ids);
+  } catch {
+    // 인덱스 탐색에 실패하면 전체 스캔으로 돌아간다.
+    return null;
+  }
+}
+
+/** 테이블을 읽는다. 앞쪽 컬럼 조건에 맞는 인덱스가 있으면 탄다. 자기 트랜잭션이 건드린 테이블도 인덱스를 탄다. */
 function scanTable(
   bound: Extract<BoundSource, { kind: "table" }>,
   ctx: QueryContext,
   where: Expression | null,
 ): RowScope[][] {
   const table = bound.def;
-  const types = table.columns.map((column) => column.dataType);
-  // 트랜잭션이 건드린 테이블은 인덱스를 타지 않고 합친 값으로 훑는다.
-  const touched = ctx.txn.touches(bound.tablespace, bound.table);
-  if (!touched) {
-    // 상수 평가는 바깥 범위만으로 한다. 행의 열이 섞이면 null 로 보고 pushdown하지 않는다.
-    const choice = chooseIndex(bound.catalog, table, bound.alias ?? bound.table, where, (expression) => {
-      try {
-        return evaluateExpression(expression, evalContextFor([], ctx, true));
-      } catch {
-        return null;
-      }
-    });
-    if (choice !== null) {
-      try {
-        return scanWithIndex(bound, choice, types, ctx);
-      } catch {
-        // 인덱스 스캔에 실패하면 전체 스캔으로 돌아간다.
-      }
-    }
-  }
-  return readTableRows(bound.catalog, table, ctx.txn, bound.tablespace).map((stored) => [
-    {
-      tablespace: bound.tablespace,
-      table: bound.table,
-      alias: bound.alias,
-      lockRef: stored.id === null ? undefined : { tablespace: bound.tablespace, table: bound.table, rowId: stored.id },
-      slots: table.columns.map((column, index) => ({
-        column: column.name,
-        value: (stored.values[index] ?? null) as SqlValue,
-        type: column.dataType,
-      })),
-    },
-  ]);
+  const candidates = indexedCandidates(bound.catalog, bound.tablespace, table, bound.alias ?? bound.table, where, ctx);
+  const rows = candidates ?? visibleRows(bound.catalog, bound.tablespace, table, ctx.txn);
+  const out: RowScope[][] = [];
+  for (const row of rows) out.push(rowToScope(bound.tablespace, bound.table, bound.alias, table, row));
+  return out;
 }
 
-/** 인덱스로 앞쪽 조건을 만족하는 행만 읽는다. 남은 조건은 호출자가 다시 건다. */
-function scanWithIndex(
-  bound: Extract<BoundSource, { kind: "table" }>,
+/** 인덱스로 앞쪽 조건을 만족하는 커밋 행의 식별자를 찾는다. 남은 조건은 호출자가 다시 건다. */
+function indexEntryIds(
+  catalog: CatalogStore,
+  table: StoredTable,
   choice: IndexChoice,
-  types: DataType[],
   ctx: QueryContext,
-): RowScope[][] {
-  const table = bound.def;
+): RowId[] {
   const keyColumns: KeyColumn[] = choice.columns.map((column) => ({ type: column.type, descending: column.descending }));
   // 앞쪽 동등값을 컬럼 타입에 맞춘다. 타입 없는 문자열은 리터럴 해석을 쓴다.
   const coercePrefix = (entry: TypedValue, type: DataType): SqlValue => {
@@ -641,7 +669,7 @@ function scanWithIndex(
     const type = (choice.columns[index] as { type: DataType }).type;
     return coercePrefix(entry, type);
   });
-  const space = bound.catalog.space;
+  const space = catalog.space;
   let entries: { key: Buffer; rowId: RowId }[];
   if (choice.prefixCount === choice.columns.length && choice.lower === null && choice.upper === null) {
     const key = encodeKey(prefixValues, keyColumns);
@@ -678,26 +706,7 @@ function scanWithIndex(
       ...(upper !== undefined ? { upper: upper.key, upperInclusive: upper.inclusive } : {}),
     });
   }
-  const out: RowScope[][] = [];
-  for (const entry of entries) {
-    const data = bound.catalog.space.heap(table.heapRoot).get(entry.rowId);
-    if (data === null) continue;
-    const values = decodeRow(data, types);
-    out.push([
-      {
-        tablespace: bound.tablespace,
-        table: bound.table,
-        alias: bound.alias,
-        lockRef: { tablespace: bound.tablespace, table: bound.table, rowId: entry.rowId },
-        slots: table.columns.map((column, index) => ({
-          column: column.name,
-          value: (values[index] ?? null) as SqlValue,
-          type: column.dataType,
-        })),
-      },
-    ]);
-  }
-  return out;
+  return entries.map((entry) => entry.rowId);
 }
 
 /** 뷰를 전개하여 행을 만든다. 정의 안의 생략된 이름은 뷰의 테이블스페이스에서 찾는다. */
@@ -1210,7 +1219,11 @@ export function inferSourceColumns(source: BoundSource, ctx: QueryContext): { na
   );
 }
 
-/** DML의 WHERE 탐색에 쓸 단일 테이블 스캔이다. 행 식별자와 함께 돌려준다. */
+/**
+ * DML의 WHERE 탐색에 쓸 단일 테이블 스캔이다. 행 식별자와 함께 돌려준다.
+ * 조건의 앞쪽 컬럼에 맞는 인덱스(PK 포함)가 있으면 그 인덱스로 후보만 읽는다. 없으면 힙을 하나씩 읽는 지연 순회로 훑으며
+ * 조건에 맞는 행만 모은다. (테이블 전체를 메모리에 올리지 않는다) 어느 쪽이든 조건은 모든 후보에 다시 건다.
+ */
 export function scanTableForDml(
   catalog: CatalogStore,
   table: StoredTable,
@@ -1219,9 +1232,10 @@ export function scanTableForDml(
   where: Expression | null,
   ctx: QueryContext,
 ): { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] {
-  const stored = readTableRows(catalog, table, ctx.txn, tablespace);
+  const candidates = where === null ? null : indexedCandidates(catalog, tablespace, table, alias ?? table.name, where, ctx);
+  const rows = candidates ?? visibleRows(catalog, tablespace, table, ctx.txn);
   const out: { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] = [];
-  for (const row of stored) {
+  for (const row of rows) {
     const scopes: RowScope[] = [{
       tablespace,
       table: table.name,

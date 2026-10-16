@@ -48,7 +48,7 @@ import { atInnerLevel } from "./expression.js";
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
 import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 import { lockConflict, pkLockKey, rowLockKey } from "../txn/lockManager.js";
-import { overlayKey, pkKeyHex, tableSignature } from "../txn/transaction.js";
+import { overlayKey, parseCommittedRowKey, pkKeyHex, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
@@ -760,15 +760,37 @@ function applyToTransaction(ctx: QueryContext, images: StatementImages): void {
   for (const image of dirty) {
     for (const row of image.rows) {
       if (row.added || row.deleted || row.original !== null) {
-        ctx.txn.fold(image.tablespace, image.table, row);
+        foldImageRow(ctx.txn, image.tablespace, image.table, row);
       }
     }
   }
 }
 
+/**
+ * 문장 이미지의 한 행을 트랜잭션의 오버레이에 접는다. 호출 전에 잠금을 걸어야 한다.
+ * 오버레이 쪽은 행 단위 API(`insertRow`, `updateRow`, `deleteRow`)이고 되돌리기 항목을 남긴다.
+ * (이미지 방식은 DML 의 제약 검사가 행 단위로 바뀔 때 사라진다. PROGRESS.md "DML 행 단위 접근")
+ */
+function foldImageRow(txn: Transaction, tablespace: string, table: StoredTable, row: ImageRow): void {
+  if (row.added) {
+    txn.insertRow(tablespace, table, row.values);
+    return;
+  }
+  if (row.tempId !== null) {
+    // 이 트랜잭션이 앞서 넣은 행이다.
+    if (row.deleted) txn.deleteRow(tablespace, table, { id: null, tempId: row.tempId });
+    else if (row.original !== null) txn.updateRow(tablespace, table, { id: null, tempId: row.tempId }, row.values);
+    return;
+  }
+  if (row.id === null) {
+    throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "Transaction row has no identity.");
+  }
+  if (row.deleted) txn.deleteRow(tablespace, table, { id: row.id, tempId: null });
+  else if (row.original !== null) txn.updateRow(tablespace, table, { id: row.id, tempId: null }, row.values);
+}
+
 function parseRowKey(key: string): RowId {
-  const [page, slot] = key.split(":");
-  return { pageId: Number(page), slotId: Number(slot) };
+  return parseCommittedRowKey(key);
 }
 
 /** 오버레이를 쓸 수 있는 이미지로 바꾼다. 트랜잭션 중에 테이블 정의가 바뀌었으면 40001 이다. */
@@ -785,13 +807,13 @@ function overlayToImage(manager: TablespaceManager, overlay: TableOverlay): Tabl
   if (table === undefined) throw changed("dropped");
   if (tableSignature(table) !== overlay.signature) throw changed("altered");
   const rows: ImageRow[] = [];
-  for (const key of overlay.deletes) {
+  for (const key of overlay.deletedKeys()) {
     rows.push({ id: parseRowKey(key), tempId: null, values: [], original: null, deleted: true, added: false });
   }
-  for (const [key, values] of overlay.updates) {
+  for (const [key, values] of overlay.updatedRows()) {
     rows.push({ id: parseRowKey(key), tempId: null, values, original: values, deleted: false, added: false });
   }
-  for (const insert of overlay.inserts) {
+  for (const insert of overlay.insertedRows()) {
     rows.push({ id: null, tempId: insert.tempId, values: insert.values, original: null, deleted: false, added: true });
   }
   return { catalog, tablespace: overlay.tablespace, table, rows, byId: new Map(), dirty: true };
