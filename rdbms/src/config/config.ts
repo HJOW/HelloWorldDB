@@ -293,8 +293,9 @@ export function loadConfig(installDir: string): LoadedConfig {
     }
     if (value["maxPacketSize"] !== undefined) {
       const packetSize = value["maxPacketSize"];
-      if (typeof packetSize !== "number" || !Number.isInteger(packetSize) || packetSize < 1) {
-        fail(`Invalid config value: "udp.maxPacketSize" must be an integer >= 1.`);
+      // 헤더(20바이트)와 조각을 담을 수 있어야 하고, UDP 데이터그램의 최대 크기(65,507)를 넘을 수 없다. (AGENTS.md 상세 7)
+      if (typeof packetSize !== "number" || !Number.isInteger(packetSize) || packetSize < 64 || packetSize > 65_507) {
+        fail(`Invalid config value: "udp.maxPacketSize" must be an integer between 64 and 65507.`);
       }
       udpMaxPacketSize = packetSize;
     }
@@ -304,6 +305,12 @@ export function loadConfig(installDir: string): LoadedConfig {
         fail(`Invalid config value: "udp.sessionTimeoutMs" must be an integer >= 0.`);
       }
       udpSessionTimeoutMs = timeout;
+      if (timeout === 0) {
+        // 0 은 시간 제한 없음이다. (session.idleTimeoutMs 의 0 과 같다) 죽은 클라이언트의 세션이 쌓일 수 있으므로 경고한다.
+        warnings.push(
+          'Config "udp.sessionTimeoutMs" is 0: UDP sessions never time out, so sessions of dead clients can pile up. Use a positive value unless you need this.',
+        );
+      }
     }
   }
 

@@ -11,14 +11,18 @@
  *  - 세션이 끝날 때 커밋하지 않은 변경을 롤백한다.
  *  - 정상 종료 절차에서 새 접속을 막고 모든 세션을 끝낸다.
  *
- * 7단계에서는 목록, 유휴 세션 종료, 전체 종료까지 맡는다. 접속 수 제한과 로컬 판정, CONNECT 검사는
- * 접속 경로(통신)가 생기는 9단계에서 붙인다. 세션이 끝날 때의 롤백은 Session.close 가 한다.
+ * 7단계에서는 목록, 유휴 세션 종료, 전체 종료까지 맡았다. 9단계에서 세션마다 접속 경로(`channel`)와 상대 주소를 기록하고
+ * TCP, UDP 세션 수를 세는 `countRemote` 를 더했다. 접속 수 제한, 로컬 판정, CONNECT 검사의 판단은
+ * `Database.connect`(session.ts)가 이 목록을 보고 한다. 세션이 끝날 때의 롤백은 Session.close 가 한다.
  *
  * 관련 사양 : AGENTS.md 상세 6, 7, 8, 9, 12
- * 구현 단계 : 7단계(세션 목록), 9단계(접속 수 제한, 로컬 판정)
+ * 구현 단계 : 7단계(세션 목록), 9단계(접속 경로 기록, 접속 수 세기)
  */
 
 import type { Session, SessionCloseReason } from "./session.js";
+
+/** 세션이 들어온 접속 경로이다. `local` 은 로컬 전용 채널(`hwdb` 의 기본 접속)이고, 프로세스 안에서 직접 만든 세션도 `local` 이다. */
+export type ConnectionChannel = "local" | "tcp" | "udp";
 
 /** 세션 하나의 현황이다. 상태 조회와 SYS_SESSIONS 에 쓴다. */
 export interface SessionInfo {
@@ -29,6 +33,9 @@ export interface SessionInfo {
   inTransaction: boolean;
   connectedAt: number;
   lastActivity: number;
+  channel: ConnectionChannel;
+  /** TCP, UDP 접속의 상대 주소(포트 없음)이다. 로컬 전용 채널이면 null 이다. */
+  clientAddress: string | null;
 }
 
 export class SessionManager {
@@ -65,6 +72,15 @@ export class SessionManager {
     return this.sessions.size;
   }
 
+  /** TCP, UDP 세션 수이다. `maxConnections` 가 세는 대상이며 로컬 전용 채널의 세션은 뺀다. */
+  countRemote(): number {
+    let count = 0;
+    for (const session of this.sessions.values()) {
+      if (session.channel !== "local") count++;
+    }
+    return count;
+  }
+
   /** 새 세션을 받을 수 있는 상태인지 본다. 종료 절차에서는 false 이다. */
   get isAccepting(): boolean {
     return this.accepting;
@@ -82,6 +98,8 @@ export class SessionManager {
         inTransaction: session.inTransaction,
         connectedAt: session.connectedAt,
         lastActivity: session.lastActivity,
+        channel: session.channel,
+        clientAddress: session.remoteAddress,
       }));
   }
 

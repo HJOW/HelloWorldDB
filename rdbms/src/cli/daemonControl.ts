@@ -16,13 +16,14 @@
  * 관련 사양 : AGENTS.md 상세 14-1
  * 구현 단계 : 10단계
  * 1단계에서는 `start --foreground` 와 잠금 파일 기준의 `status` 만 동작한다.
- * 분리된 프로세스로 띄우기와 로컬 전용 채널로의 종료 요청은 9~10단계에서 붙는다.
+ * 분리된 프로세스로 띄우기와 로컬 전용 채널로의 상태 조회·종료 요청은 10단계에서 붙는다. (서버 쪽은 9단계에서 끝났고, client/connection.ts 의 `control` 을 쓰면 된다)
  */
 
 import { loadConfig } from "../config/config.js";
 import { RDBMS_VERSION } from "../common/instance.js";
 import { isProcessAlive, readLockFile } from "../daemon/lockFile.js";
 import { runForeground } from "../daemon/main.js";
+import { t } from "./i18n.js";
 
 export interface StartRequest {
   installDir: string;
@@ -37,19 +38,19 @@ export async function startCommand(request: StartRequest): Promise<number> {
       await runForeground(request.installDir);
       return 0;
     } catch (error) {
-      process.stderr.write(`hwdb start: ${describeError(error)}\n`);
+      process.stderr.write(`${t("start.failed", { reason: describeError(error) })}\n`);
       return 1;
     }
   }
-  process.stderr.write("hwdb start: running as a detached daemon is not implemented yet (step 10)\n");
-  process.stderr.write("Use `hwdb start --foreground` for now.\n");
+  process.stderr.write(`${t("start.detachNotImplemented")}\n`);
+  process.stderr.write(`${t("start.useForeground")}\n`);
   return 1;
 }
 
-/** `hwdb stop` 을 실행한다. 로컬 전용 채널의 종료 요청은 9~10단계에서 붙는다. */
+/** `hwdb stop` 을 실행한다. 로컬 전용 채널의 종료 요청은 10단계에서 붙는다. (서버 쪽은 9단계에서 끝났다) */
 export async function stopCommand(_installDir: string, _timeoutSeconds: number): Promise<number> {
-  process.stderr.write("hwdb stop: not implemented yet (step 10)\n");
-  process.stderr.write("If the daemon runs with --foreground, stop it with Ctrl+C.\n");
+  process.stderr.write(`${t("stop.notImplemented")}\n`);
+  process.stderr.write(`${t("stop.foregroundHint")}\n`);
   return 1;
 }
 
@@ -62,25 +63,27 @@ export async function statusCommand(installDir: string): Promise<number> {
   let loaded: Awaited<ReturnType<typeof loadConfigSafe>>;
   loaded = loadConfigSafe(installDir);
   if (loaded.error !== null) {
-    process.stderr.write(`hwdb status: ${loaded.error}\n`);
+    process.stderr.write(`${t("status.failed", { reason: loaded.error })}\n`);
     return 1;
   }
   const { config } = loaded;
   const lock = readLockFile(config.dataDir);
   const running = lock !== null && isProcessAlive(lock.pid);
 
+  const yesNo = (value: boolean): string => t(value ? "common.yes" : "common.no");
+  const onOff = (value: boolean): string => t(value ? "common.on" : "common.off");
   const lines: string[] = [];
-  lines.push(`running: ${running ? "yes" : "no"}`);
-  lines.push(`port: ${String(config.port)}`);
+  lines.push(t("status.running", { value: yesNo(running) }));
+  lines.push(t("status.port", { value: config.port }));
   if (running && lock !== null) {
-    lines.push(`pid: ${String(lock.pid)}`);
-    lines.push(`startedAt: ${lock.startedAt}`);
+    lines.push(t("status.pid", { value: lock.pid }));
+    lines.push(t("status.startedAt", { value: lock.startedAt }));
   }
-  lines.push(`version: ${RDBMS_VERSION}`);
-  lines.push(`dataDir: ${config.dataDir}`);
-  lines.push(`tcp: ${config.tcp.enabled ? "on" : "off"}`);
-  lines.push(`udp: ${config.udp.enabled ? "on" : "off"}`);
-  lines.push(`sessions: 0`);
+  lines.push(t("status.version", { value: RDBMS_VERSION }));
+  lines.push(t("status.dataDir", { value: config.dataDir }));
+  lines.push(t("status.tcp", { value: onOff(config.tcp.enabled) }));
+  lines.push(t("status.udp", { value: onOff(config.udp.enabled) }));
+  lines.push(t("status.sessions", { value: 0 }));
   process.stdout.write(`${lines.join("\n")}\n`);
   return running ? 0 : 1;
 }
@@ -100,5 +103,5 @@ function describeError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
-  return "unknown error.";
+  return t("error.unknown");
 }

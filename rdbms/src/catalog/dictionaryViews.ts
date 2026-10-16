@@ -12,7 +12,7 @@
  *  - `SYS_` 로 시작하는 이름과 `DUAL` 은 SYSTEM 테이블스페이스에서 예약한다.
  *
  * 관련 사양 : AGENTS.md 상세 3
- * 구현 단계 : 5단계(뷰 제공), 7단계(SYS_SESSIONS), 8단계(권한에 따른 행 가시성)
+ * 구현 단계 : 5단계(뷰 제공), 7단계(SYS_SESSIONS), 8단계(권한에 따른 행 가시성), 9단계(SYS_SESSIONS 에 CHANNEL, CLIENT_ADDRESS)
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
@@ -145,6 +145,9 @@ export function getDictionaryColumns(viewName: string): DictionaryColumn[] {
         { name: "TABLESPACE_NAME", dataType: varchar(128) },
         { name: "AUTOCOMMIT", dataType: varchar(3) },
         { name: "IN_TRANSACTION", dataType: varchar(3) },
+        // 9단계에서 끝에 더했다. 기존 열의 순서는 바꾸지 않는다.
+        { name: "CHANNEL", dataType: varchar(5) },
+        { name: "CLIENT_ADDRESS", dataType: varchar(64) },
       ];
     default:
       throw new DbError("42P01", ERROR_CODES.TABLE_NOT_FOUND, `Dictionary view does not exist: "${viewName}".`);
@@ -379,6 +382,8 @@ export function getDictionaryRows(
           session.tablespace === "" ? null : session.tablespace,
           session.autocommit ? "YES" : "NO",
           session.inTransaction ? "YES" : "NO",
+          session.channel.toUpperCase(),
+          session.clientAddress,
         ]);
     }
     case "SYS_PRIVILEGES": {

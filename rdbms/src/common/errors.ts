@@ -165,6 +165,22 @@ export const ERROR_CODES = {
   INVALID_PASSWORD: 7007,
   /** 보호되는 계정(SYSTEM)을 삭제하거나 DBA 를 회수하려 함. SQLSTATE 42501. */
   PROTECTED_ACCOUNT: 7008,
+  /** 프로토콜 위반(JSON 오류, 알 수 없는 type, 상태에 맞지 않는 메시지, 크기 초과, 잘못된 프레임). SQLSTATE 08P01. */
+  PROTOCOL_VIOLATION: 8000,
+  /** TCP, UDP 접속 수가 maxConnections 에 이름. SQLSTATE 53300. */
+  TOO_MANY_CONNECTIONS: 8001,
+  /** 유휴 시간 초과로 서버가 세션을 끊음. SQLSTATE 57P05. */
+  IDLE_TIMEOUT: 8002,
+  /** 처리 한도 초과(행 하나가 메시지에 안 들어감, UDP 조각 수 초과). SQLSTATE 54000. */
+  LIMIT_EXCEEDED: 8003,
+  /** 커서가 없음. SQLSTATE 34000. */
+  CURSOR_NOT_FOUND: 8004,
+  /** 구성 한도 초과(열린 커서 16개, 요청 대기열 64개). SQLSTATE 53400. */
+  CONFIGURATION_LIMIT_EXCEEDED: 8005,
+  /** 연결 실패. 클라이언트가 만드는 오류이며 서버는 보내지 않는다(UDP 재전송 한도, 연결 끊김, 응답 시간 초과). SQLSTATE 08006. */
+  CONNECTION_FAILURE: 8006,
+  /** 접속을 맺지 못함 : TLS 서버 인증서 검증 실패. 클라이언트가 만드는 오류이며 서버는 보내지 않는다. SQLSTATE 08001. */
+  CONNECTION_REJECTED: 8007,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */

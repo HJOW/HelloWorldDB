@@ -3,7 +3,8 @@
  *
  * 담당
  *  - 세션 상태 : 로그인한 사용자, 자동 커밋 여부, 진행 중인 트랜잭션, 현재 테이블스페이스(없을 수 있음), 타임존
- *  - 접속 : `Database.login`(비밀번호 확인과 CONNECT 검사), `Database.createSession`(인증이 끝난 접속)
+ *  - 접속 : `Database.connect`(통신 계층이 SCRAM 인증 뒤에 쓰는 입구. 로컬 판정, CONNECT 검사, `maxConnections` 확인을 한곳에서 한다),
+ *    `Database.login`(비밀번호 확인과 CONNECT 검사), `Database.createSession`(인증이 끝난 접속)
  *  - 문장 실행의 흐름 : 구문 분석(sql) → 이름과 타입 검사(exec/analyzer) → 권한 검사(auth) → 실행(exec)
  *  - 세션 문장 처리 : USE, SET TIME ZONE, SET AUTOCOMMIT
  *  - 트랜잭션 문장 처리 : BEGIN, COMMIT, ROLLBACK, SAVEPOINT, ROLLBACK TO, RELEASE SAVEPOINT
@@ -33,11 +34,12 @@
  *  - 세션 문장과 트랜잭션 문장 : 잠금 없이 바로 처리한다.
  *
  * 관련 사양 : AGENTS.md 상세 0, 4, 5, 6, 9, 10
- * 구현 단계 : 5단계(실행 입구), 6단계(질의와 DML 연결), 7단계(트랜잭션 상태), 8단계(계정과 권한)
+ * 구현 단계 : 5단계(실행 입구), 6단계(질의와 DML 연결), 7단계(트랜잭션 상태), 8단계(계정과 권한), 9단계(접속 경로와 접속 정책)
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
+import { isLoopbackAddress } from "../common/address.js";
 import { NO_TABLESPACE } from "../common/instance.js";
 import { parseStatement } from "../sql/parser.js";
 import type { Statement } from "../sql/ast.js";
@@ -75,6 +77,7 @@ import { commitTransaction, executeDelete, executeInsert, executeTruncate, execu
 import { LockManager, isLockConflict, lockConflict, objectLockKey } from "../txn/lockManager.js";
 import { Transaction } from "../txn/transaction.js";
 import { SessionManager } from "./sessionManager.js";
+import type { ConnectionChannel } from "./sessionManager.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
@@ -99,6 +102,8 @@ export interface DatabaseOptions {
   idleTimeoutMs?: number;
   /** 새 비밀번호 검증 정보의 SCRAM 반복 횟수. 기본 4096. */
   scramIterations?: number;
+  /** TCP, UDP 세션 수의 상한이다. `maxConnections` 와 같다. 로컬 전용 채널의 세션은 세지 않는다. 생략하면 제한이 없다. */
+  maxConnections?: number;
 }
 
 export interface SessionOptions {
@@ -107,6 +112,21 @@ export interface SessionOptions {
   /** 접속 직후의 현재 테이블스페이스. 생략하면 사용자의 기본 테이블스페이스이고, 그것도 없으면 현재 테이블스페이스가 없다. */
   tablespace?: string;
   timeZone?: string;
+  /** 접속 경로이다. 생략하면 `local` 이다. 통신 계층은 `Database.connect` 로 넘긴다. */
+  channel?: ConnectionChannel;
+  /** TCP, UDP 접속의 상대 주소(포트 없음)이다. `local` 이면 null 이다. */
+  remoteAddress?: string | null;
+}
+
+/** 통신 계층이 SCRAM 인증을 마친 뒤 세션을 만들 때의 옵션이다. */
+export interface ConnectOptions {
+  /** 인증을 마친 사용자이다. 비밀번호는 이미 확인되었다. */
+  user: string;
+  tablespace?: string;
+  timeZone?: string;
+  channel: ConnectionChannel;
+  /** TCP, UDP 접속의 상대 주소(포트 없음)이다. 로컬 전용 채널이면 null 이다. */
+  remoteAddress: string | null;
 }
 
 /** 비밀번호로 접속할 때의 옵션이다. */
@@ -140,6 +160,8 @@ export class Database {
     readonly lockTimeoutMs: number,
     idleTimeoutMs: number,
     scramIterations: number | undefined,
+    /** TCP, UDP 세션 수의 상한이다. 제한이 없으면 Infinity 이다. */
+    readonly maxConnections: number,
   ) {
     this.sessions = new SessionManager(idleTimeoutMs);
     this.users = new UserStore(manager, scramIterations);
@@ -159,6 +181,7 @@ export class Database {
       options.lockTimeoutMs ?? 30000,
       options.idleTimeoutMs ?? 0,
       options.scramIterations,
+      options.maxConnections ?? Number.POSITIVE_INFINITY,
     );
     try {
       database.users.ensureSystemAccount();
@@ -200,8 +223,43 @@ export class Database {
       fail("3D000", ERROR_CODES.TABLESPACE_NOT_FOUND, `Tablespace does not exist: "${current}".`);
     }
     const session = new Session(this, this.sessions.nextId(), user, current, timeZone);
+    session.channel = options.channel ?? "local";
+    session.remoteAddress = options.remoteAddress ?? null;
     this.sessions.add(session);
     return session;
+  }
+
+  /**
+   * 통신 계층이 SCRAM 인증을 마친 뒤 세션을 만드는 입구이다. 접속 정책을 한곳에서 판단한다.
+   *  - 로컬 판정 : 로컬 전용 채널이거나, 상대 주소가 루프백이면 로컬이다. (사양 상세 6) 로그인 시점에 한 번 판정한다.
+   *  - CONNECT 검사 : 로컬이 아니면 CONNECT 권한 그룹이 있어야 한다. 없으면 28000(7006).
+   *  - 접속 수 제한 : 로컬 전용 채널이 아니면 TCP, UDP 세션 수가 `maxConnections` 에 이르렀을 때 53300(8001)이다.
+   *    로컬 전용 채널의 세션은 세지도 막지도 않는다. (사양 상세 9, 14)
+   * 인증이 끝난 사람에게만 부르므로 이 거부 사유는 인증 실패와 구별되는 오류로 알려도 된다.
+   * 한 스레드에서 도는 서버에서 확인과 세션 생성 사이에 다른 접속이 끼어들지 않는다.
+   */
+  connect(options: ConnectOptions): Session {
+    const local = options.channel === "local" || isLoopbackAddress(options.remoteAddress);
+    this.assertMayConnect(options.user, local);
+    if (options.channel !== "local" && this.isConnectionLimitReached()) {
+      fail(
+        "53300",
+        ERROR_CODES.TOO_MANY_CONNECTIONS,
+        `Too many connections: the limit is ${String(this.maxConnections)} (maxConnections).`,
+      );
+    }
+    return this.createSession({
+      user: options.user,
+      tablespace: options.tablespace,
+      timeZone: options.timeZone,
+      channel: options.channel,
+      remoteAddress: options.remoteAddress,
+    });
+  }
+
+  /** TCP, UDP 세션 수가 `maxConnections` 에 이르러 새 TCP, UDP 접속을 받을 수 없는지 본다. */
+  isConnectionLimitReached(): boolean {
+    return this.sessions.countRemote() >= this.maxConnections;
   }
 
   /**
@@ -245,6 +303,10 @@ export class Session {
   /** 마지막으로 문장을 시작하거나 끝낸 시각(epoch ms)이다. 유휴 판정에 쓴다. */
   lastActivity = Date.now();
   readonly connectedAt = Date.now();
+  /** 세션이 들어온 접속 경로이다. 프로세스 안에서 직접 만든 세션은 `local` 이다. */
+  channel: ConnectionChannel = "local";
+  /** TCP, UDP 접속의 상대 주소(포트 없음)이다. 로컬 전용 채널이면 null 이다. */
+  remoteAddress: string | null = null;
 
   private timeZoneSpec: string;
   private txn: Transaction | null = null;

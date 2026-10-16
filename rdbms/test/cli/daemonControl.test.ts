@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/config/config.js";
 import { createLogger } from "../../src/common/logger.js";
 import { Server } from "../../src/daemon/server.js";
+import { writeFreePortConfig } from "../net/helpers.js";
 
 const HWDB = fileURLToPath(new URL("../../src/cli/main.js", import.meta.url));
 
@@ -30,6 +31,7 @@ test("hwdb status 는 구동 중이 아니면 종료 코드 1 이다", () => {
 
 test("hwdb status 는 구동 중이면 종료 코드 0 이다", async () => {
   const installDir = makeTempDir();
+  const port = await writeFreePortConfig(installDir); // 시험 파일이 병렬로 돌므로 기본 포트(7410)를 쓰지 않는다.
   const { config } = loadConfig(installDir);
   const logger = createLogger({ level: "error", dir: config.log.dir, foreground: false });
   const server = new Server(config, logger);
@@ -41,7 +43,7 @@ test("hwdb status 는 구동 중이면 종료 코드 0 이다", async () => {
     });
     assert.equal(result.status, 0);
     assert.match(result.stdout, /running: yes/);
-    assert.match(result.stdout, /port: 7410/);
+    assert.match(result.stdout, new RegExp(`port: ${port}`));
   } finally {
     await server.stop();
     await logger.close();

@@ -6,18 +6,21 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-15
-- 진행 단계 : 1 ~ 8단계 완료. 7단계의 남은 마무리(`SYS_SESSIONS` 연결, 문서)도 8단계 착수 전에 처리했다. 8단계(계정과 권한)는 구현과 테스트를 마쳤고 완료 기준(권한 조합별 허용·거부, 개요 5 의 뷰 UPDATE 예시)을 채웠다.
+- 최종 갱신 : 2026-10-16
+- 진행 단계 : 1 ~ 9단계 완료. 9단계(통신)는 로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)로 로그인, 질의, 대량 결과, 트랜잭션이 동작하고, 데몬(`Server`)이 세 경로를 열고 닫으며 제어 요청(상태 조회, 종료)을 처리한다.
+  완료 기준(세 경로의 로그인·질의·대량 결과·트랜잭션, UDP 는 패킷 유실과 중복 조건 포함)을 채웠다. 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)로 확정했다.
 - 착수 조건 : 없음
-- 다음 작업 : 9단계(통신). 설계 문서 [docs/communication-design.md](docs/communication-design.md)를 2026-10-15 에 먼저 썼다(구현은 아직 없다). 작업은 그 문서 15절의 9-1 ~ 9-10 순서로 하고, 9-1 에서 프로토콜 명세를 `docs/protocol.md` 로 확정한다.
-  설계에서 정할 5건은 2026-10-15 에 결정되었다(그 문서 19절, 아래 "결정 사항"의 9단계 설계 항목). 클라이언트는 TLS 서버 인증서를 기본으로 검증하고 인증서 오류 때 100 ms 뒤 최대 2회 재시도하며, `SYS_SESSIONS` 에 `CHANNEL`, `CLIENT_ADDRESS` 를 더하고, `udp.sessionTimeoutMs = 0` 은 제한 없음(경고), `udp.maxPacketSize` 는 64 ~ 65,507 이다. 인증 실패 시 접속 종료와 200 ms 지연은 권장안 그대로이다. AGENTS.md 상세 7, 8 에 반영했다.
-  8단계가 넘기는 것은 "인수인계 사항"의 8단계 항목과 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 10절에 있다.
-- 사용자 확인이 남은 것 : DML 행 단위 접근 여부(미결 사항). 8단계는 이것과 무관하여 먼저 진행했다. 큰 테이블 성능이 문제가 되는 시점(늦어도 11단계 전)에 정하면 된다.
+- 다음 작업 : **DML 행 단위 접근**(사용자 결정 2026-10-16, 아래 7단계 항목과 "결정 사항") → 10단계(데몬 제어와 CLI).
+  10단계의 `hwdb` 는 `client/connection.ts` 를 그대로 쓴다. 인수인계는 "인수인계 사항"의 9단계 항목.
+- 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
 - 6단계 점검 보완(2026-10-10) : 다른 AI 의 구현을 점검하여 찾은 결함 7건을 고쳤다. 내용은 "결정 사항"의 "6단계 점검 보완"과 "작업 이력"에 있다. "인수인계 사항"의 첫 항목(DML 구조와 성능)을 읽는다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 충돌 마커(`<<<<<<<`, `=======`, `>>>>>>>`)가 `session.ts`, `dml.ts` 에 커밋되어 빌드가 깨져 있었다. 7단계 쪽 구현을 기준으로 정리했다. 병합 중 빠졌던 6단계 점검 보완의 기록(결정 사항, 인수인계, 작업 이력)을 이 문서에 다시 넣었다. 6단계 스텁의 동작을 고정하던 테스트 두 개는 7단계 동작으로 바꾸었다.
-- 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 383개 통과(8단계 신규 51개 포함). 빌드에 오류와 경고가 없다.
-  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 382개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다. 새 테스트(`test/auth`, 데몬 경고)는 bun 에서도 통과했다.
-  권한 검사기를 일부러 무력화한 빌드에서 `test/auth/privileges.test.ts` 24개 중 18개가 실패하는 것을 확인했다(테스트가 실제로 검사하는지 점검).
+- 검증 : Windows의 Node.js 24.22.0 / TypeScript 6.0.3에서 `npm test` 631개 통과(9단계 신규 248개 포함). 빌드에 오류와 경고가 없다.
+  Bun 1.3.14 에서는 `bun test --timeout 120000 dist/test/` 로 631개 중 630개 통과. 1개(`storage.test.ts` 의 fsync 실패 테스트)는 `node:test` 의 `t.mock` 이 bun 에서 구현되지 않아 실패하며, 제품 동작과는 무관하다.
+  TLS 시험의 일부(서버 쪽 핸드셰이크 실패 이벤트, 클라이언트의 `maxVersion`, 서버 인증서 교체)는 bun 에서 동작이 달라 Node.js 에서만 본다. 제품 동작의 차이는 [docs/protocol.md](docs/protocol.md) 16절.
+  결함을 일부러 주입한 빌드에서 시험이 실패하는지 확인했다(통신 22개 항목 : nonce·채널 바인딩·제어 토큰 비교·접속 수 제한·CONNECT 검사·UDP 주소 고정·재전송·중복 제거·TLS 최소 버전·클라이언트의 서버 서명 검증 등. 모두 잡혔다).
+  권한 검사기를 일부러 무력화한 빌드에서 `test/auth/privileges.test.ts` 24개 중 18개가 실패하는 것도 확인했다(8단계).
+
 
 ### 7단계 남은 마무리 (2026-10-15 완료)
 
@@ -51,20 +54,24 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 ## 디렉토리 구성
 
 파일마다 맨 위 주석에 담당 범위, 관련 사양, 구현 단계를 적어 두었다. 아래는 한 줄 요약이다.
-`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를, 8단계에서 `auth`(계정, 권한, SCRAM 계산, 문장별 권한 검사)와 사용자·권한 문장 실행(`exec/accounts.ts`)을 붙였다. 통신(`net`, `client`)과 `cli` 는 아직 뼈대이다.
+`config`, `common`, `storage`, `types`, `sql`에 구현 코드가 있고, 5단계에서 `catalog`, `session`, `exec/ddl`, 데몬 조립까지, 6단계에서 질의 실행(`exec` 나머지)과 DML을, 7단계에서 `txn` 과 세션 관리를, 8단계에서 `auth`(계정, 권한, SCRAM 계산, 문장별 권한 검사)와 사용자·권한 문장 실행(`exec/accounts.ts`)을, 9단계에서 통신(`net`, `client`)과 데몬의 접속 경로 조립, `cli` 의 문구 카탈로그(`cli/i18n.ts`)를 붙였다. `cli` 의 나머지(`hwdb start`·`stop`·SQL 접속)는 10단계이다.
 
 ```
 rdbms/
   package.json, tsconfig.json
   config.json            설정 파일. 없으면 기본값으로 구동한다 (아직 만들지 않음)
   src/
-    cli/                 hwdb 명령
+    cli/                 hwdb 명령 (화면 문구는 i18n.ts 의 t(키)로 꺼낸다)
       main.ts              진입점. 하위 명령 분기, 옵션 해석
+      i18n.ts              화면 문구의 다국어 처리 기반(카탈로그 등록, 언어 선택, t, checkCatalog)
+      messages/en.ts       영어 카탈로그(키 목록의 기준)
       daemonControl.ts     hwdb start, stop, status
       sqlShell.ts          SQL 접속 (대화형 모드, 스크립트 모드)
       resultPrinter.ts     실행 결과의 화면 출력
     client/
-      connection.ts        클라이언트 쪽 프로토콜. CLI 와 테스트가 쓴다
+      connection.ts        클라이언트 쪽 프로토콜(핸드셰이크, SCRAM, 실행, 커서, 제어 요청). CLI 와 테스트가 쓴다
+      transports.ts        전송 계층 추상화와 로컬 채널·TCP·TLS 연결(인증서 검증과 재시도)
+      udpTransport.ts      UDP 전송(신뢰성 계층 위, 세션 번호, FIN)
     daemon/
       main.ts              데몬 프로세스의 진입점, 신호 처리
       server.ts            구성 요소 조립, 구동과 종료의 순서
@@ -75,6 +82,7 @@ rdbms/
       errors.ts            오류 체계 (SQLSTATE, 내부 오류 번호)
       logger.ts            로그
       instance.ts          인스턴스 식별 규칙(포트 번호 → 로컬 전용 채널 주소), 공용 상수
+      address.ts           루프백 주소 판정, 상대 주소 다듬기
     storage/
       pageFile.ts          페이지 단위 파일 입출력
       bufferCache.ts       버퍼 캐시
@@ -113,10 +121,16 @@ rdbms/
     auth/                scram.ts(SCRAM-SHA-256 계산과 메시지), users.ts(계정 저장소, SYSTEM 계정, 비밀번호 확인),
                          privileges.ts(부여 기록, 권한 판정, 권한 그룹, 이름 해석, 기록 정리),
                          authorizer.ts(문장별 필요한 권한을 정해 실행 전에 확인)
-    net/                 protocol.ts, framing.ts, udpReliability.ts, messageHandler.ts,
-                         tcpServer.ts, udpServer.ts, localChannelServer.ts
+    net/                 protocol.ts(메시지 정의, 요청 검증, 응답 해석, 한도), resultEncoder.ts(값·메타데이터·파라미터 JSON 변환, 행 묶음),
+                         framing.ts(길이 접두 프레임), messageHandler.ts(접속 하나의 상태 기계, 인증, 문장 실행, 제어 요청), cursors.ts, connectionLimits.ts(인증 전 접속 제한),
+                         streamConnection.ts(소켓을 처리기에 잇는 공통 코드), localChannelServer.ts, tcpServer.ts(TLS 포함),
+                         udpReliability.ts(패킷 코덱, ACK·재전송·조각), udpServer.ts(세션 표, 시간 제한)
+
   test/                  테스트. src 와 같은 디렉토리 이름으로 두며 파일 이름은 *.test.ts
     smoke.test.ts          프로젝트 구성 확인용
+    cli/                   i18n(카탈로그와 언어 선택), daemonControl
+    net/                   통신 테스트. protocol(메시지와 값 인코딩), framing, connect(접속 정책), messageHandler(소켓 없는 처리기), localChannel, tcp(TLS, 인증서 검증과 재시도 포함), clientSecurity(서버 서명 확인),
+                           udpReliability(가짜 시계와 시뮬레이터), udp(실제 소켓과 손실 프록시). helpers.ts, udpSim.ts, udpProxy.ts 는 공용 도우미
     catalog/               카탈로그와 DDL 테스트. 내부 세션 API 로 실행하고 재구동 persistence 를 본다
     exec/                  질의 실행 테스트. helpers.ts 는 공용 도우미이며 query(조회)·dml(DML과 제약)·functions(함수와 파라미터)로 나눈다
                            regression.test.ts 는 6단계 점검에서 찾은 결함의 회귀 테스트이다
@@ -124,20 +138,21 @@ rdbms/
                            concurrency(비동기 대기·제한 시간·교착, 10개 세션 동시성). exec/helpers.ts 를 함께 쓴다
     auth/                  계정과 권한 테스트. scram(RFC 7677 시험 벡터), accounts(SYSTEM 계정, 사용자 문장, 인증, CONNECT, 영속성, 가시성),
                            privileges(권한 조합별 허용·거부, 수준별 독립, 소유자, OFFICER·DBA, 뷰 규칙, 딕셔너리 가시성, 기록 정리). helpers.ts 는 공용 도우미
-    daemon/                server.test.ts 에 정상 종료 때의 트랜잭션 롤백과 초기 암호 경고 테스트가 있다
+    daemon/                server.test.ts(정상 종료 때의 트랜잭션 롤백, 초기 암호 경고 등), serverAssembly.test.ts(세 경로, 제어 요청, 종료 순서, 구동 실패 정리, 두 인스턴스)
     storage/               저장 엔진 테스트, runtime-smoke.mjs(Node.js/bun 실행 검증)
     types/                 타입 시스템 테스트. helpers.ts 는 SQL 표기로 타입과 값을 만드는 도우미
                            codecStorage.test.ts 는 코덱과 저장 엔진을 함께 쓰는 테스트
     sql/                   어휘 분석, 구문 분석 테스트. helpers.ts 는 구문 트리를 한 줄 표기로 바꾸는 도우미
                            parserRobustness.test.ts 는 망가뜨린 입력으로 파서의 견고성을 본다
-    fixtures/              storage-v1.hwdb, 해시/내용 설명, 최초 생성 스크립트
+    fixtures/              storage-v1.hwdb, 해시/내용 설명, 최초 생성 스크립트. tls/ 는 시험용 자체 서명 인증서(README 에 만드는 명령)
   docs/
     data-types.md          타입 인자와 기본값, 값 표현, 비교, 형변환, 연산 결과 타입, 타입 오류 번호
     sql-syntax.md          어휘 규칙, 예약어, 사양에 더해 받는 문법, 지원하지 않는 문법, 한도, 구문 트리의 원칙
     storage-v1.md          저장 포맷, 행과 인덱스 키의 값 인코딩, API 사용 원칙과 트랜잭션 설계 원안. 프로토콜 명세는 9단계
     transactions.md        오버레이, 잠금 키, 기다림과 교착, 커밋 순서, DDL 과 자동 커밋, 트랜잭션 문장 규칙, 한계
     accounts-and-privileges.md  계정 저장, SCRAM, 권한 수준과 판정, 뷰 규칙, 권한 그룹, 문장별 필요 권한, 딕셔너리 가시성, 오류 번호
-    communication-design.md     9단계 설계(초안). 구현 첫 작업에서 메시지 규약과 UDP 패킷 부분을 protocol.md 로 확정한다
+    communication-design.md     9단계 설계와 구현하며 달라진 점(20절)
+    protocol.md            프로토콜 명세(버전 1). 전송 계층(프레임, TLS, 로컬 채널, UDP 패킷), 메시지, SCRAM, 값 표현, 커서, 오류, 한도, 클라이언트 체크리스트, 런타임 차이. 드라이버가 기준으로 삼는다
   dist/                  빌드 결과물. git 에 넣지 않는다
 ```
 
@@ -165,6 +180,7 @@ rdbms/
 | `bun test/storage/runtime-smoke.mjs` | 같은 주요 경로를 bun에서 검증 |
 | `bun test dist/test/types/ dist/test/sql/` | 빌드한 타입 시스템, SQL 파서 테스트를 bun에서 실행 |
 | `bun test dist/test/exec/ dist/test/catalog/` | 빌드한 카탈로그, 질의 실행 테스트를 bun에서 실행 |
+| `bun test --timeout 120000 dist/test/` | 전체를 bun에서 실행. 631개 중 `t.mock` 을 쓰는 1개만 실패한다 |
 | `npm run hwdb -- <인자>` | 빌드된 `hwdb` 명령 실행. 예 : `npm run hwdb -- --help` |
 
 ## 세부 계획
@@ -263,7 +279,7 @@ rdbms/
 - [x] 10개 세션 동시성 테스트 (상세 9)
 - [x] 세션 목록, 유휴 세션 종료(`session.idleTimeoutMs`), 세션을 닫을 때의 롤백, 데몬 정상 종료 때의 롤백
 - [x] 6단계 점검 보완에서 `0A000` 으로 막아 둔 문장을 풀었다 : `BEGIN`, `START TRANSACTION`, `ROLLBACK`, `SAVEPOINT`, `ROLLBACK TO`, `RELEASE SAVEPOINT`, `SET AUTOCOMMIT OFF`. `regression.test.ts` 와 `catalog.test.ts` 의 단언을 7단계 동작으로 바꾸었다
-- [ ] DML 행 단위 접근 (7단계 계획의 "DML 구조 재설계") : 하지 않았다. 메모리 이미지 방식이 남아 있다. 사용자 확인 필요 (미결 사항, 인수인계 사항 참고)
+- [ ] DML 행 단위 접근 (7단계 계획의 "DML 구조 재설계") : **하기로 정했다**(사용자 결정 2026-10-16. 보편적인 RDBMS 처럼 대상 행 단위로 접근하고 테이블 전체를 메모리 이미지로 올리지 않는다). 9단계 다음, 10단계 전에 한다. 아직 하지 않았다. "인수인계 사항"의 "DML 구조와 성능" 참고
 - [x] 남은 마무리 : `SYS_SESSIONS` 연결과 문서를 8단계 착수 전에 끝냈다 (현재 상태 절의 "7단계 남은 마무리")
 - 완료 기준 : 상세 9 의 10개 세션 동시성 테스트 통과. (충족)
   (`test/txn` 48개 + 데몬 1개. 잠금 관리자 단위 11개, 트랜잭션 시나리오 24개, 비동기 대기·제한 시간·교착·세션 종료 중 대기 12개, 10개 세션 동시성 1개.
@@ -287,27 +303,25 @@ rdbms/
   (`test/auth` 50개(scram 10, accounts 16, privileges 24)와 데몬 초기 암호 경고 테스트 1개. 권한 조합별 허용·거부, 수준별 독립, 소유자, OFFICER·DBA, CONNECT·로컬 접속, 개요 5 의 `VIEW_SAMPLE1` UPDATE 예시, 딕셔너리 가시성, 영속성, 기록 정리를 확인했다.
   권한 검사기를 무력화한 빌드에서 테스트가 실패하는 것도 확인했다.)
 
-### 9단계. 통신
+### 9단계. 통신 (2026-10-16 완료)
 
-설계는 [docs/communication-design.md](docs/communication-design.md)에 있다. 아래 체크리스트는 사양의 항목이고, 구현 순서와 작업 단위(9-1 ~ 9-10)는 그 문서 15절을 따른다.
+설계는 [docs/communication-design.md](docs/communication-design.md), 확정한 프로토콜은 [docs/protocol.md](docs/protocol.md)에 있다. 작업 단위 9-1 ~ 9-10 은 설계 문서 15절의 번호이다.
 
-- [x] 설계 문서 작성 (2026-10-15) : 구조와 모듈 책임, 접속 상태 기계, 메시지 규약 초안, 결과 전달(커서), 인증 순서, 접속 정책(`Database.connect`), 프레임·TCP·TLS·로컬 채널·UDP 신뢰성 계층, 서버 조립과 종료 순서, 제어 요청, 오류 번호(8000번대 안), 클라이언트 구조, 테스트 계획, 작업 분해
-- [ ] 프로토콜 명세를 `docs` 에 문서로 쓴다 : 메시지 필드, TCP 프레임, UDP 패킷 레이아웃, 값 표현, 오류 코드 목록. 드라이버 프로젝트들이 이 문서를 기준으로 삼는다
-- [ ] 접속 경로와 분리된 메시지 처리기 (세 경로가 같은 처리기를 쓴다)
-- [ ] 핸드셰이크, SCRAM-SHA-256 인증, 인증 전 메시지 제한 (상세 8)
-- [ ] TCP 와 UDP 를 config.json 의 `port` 하나로 연다 (상세 15)
-- [ ] 클라이언트의 TLS 서버 인증서 검증과 재시도 : 기본 검증, 인증서 오류 때 접속을 끊고 100 ms 뒤 최대 2회 재시도, `08001`(8007) (설계 문서 12-1절. `client/connection.ts`)
-- [ ] config 검증 보강 : `udp.maxPacketSize` 64 ~ 65,507, `udp.sessionTimeoutMs = 0` 이면 구동 경고
-- [ ] `SYS_SESSIONS` 에 `CHANNEL`, `CLIENT_ADDRESS` 열 추가, `Database.connect` (설계 문서 7-3절)
-- [ ] TCP : 길이를 앞에 붙인 프레임, 메시지 크기 제한
-- [ ] SSL : 인증서가 설정되면 TLS 전용으로 운영, `tcp.ssl.minVersion` 적용
-- [ ] UDP 신뢰성 계층 : 수신 확인, 재전송, 중복 제거, 순서 보장, 분할과 재조립, 세션 시간 초과
-- [ ] 로컬 전용 채널 : Windows 네임드 파이프, 그 외 유닉스 도메인 소켓. 주소는 포트 번호로 정한다 (상세 15)
-- [ ] 데몬 제어 요청 처리 : 상태 조회, 종료. 로컬 전용 채널에서만 받고 제어 토큰을 확인한다 (상세 14-1)
-- [ ] 로컬 접속 판정, CONNECT 검사, `maxConnections` (상세 6, 9)
-- [ ] 큰 결과를 fetch 단위로 나누어 보내기, 커서 닫기
-- [ ] 유휴 세션 종료, 연결이 끊긴 세션의 롤백
-- 완료 기준 : 테스트용 클라이언트로 세 접속 경로 모두에서 로그인, 질의, 대량 결과 수신, 트랜잭션이 동작한다. UDP 는 패킷 유실과 중복을 일부러 일으킨 조건에서도 통과해야 한다.
+- [x] 9-1 프로토콜 명세 확정 : [docs/protocol.md](docs/protocol.md), `net/protocol.ts`(메시지 정의, 요청 검증, 응답 해석), `net/resultEncoder.ts`(값·메타데이터·파라미터 변환), 오류 번호 8000 ~ 8007
+- [x] 9-2 프레임 : `net/framing.ts`. 본문을 모으기 전에 길이를 검사한다(인증 전 64 KiB, 후 16 MiB)
+- [x] 9-3 접속 정책 : `Database.connect`(로컬 판정, CONNECT 검사, `maxConnections`), `DatabaseOptions.maxConnections`, 세션의 접속 경로와 상대 주소, `SYS_SESSIONS` 의 `CHANNEL`·`CLIENT_ADDRESS`, `common/address.ts`(루프백 판정)
+- [x] 9-4 메시지 처리기 : `net/messageHandler.ts`(상태 기계, SCRAM 인증, 문장 실행, 커서, 제어 요청, 대기열), `net/cursors.ts`, `net/connectionLimits.ts`
+- [x] 9-5 로컬 전용 채널 + 클라이언트 : `net/localChannelServer.ts`, `net/streamConnection.ts`, `client/connection.ts`, `client/transports.ts`
+- [x] 9-6 TCP + TLS : `net/tcpServer.ts`, 시험용 인증서(`test/fixtures/tls`), 클라이언트의 서버 인증서 검증과 재시도(100 ms 뒤 최대 2회, `08001`(8007))
+- [x] 9-7 UDP 신뢰성 계층 : `net/udpReliability.ts`(패킷 코덱, 송신자·수신자, RFC 6298 RTO, 주입 가능한 시계와 통로), 시뮬레이터 `test/net/udpSim.ts`
+- [x] 9-8 UDP 서버 + 클라이언트 UDP 전송 : `net/udpServer.ts`, `client/udpTransport.ts`, 손실 프록시 `test/net/udpProxy.ts`
+- [x] 9-9 서버 조립과 제어 : `daemon/server.ts`(세 경로 열기와 닫기, 정상 종료 순서, `ControlPort`, `stopRequested`), `daemon/main.ts`
+- [x] 9-10 마무리 점검 : config 검증 보강(`udp.maxPacketSize` 64 ~ 65,507, `udp.sessionTimeoutMs = 0` 구동 경고), bun 확인, 결함 주입 점검, 문서 갱신
+- [x] 사용자 결정(2026-10-16) : `hwdb` 화면 문구는 영어만 쓰되 다국어를 붙일 수 있게 메시지 카탈로그로 분리했다(`cli/i18n.ts`, `cli/messages/en.ts`, 시험 `test/cli/i18n.test.ts`)
+- 완료 기준 : 테스트용 클라이언트로 세 접속 경로 모두에서 로그인, 질의, 대량 결과 수신, 트랜잭션이 동작한다. UDP 는 패킷 유실과 중복을 일부러 일으킨 조건에서도 통과해야 한다. (충족)
+  (`test/net` 10개 파일과 `test/daemon/serverAssembly.test.ts` : 로컬 전용 채널 19개, TCP·TLS 28개, UDP 서버 26개, UDP 신뢰성 계층 30개(시드 120개의 유실·중복·지연·순서 시험, 16 MiB 메시지 포함), 처리기 58개, 프로토콜 23개, 프레임 12개, 접속 정책 10개, 클라이언트 서버 확인 6개, 서버 조립 20개, 의존 범위(클라이언트와 공유 모듈이 서버 모듈을 import 하지 않음) 4개, `hwdb start --foreground` 실제 프로세스 1개.
+  UDP 는 프록시로 유실 15 ~ 25%, 중복 10 ~ 100% 에서 로그인, 질의, 3,000행 결과, 트랜잭션, 10개 접속 동시 쓰기가 통과한다. Node.js 와 bun 모두 확인했다. 리눅스·macOS 의 유닉스 소켓은 Windows 개발 환경에서 실행해 보지 못했다.)
+
 
 ### 10단계. 데몬 제어와 CLI
 
@@ -348,21 +362,17 @@ SQL 접속 (상세 14-2)
 
 해당 단계에서 정하고 "결정 사항" 으로 옮긴다.
 
-- Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.21.0, bun 1.3.14이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다.
-- `hwdb` 가 화면에 내는 문구의 언어 (10단계, 사용자 확인 필요). DB 오류 메시지는 영문으로 정해져 있다 (상세 0). 사용법과 안내 문구는 지금 영문으로 적어 두었다.
-- 유닉스 도메인 소켓 파일의 접근 권한, 비정상 종료 뒤 남은 소켓 파일의 정리 (9단계)
-- bun 에서 네임드 파이프와 TLS 최소 버전 설정이 Node.js 와 똑같이 동작하는지 (9단계에서 실제로 확인)
+- Node.js 22.x 장비에서의 전역 실행 확인. 이번 검증 장비는 Node.js 24.22.0, bun 1.3.14이다. 현재 설치된 버전으로 검증하고 22.x PC에서 확인한다는 AGENTS.md 지켜야 할 사항 5를 따른다. 9단계의 `net`, `tls`, `dgram` 사용은 22.x 에서 달라질 것으로 보지 않는다.
+- **리눅스, macOS 에서의 유닉스 소켓 확인**. 소켓 파일 권한 0600(umask 0177), 남은 소켓 파일 정리(연결을 시도해 죽은 소켓이면 지움), 클라이언트의 소켓 파일 소유자 확인은 구현했으나 Windows 개발 환경에서는 실행해 보지 못했다. 비윈도우 장비에서 `test/net/localChannel.test.ts` 를 돌려 확인하고, 소켓 파일 정리와 권한을 직접 보는 시험을 더한다.
 - bun 에서 프로세스를 분리해 띄우는 동작이 Node.js 와 같은지 (10단계에서 실제로 확인)
-- 잠금 파일에 적힌 PID 를 운영체제가 다른 프로세스에 다시 쓴 경우의 처리 (10단계). PID 만 보면 구동 중으로 잘못 판단하므로 로컬 전용 채널 응답도 함께 확인해야 한다.
-- 구버전 TLS 허용 (9단계). 최신 Node.js 의 OpenSSL 은 TLS 1.0 을 쓰려면 최소 버전 외에 보안 수준 설정도 낮춰야 할 수 있다. 설계는 `minVersion` 이 `TLSv1.2` 보다 낮을 때만 `ciphers` 에 `@SECLEVEL=0` 을 붙이는 것이다(설계 문서 8-2절). 환경별 동작은 9-6 에서 확인한다. 실제 자바 5, 6 클라이언트 접속 확인은 `jdbc5` 단계에서 한다.
-- `hwdb --ssl` 에서 신뢰할 CA 를 지정하거나 인증서 검증을 끄는 CLI 옵션의 이름 (10단계). 사양 14-2 의 옵션 표에 없으므로 정할 때 AGENTS.md 의 표를 먼저 고친다.
-- 동시 접속 부하에서의 교착 감지 확인 (11단계). 7단계 동시성 테스트는 한 프로세스 안의 비동기 세션이며, 같은 테이블의 두 계좌를 반대 방향으로 갱신하는 교착 시나리오는 별도 테스트와 임시 점검(150건 중 교착 5건, 합계 유지)으로만 보았다. 10개 세션 테스트가 교착을 매번 만들어 내지는 않는다.
-- 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 8단계 이후에 정한다.
+- 잠금 파일에 적힌 PID 를 운영체제가 다른 프로세스에 다시 쓴 경우의 처리 (10단계). PID 만 보면 구동 중으로 잘못 판단하므로 로컬 전용 채널 응답도 함께 확인해야 한다. (9단계로 로컬 전용 채널의 `status` 요청이 생겼으므로 그것으로 확인할 수 있다)
+- 실제 자바 5, 6 클라이언트로 TLS 1.0 접속 확인은 `jdbc5` 단계에서 한다. Node.js 에서는 `tcp.ssl.minVersion = TLSv1` 로 TLS 1.0 이 협상되는 것을 시험으로 확인했다. bun 은 구버전 TLS 를 켤 수 없다(protocol.md 16절).
+- `hwdb --ssl` 에서 신뢰할 CA 를 지정하거나 인증서 검증을 끄는 CLI 옵션의 이름 (10단계). 사양 14-2 의 옵션 표에 없으므로 정할 때 AGENTS.md 의 표를 먼저 고친다. 클라이언트 라이브러리는 `SslOptions.ca`, `rejectUnauthorized` 를 이미 제공한다.
+- 동시 접속 부하에서의 교착 감지 확인 (11단계). 7단계 동시성 테스트는 한 프로세스 안의 비동기 세션이며, 9단계에서 네트워크를 거친 10개 접속 시험(로컬 채널, UDP)을 더했으나 교착을 매번 만들어 내는 시나리오는 아니다. 11단계에서 네트워크를 거친 교착 시나리오를 본다.
+- 삭제 중인 PK 의 재삽입 대기, `ROLLBACK TO` 뒤의 잠금 해제, FK 부모 읽기 잠금 여부는 "7단계 알려진 한계" 에 있다. 사용자가 불편을 느끼면 정한다.
 - 잠금 생성 가드(`helloworlddb.lock.acquire`) 안에서 강제 종료되어 가드가 남는 경우의 정리(10단계). 현재는 동시 점유 방지를 위해 구동에 실패시킨다. 관리자가 관련 데몬이 없는지 확인한 뒤 빈 가드 디렉토리를 제거해야 한다. 일반 구동 후 남은 잠금 파일은 죽은 PID를 확인해 재사용한다.
+- 결과 전체가 서버 메모리에 한 번 올라온다(통신 설계 5절의 한계). DML 행 단위 접근을 구현할 때 조회의 스트리밍 실행도 함께 검토한다.
 
-- DML 행 단위 접근 여부 (사용자 확인 필요). 7단계 계획에는 "DML 구조 재설계"가 있었으나 구현하지 않았다. 8단계는 이 구조와 무관하여 메모리 이미지 방식을 남긴 채 먼저 진행했다(권한 검사는 문장을 실행하기 전의 구문 트리 검사라 DML 구조를 건드리지 않는다).
-  행 단위로 바꿀지는 큰 테이블 성능이 문제가 되는 시점(늦어도 11단계 전)에 정한다. 인수인계 사항의 "DML 구조와 성능" 참고.
-- 사용자·권한 문장에 대해 사양이 정하지 않아 정한 규칙(대상 컬럼을 읽는 UPDATE·DELETE 는 SELECT 불필요, FOR UPDATE 는 UPDATE 요구, CASCADE 삭제는 별도 권한 없음 등)이 사용자의 의도와 다른지 확인이 필요하다. 목록은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 8절. 기본 동작이 문제없으면 그대로 둔다.
 
 ## 결정 사항
 
@@ -494,6 +504,29 @@ SQL 접속 (상세 14-2)
     (2) `SYS_SESSIONS` 끝에 `CHANNEL`, `CLIENT_ADDRESS` 열을 더한다. (3) `udp.sessionTimeoutMs = 0` 은 시간 제한 없음이고 구동 로그에 경고한다. (4) `udp.maxPacketSize` 는 64 이상 65,507 이하로 검증한다. (3), (4) 는 AGENTS.md 상세 7 에 반영했다.
   - 권장안을 그대로 쓰는 것 : (5) 인증 실패 시 접속을 끊고 응답 전에 200 ms 지연.
   - 설계가 정한 것(사양에 없던 것) : 메시지 봉투와 이름, 버전 협상, 인증 전 제한(10초, 64 KiB, `max(16, 2 × maxConnections)`), 커서 모델(홀더블, 16개), fetch 500행·1 MiB, UDP 패킷의 `ackSeq`·조각 창 32·메시지 단위 stop-and-wait, `Database.connect` 로 접속 정책 모으기, 오류 번호 8000 ~ 8007 안. 목록은 설계 문서 18절.
+- **사용자 결정(2026-10-16)** 3건이다.
+  - 화면 문구의 언어 : `hwdb` 의 사용법, 안내, 표 머리글, 경고, 명령행 오류 같은 화면 문구는 **지금 영어만** 낸다. 다만 언제든 다국어를 붙일 수 있게 문구를 코드에 박지 않고 메시지 카탈로그에서 키로 꺼낸다.
+    구조 : `cli/messages/en.ts`(영어 카탈로그. 키가 전체 키 목록이다), `cli/i18n.ts`(`t(키, { 이름: 값 })`, 언어 이름 해석 `ko_KR.UTF-8` → `ko-kr` → `ko` → 영어, `registerCatalog`, `checkCatalog`).
+    언어 선택은 환경 변수 `HWDB_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` 순서이며 등록된 카탈로그가 없으면 영어이다. 카탈로그에 빠진 키는 영어로 채워진다.
+    **새 언어를 더하는 방법** : (1) `cli/messages/<언어>.ts` 에 같은 키로 문구를 적는다(일부만 있어도 된다) (2) `cli/i18n.ts` 의 `registerBuiltinCatalogs` 에 `registerCatalog("<언어>", ...)` 를 한 줄 더한다 (3) `checkCatalog` 로 키와 `{이름}` 이 영어와 맞는지 시험한다. 호출하는 코드와 선택 규칙은 고치지 않는다.
+    **새 화면 문구를 추가할 때** 는 영어 카탈로그에 키를 더하고 `t` 로 꺼낸다(10단계의 `hwdb` 가 이것을 따른다). DB 오류 메시지(AGENTS.md 상세 0 에 따라 영문 고정)와 서버 로그는 카탈로그를 쓰지 않는다. SQLSTATE 와 내부 오류 번호가 번역의 열쇠이다.
+    지금 있는 `hwdb` 문구(사용법, 명령행 오류, `status` 출력, 구동 안내)를 모두 카탈로그로 옮겼고 영어 문구는 그대로이다. 초기 암호 경고는 서버 로그의 `INITIAL_PASSWORD_WARNING` 과 같은 영어 문구를 카탈로그에도 두었고, 같은 문구인지 시험한다.
+  - DML 의 행 단위 접근 : 보편적인 RDBMS 처럼 **대상 행 단위로 접근**한다. INSERT·UPDATE·DELETE 가 테이블 전체(와 FK 로 얽힌 테이블)를 메모리 이미지로 올려 제약을 검사하고 되쓰는 지금의 방식(6단계)은 버린다.
+    할 일 : 인덱스나 힙에서 대상 행만 읽기, 제약 검사(PK 유일성은 인덱스, FK 는 부모·자식의 인덱스나 부분 스캔), 트랜잭션 오버레이의 행 단위 합쳐 읽기와 잠금 키는 7단계 구조를 유지. 시기는 9단계 다음, 10단계 전이다. 이 작업이 끝나면 위 "알려진 한계"의 메모리 이미지 항목이 사라진다.
+  - 사양이 정하지 않은 사용자·권한 규칙 : 보편적인 RDBMS 의 동작을 따른다. [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md) 8절의 규칙(대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 불필요, `SELECT ... FOR UPDATE` 는 UPDATE 요구, CASCADE 삭제는 별도 권한 없음,
+    권한 없음과 객체 없음을 오류 번호로 구별 등)을 점검한 결과 PostgreSQL, Oracle 의 공통 동작이거나 AGENTS.md 개요 5 의 명시 문구를 따른 것이라 그대로 두었다. (대상 컬럼을 읽는 UPDATE·DELETE 에 SELECT 를 요구하지 않는 것은 Oracle 의 기본 동작이며, 개요 5 의 "뷰에 UPDATE 권한이 있으면 UPDATE 가 가능해야 한다" 를 조건 없이 지키기 위한 것이다.)
+- 9단계에서 정한 사항이다. 프로토콜의 규칙은 [docs/protocol.md](docs/protocol.md), 구조는 [docs/communication-design.md](docs/communication-design.md)(구현하며 달라진 점은 20절)가 기준이다.
+  - 세션은 `Database.connect` 한 곳에서 만든다(로컬 판정, CONNECT 검사, `maxConnections`). 로컬 전용 채널은 세지도 막지도 않고, 루프백 주소의 TCP·UDP 는 로컬이지만 `maxConnections` 에는 센다.
+  - 메시지 처리기는 접속마다 하나이고 소켓을 모른다(`ConnectionEndpoint`). 한 접속의 요청은 도착 순서대로 하나씩 처리하며(대기열 64개) `close` 만 건너뛴다. 보내기가 밀리면(`drained`) 다음 요청을 처리하지 않는다.
+  - 사용자 이름은 정확히 같은 이름을 먼저, 없으면 대문자로 바꾼 이름을 찾는다. 인증 실패는 사용자 없음·비밀번호 틀림·nonce 불일치가 모두 같은 응답이고, 없는 사용자에게도 가짜 검증 정보로 끝까지 진행하며 실패하면 200 ms 늦춘 뒤 접속을 끊는다.
+  - 클라이언트는 서버 nonce 가 자기 nonce 로 시작하는지, 반복 횟수가 범위 안인지, 서버 서명이 맞는지 검증하고 어긋나면 접속을 끊는다.
+  - 종료 요청(`control stop`)은 `stopping` 을 보낸 뒤 `Server.stopRequested` 를 풀 뿐이고, 종료 절차는 `runForeground` 가 시작한다. `Server.stop()` 은 한 번만 실행한다. 정상 종료 순서 : 새 접속 받기 멈춤 → `Database.close()`(롤백, 정상 종료 표시) → 소켓 닫기 → 잠금 파일 제거.
+  - `net.Server.close()` 의 콜백은 모든 접속이 끝나야 불리므로 `stopAccepting` 은 콜백을 기다리지 않는다. Windows 네임드 파이프는 듣기를 멈춘 뒤에도 기존 접속이 남아 있으면 새 연결이 대기하다가 연결 제한 시간에 실패한다.
+  - UDP : 서버가 처음 보내는 응답이 확인되기 전의 재전송 한도는 4번(증폭 억제), 문장을 실행 중인 세션은 세션 시간 제한에서 제외, 인증을 마친 세션이 있는 주소에서 새 `SYN` 이 오면 옛 세션을 닫는다. 클라이언트의 ping 은 `Connection` 이 보낸다.
+  - TLS : 서버는 `cert`, `key`, `minVersion`(와 구버전 허용 때 `ciphers`)을 Node.js 의 `tls.createServer` 에 직접 준다. 호스트 이름 불일치는 서버가 인증서를 실제로 보냈을 때만 인증서 오류(재시도 대상)로 본다.
+  - bun : 네임드 파이프, TCP, UDP, SCRAM, 프레임, 커서는 Node.js 와 같게 동작한다. TLS 서버는 `minVersion` 을 적용하지 못한다(`TLSv1.2` 만 설정대로 지켜지고 `TLSv1.3`·구버전 허용은 구동 로그에 경고). 서버 구동 로그에 경고하는 것으로 정했고 구동 실패로 막지는 않았다.
+  - 시험 : 데몬을 구동하는 시험은 기본 포트(7410)를 쓰지 않고 `writeFreePortConfig` 로 포트를 나눈다(시험 파일이 병렬로 돌고 인스턴스는 포트로 구분되므로). Windows 의 TCP 와 UDP 제외 포트 범위 때문에 `freePort()` 는 두 프로토콜과 두 바인드 주소를 모두 확인한다.
+  - 오류 번호 8000 ~ 8007 을 배정했다. 8000 `08P01` 위반, 8001 `53300` 접속 수 초과, 8002 `57P05` 유휴 시간 초과, 8003 `54000` 처리 한도 초과, 8004 `34000` 커서 없음, 8005 `53400` 구성 한도 초과, 8006 `08006` 연결 실패(클라이언트), 8007 `08001` 인증서 검증 실패(클라이언트).
 - 2단계에서 정한 사항이다.
   - [docs/storage-v1.md](docs/storage-v1.md)의 레이아웃을 사용한다. 리틀 엔디언, 8KB 페이지, CRC-32/ISO-HDLC, 고정 매직/버전 위치이다.
   - 공개 저장 API는 `storage/format/format.ts`에 있다. 힙/인덱스는 바이트열을 받고 SQL 타입은 해석하지 않는다. 타입별 복합 키와 ASC/DESC/NULL 인코딩은 3단계에서 구현한다.
@@ -506,7 +539,21 @@ SQL 접속 (상세 14-2)
 
 ## 인수인계 사항
 
-- 8단계까지 마쳤다. 9단계(통신)가 이어받을 때 알아 둘 점이다. 자세한 것은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 10절.
+- 9단계까지 마쳤다. 10단계(`hwdb`)와 12단계(Node.js 드라이버)가 이어받을 때 알아 둘 점이다.
+  - **클라이언트는 이미 있다.** `client/connection.ts`(`Connection.open(target)` → `login` → `execute`/`fetch`/`fetchAll`/`closeCursor`/`ping`/`close`/`control`)와 `client/transports.ts`, `client/udpTransport.ts` 이다.
+    `Target` 은 `{ kind: "local", port }`, `{ kind: "tcp", host, port, ssl? }`, `{ kind: "udp", host, port }` 이다. `hwdb` 는 이것을 그대로 쓰고, `nodejsDriver` 는 이것을 출발점으로 삼아 타입 변환(`bigint`, 날짜 등)과 커넥션 풀을 얹는다. 결과의 값은 JSON 값 그대로이다.
+  - `hwdb status` / `hwdb stop` 은 `Connection.open({ kind: "local", port })` 로 `hello` 까지만 한 뒤 `control("status" | "stop", token)` 을 보낸다. 토큰은 데이터 디렉토리의 잠금 파일(`readLockFile(dataDir).controlToken`)에 있다. 연결이 거부되면 `isConnectionRefused(error)` 가 참이고, 이때 "`hwdb start` 로 구동하라" 고 안내한다.
+    `stop` 은 응답(`stopping`) 뒤 서버가 접속을 닫고 종료 절차를 시작한다. 프로세스가 사라지는 것은 잠금 파일의 PID(`isProcessAlive`)로 확인한다. Windows 에서는 다른 프로세스가 보낸 SIGTERM 을 받을 수 없으므로 이 요청이 종료의 기본 경로이다.
+  - SQL 접속(`hwdb`)의 `-t` 는 `login({ tablespace })`, 타임존은 `login({ timeZone })` 이다. 로그인 결과(`SessionInfo.tablespace`)가 `null` 이면 현재 테이블스페이스가 없는 것이므로 프롬프트와 안내에서 "없음" 으로 보여야 한다. SYSTEM 이 초기 암호이면(`HelloWorldDB`) 변경 안내를 보인다.
+  - TLS 접속(`--ssl`)은 `ssl: { ca?, rejectUnauthorized?, onCertRetry? }` 를 준다. `onCertRetry` 로 재시도를 표준 오류에 한 줄씩 알리고(예: `certificate error (DEPTH_ZERO_SELF_SIGNED_CERT); retrying 1/2 ...`), 최종 실패(`08001`, 코드 8007)에서는 원인과 해결 방법(신뢰할 CA 지정, 검증 끄기)을 안내한다.
+  - **화면 문구는 `cli/i18n.ts` 의 `t(키)` 로 꺼낸다**(사용자 결정 2026-10-16). 새 문구는 `cli/messages/en.ts` 에 키를 더한다. 언어 추가 방법은 "결정 사항"의 사용자 결정 첫 항목.
+  - 데몬은 `runForeground`(`daemon/main.ts`)가 `Server` 를 구동하고, 종료 신호나 `Server.stopRequested` 로 종료한다. 분리된 프로세스로 띄우는 `hwdb start`(10단계)도 같은 `runForeground` 를 쓰면 된다. 구동 실패(포트 사용 중, 로컬 채널 중복, TLS 인증서 오류 등)는 `StartupError` 로 나오고 `Server.start` 가 열었던 것을 모두 정리한다.
+  - 구동 로그(`Listening: ...`)에 열린 경로, 포트, TLS 사용 여부가 한 줄로 남는다. `hwdb start` 가 "접속을 받을 수 있게 되었음" 을 알리는 시점은 `Server.start()` 가 끝난 때이다(`runForeground` 의 `ready` 콜백).
+  - 테스트 도우미 : `test/net/helpers.ts`(`FakeEndpoint`, `Driver`(소켓 없는 프로토콜 구동기), `makeEnvironment`, `freePort`, `writeFreePortConfig`, `waitFor`, `isBun`), `test/net/udpSim.ts`(가짜 시계와 유실·중복·지연 링크), `test/net/udpProxy.ts`(실제 소켓용 손실 프록시). 데몬을 구동하는 시험은 `writeFreePortConfig` 로 포트를 나눈다.
+  - bun 에서 `bun test dist/test/` 로 전체를 한 번에 돌릴 수 있다(631개 중 630개 통과, 1개는 `t.mock`). 시험이 실패하면 bun 이 "test() inside another test()" 로 연쇄 오류를 내므로 첫 실패부터 본다.
+  - 통신 계층에서 하지 않은 것 : 문장 취소, 서버가 먼저 보내는 알림(유휴·종료 통지 제외), 압축, UDP 구간 암호화, 클라이언트 인증서 인증, 조회의 스트리밍 실행(결과를 메모리에 모아 나누어 보낸다).
+
+- 8단계까지 마쳤다. 9단계(통신)가 이어받을 때 알아 둘 점이다. 자세한 것은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md)의 10절. **(9단계에서 모두 반영했다. `Database.connect` 가 `createSession`, `assertMayConnect`, `maxConnections`, 로컬 판정을 한곳에서 한다. 아래는 당시의 기록이다)**
   - 접속마다 SCRAM 교환을 한다. 서버는 `database.users.verifierOf(이름)` 의 검증 정보로 `parseClientFirst` → `serverFirstMessage` → `parseClientFinal` → `verifyClientProof` → `computeServerSignature` 순으로 처리한다(`auth/scram.ts`, RFC 7677 시험 벡터로 검증됨).
     없는 사용자에게는 `decoyVerifier(이름, 구동 때 정한 비밀값)` 를 쓰고, 마지막 실패 응답은 두 경우가 같아야 한다. `client/connection.ts` 는 `clientFirstMessage`, `computeClientProof`, `verifyServerSignature` 를 쓰면 된다.
   - 인증이 끝나면 `database.createSession({ user, tablespace })` 로 세션을 만든다. 원격 접속(루프백이 아닌 주소의 TCP·UDP)이면 그 앞에 `database.assertMayConnect(사용자, false)` 로 CONNECT 를 확인한다(`28000`, 7006). 로컬 전용 채널과 루프백은 `true` 로 부른다.
@@ -593,3 +640,11 @@ SQL 접속 (상세 14-2)
   서버 조립과 종료 순서, 제어 요청, 오류 번호 8000번대 안, 클라이언트 구조, 테스트 계획, 작업 분해(9-1 ~ 9-10), 위험, 사용자 확인이 필요한 결정 5건을 담았다.
 - 2026-10-15 : 9단계 설계 결정 반영. 사용자가 설계의 5건을 정했다 : 클라이언트 TLS 서버 인증서 검증 기본 켬 + 인증서 오류 때 100 ms 뒤 최대 2회 재시도(설계 문서 12-1절 신설, 오류 번호 8007 `08001`, 시험 항목과 작업 9-6 에 반영), `SYS_SESSIONS` 열 추가 확정, `udp.sessionTimeoutMs = 0` 은 제한 없음, `udp.maxPacketSize` 64 ~ 65,507, 인증 실패 시 접속 종료는 권장안 유지.
   설계 문서 19절을 "결정 기록" 으로 바꾸고 AGENTS.md 상세 7, 8 에 사양을 보충했다. 코드는 바꾸지 않았다.
+
+- 2026-10-16 : 사용자 결정 3건 반영과 `rdbms` 9단계(통신) 구현 완료.
+  결정 : (1) `hwdb` 화면 문구는 영어만, 다국어를 붙일 수 있게 메시지 카탈로그 분리(`cli/i18n.ts`, `cli/messages/en.ts`, 기존 문구 이전) (2) DML 행 단위 접근은 하기로 함(9단계 다음, 10단계 전) (3) 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식(점검 결과 현행 유지).
+  9단계 : 프로토콜 명세 확정(`docs/protocol.md`), 프레임, 접속 정책(`Database.connect`, `maxConnections`, 루프백 판정, `SYS_SESSIONS` 열 추가), 메시지 처리기(상태 기계, SCRAM, 커서, 제어 요청, 대기열), 로컬 전용 채널, TCP 와 TLS(최소 버전, 구버전 허용 경고),
+  클라이언트(핸드셰이크, SCRAM 과 서버 서명 검증, TLS 인증서 검증과 재시도), UDP 신뢰성 계층(ACK, 재전송, 조각, 중복 제거, RFC 6298 RTO), UDP 서버와 클라이언트 전송, 서버 조립(세 경로, 제어 포트, 종료 순서), config 검증 보강(`udp.maxPacketSize`, `udp.sessionTimeoutMs = 0` 경고).
+  오류 번호 8000 ~ 8007 을 배정했다. 시험 248개를 더해 `npm test` 631개 통과, bun 630개 통과(`t.mock` 1개 제외). 결함을 일부러 주입한 빌드로 시험이 통신 결함 22건을 모두 잡는 것을 확인했다.
+  bun 확인 결과 : TLS 서버의 `minVersion` 을 적용하지 못한다(기본 TLS 1.2 이상, 구버전 허용 불가). 구동 로그에 경고한다. 그 밖의 통신은 Node.js 와 같다. 이 과정에서 UDP 신뢰성 계층의 RTT 표본 누락(마지막 조각의 ACK 가 누적 확인에 먼저 걸려 표본이 되지 않음)을 찾아 고쳤다.
+  통신 시험 중 Windows 의 TCP·UDP 제외 포트 범위와 `net.Server.close` 콜백이 모든 접속 종료를 기다리는 것을 확인하여 시험 도우미와 `stopAccepting` 에 반영했다. 커밋은 하지 않았다.

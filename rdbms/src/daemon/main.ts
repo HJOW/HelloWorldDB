@@ -5,7 +5,7 @@
  *  - `hwdb start` 가 분리된 프로세스로 띄우는 시작점이다.
  *    `--foreground` 일 때는 CLI 프로세스 안에서 같은 절차를 그대로 실행한다.
  *  - 설정 읽기(config/config.ts) → 데몬 본체 구동(server.ts) → 구동 완료를 `hwdb start` 에 알림
- *  - SIGINT, SIGTERM 을 받으면 정상 종료 절차를 시작한다.
+ *  - SIGINT, SIGTERM 을 받거나 로컬 전용 채널로 종료 요청(`hwdb stop`)이 오면 정상 종료 절차를 시작한다.
  *    Windows 에서는 다른 프로세스가 보낸 SIGTERM 을 받을 수 없으므로,
  *    데몬의 정상 종료는 로컬 전용 채널의 종료 요청(`hwdb stop`)이 기본 경로이다.
  *  - 처리되지 않은 오류의 마지막 처리, 로그 기록, 프로세스 종료 코드
@@ -46,7 +46,10 @@ export async function runForeground(installDir: string, options?: ForegroundOpti
     shutdown = waitForShutdownSignal(logger);
     options?.ready?.();
 
-    await shutdown.promise;
+    // 종료 신호(SIGINT, SIGTERM)나 로컬 전용 채널의 종료 요청(`hwdb stop`) 중 먼저 오는 것으로 종료 절차를 시작한다.
+    // Windows 에서는 다른 프로세스가 보낸 SIGTERM 을 받을 수 없으므로 종료 요청이 기본 경로이다.
+    // 둘이 겹쳐도 Server.stop 이 한 번만 실행한다.
+    await Promise.race([shutdown.promise, server.stopRequested]);
   } catch (error) {
     if (logger !== null) {
       try { logger.error(describeStartupFailure(error)); } catch { /* 로그 오류로 최초 실패를 가리지 않는다. */ }

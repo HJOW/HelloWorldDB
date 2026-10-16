@@ -19,29 +19,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCommand, statusCommand, stopCommand } from "./daemonControl.js";
+import { initLocaleFromEnvironment, t } from "./i18n.js";
 
 /** 데몬 제어용 하위 명령. 이 밖의 인자는 모두 SQL 접속으로 본다. */
 const DAEMON_COMMANDS = ["start", "stop", "status"] as const;
 type DaemonCommand = (typeof DAEMON_COMMANDS)[number];
-
-const USAGE = `Usage:
-  hwdb start [--timeout <seconds>] [--foreground]   Start the daemon
-  hwdb stop [--timeout <seconds>]                   Stop the daemon
-  hwdb status                                       Show the daemon status
-  hwdb [options]                                    Open an SQL session
-
-Options for an SQL session:
-  -h, --host <host>          Connect over TCP to this host (default: local-only channel)
-  -P, --port <port>          Port number of the instance (default: port in config.json)
-      --udp                  Use UDP instead of TCP (with --host)
-      --ssl                  Use SSL for the TCP connection
-  -u, --user <name>          User name (default: ask)
-  -p, --password <password>  Password (default: ask without echo)
-  -t, --tablespace <name>    Initial tablespace (default: the user's default tablespace)
-  -e, --execute <sql>        Run the statement and exit
-  -f, --file <path>          Run the statements in the file and exit
-      --help                 Show this help
-`;
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
@@ -69,12 +51,12 @@ function parseTimeoutSeconds(args: readonly string[]): number | null {
   }
   const raw = args[index + 1];
   if (raw === undefined) {
-    process.stderr.write("hwdb: --timeout needs a value in seconds\n");
+    process.stderr.write(`${t("args.timeoutNeedsValue")}\n`);
     return null;
   }
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    process.stderr.write("hwdb: --timeout must be a positive integer (seconds)\n");
+    process.stderr.write(`${t("args.timeoutInvalid")}\n`);
     return null;
   }
   return parsed;
@@ -85,7 +67,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const [first] = argv;
 
   if (argv.includes("--help")) {
-    process.stdout.write(USAGE);
+    process.stdout.write(t("usage.text"));
     return 0;
   }
 
@@ -93,7 +75,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const installDir = findInstallDir();
     if (first === "status") {
       if (argv.length > 1) {
-        process.stderr.write("hwdb status: this command takes no arguments\n");
+        process.stderr.write(`${t("args.statusTakesNoArguments")}\n`);
         return 1;
       }
       return await statusCommand(installDir);
@@ -105,7 +87,7 @@ async function main(argv: readonly string[]): Promise<number> {
       }
       const rest = argv.filter((arg, index) => arg !== "--timeout" && argv[index - 1] !== "--timeout");
       if (rest.length > 1) {
-        process.stderr.write("hwdb stop: unknown arguments\n");
+        process.stderr.write(`${t("args.stopUnknownArguments")}\n`);
         return 1;
       }
       return await stopCommand(installDir, timeoutSeconds);
@@ -122,15 +104,16 @@ async function main(argv: readonly string[]): Promise<number> {
       return true;
     });
     if (rest.length > 1) {
-      process.stderr.write("hwdb start: unknown arguments\n");
+      process.stderr.write(`${t("args.startUnknownArguments")}\n`);
       return 1;
     }
     return await startCommand({ installDir, foreground, timeoutSeconds });
   }
 
   // TODO(10단계) : 옵션을 해석하여 sqlShell.ts 로 넘긴다.
-  process.stderr.write("hwdb: SQL session is not implemented yet\n");
+  process.stderr.write(`${t("session.notImplemented")}\n`);
   return 1;
 }
 
+initLocaleFromEnvironment();
 process.exitCode = await main(process.argv.slice(2));

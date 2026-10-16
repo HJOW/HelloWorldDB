@@ -14,7 +14,7 @@
  * 관련 사양 : AGENTS.md 상세 15
  * 구현 단계 : 1단계(상수), 9단계(로컬 전용 채널 주소)
  * 1단계에서는 상수와 주소 규칙, 잠금 파일 이름까지 확정한다.
- * 로컬 전용 채널 서버 자체는 9단계에서 구현한다.
+ * 로컬 전용 채널 서버(net/localChannelServer.ts)는 9단계에서 구현했고, 클라이언트(client/transports.ts)도 같은 주소 규칙을 쓴다.
  */
 
 import path from "node:path";

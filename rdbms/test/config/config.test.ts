@@ -89,6 +89,11 @@ test("값이 올바르지 않으면 구동에 실패한다", () => {
     { tcp: { ssl: { certPath: "./a.pem" } } },
     { tcp: { ssl: { minVersion: "TLSv9" } } },
     { udp: { maxPacketSize: 0 } },
+    { udp: { maxPacketSize: 63 } },
+    { udp: { maxPacketSize: 65_508 } },
+    { udp: { maxPacketSize: 1200.5 } },
+    { udp: { maxPacketSize: "1200" } },
+    { udp: { sessionTimeoutMs: -1 } },
     { log: { level: "verbose" } },
     { log: { dir: "" } },
   ];
@@ -97,6 +102,29 @@ test("값이 올바르지 않으면 구동에 실패한다", () => {
     writeConfig(dir, bad);
     assert.throws(() => loadConfig(dir), StartupError, JSON.stringify(bad));
   }
+});
+
+test("udp.maxPacketSize 는 64 이상 65,507 이하를 받는다", () => {
+  for (const size of [64, 65, 1200, 65_507]) {
+    const dir = makeTempDir();
+    writeConfig(dir, { udp: { maxPacketSize: size } });
+    assert.equal(loadConfig(dir).config.udp.maxPacketSize, size);
+  }
+});
+
+test("udp.sessionTimeoutMs 가 0 이면 시간 제한 없음이며 구동 경고를 남긴다", () => {
+  const dir = makeTempDir();
+  writeConfig(dir, { udp: { sessionTimeoutMs: 0 } });
+  const { config, warnings } = loadConfig(dir);
+  assert.equal(config.udp.sessionTimeoutMs, 0);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] as string, /udp.sessionTimeoutMs/);
+  assert.match(warnings[0] as string, /never time out/);
+  // 양수이거나 생략하면 경고가 없다.
+  const normal = makeTempDir();
+  writeConfig(normal, { udp: { sessionTimeoutMs: 5000 } });
+  assert.deepEqual(loadConfig(normal).warnings, []);
+  assert.deepEqual(loadConfig(makeTempDir()).warnings, []);
 });
 
 test("JSON이 아니면 구동에 실패한다", () => {
