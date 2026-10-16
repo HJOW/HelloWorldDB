@@ -2,15 +2,15 @@
 
 1. Node.js 혹은 bun 으로 동작하는 간단한 구조의 RDBMS를 개발, 접속용 CLI 프로그램 포함
 2. 만든 RDBMS 에 접속, 이용할 수 있도록 하는 Node.js 패키지 개발 (Node.js 용 드라이버)
-3. 만든 RDBMS 를 지원하는 JDBC 개발 (자바 5~7 지원 버전, 자바 8 이상 지원 버전 따로 개발)
+3. 만든 RDBMS 를 지원하는 JDBC 개발 (자바 6~7 지원 버전, 자바 8 이상 지원 버전 따로 개발)
 4. electron 을 이용하여 이 RDBMS 를 GUI 로 이용할 수 있는 DB툴 개발
 5. 위 4번에서 개발한 DB툴에 MySQL, MariaDB, PostgreSQL 등 타사 오픈소스 DB 이용 기능 추가
 
 # 디렉토리 구조
 
 1. rdbms - RDBMS 본체 구현, 접속용 CLI 프로그램 포함
-2. jdbc5 - JDBC (자바 5 ~ 7 지원) 개발
-3. jdbc8 - JDBC (자바 8 이상 지원) 개발
+2. jdbc5 - JDBC (자바 6 ~ 7 지원) 개발  - JDBC 인터페이스 3.0 버전으로 개발
+3. jdbc8 - JDBC (자바 8 이상 지원) 개발 - JDBC 인터페이스 4.2 버전으로 개발
 4. nodejsDriver - Node.js 용 드라이버 개발
 5. gui - GUI DB툴 개발
 
