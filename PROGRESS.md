@@ -26,6 +26,7 @@
 |---|---|---|---|---|---|
 | `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1 ~ 10단계 완료(`hwdb` 포함). 다음은 11단계(통합 검증) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
+| `pythonDriver` | 미정 (배포 이름 `org.duckdns.hjow.helloworlddb.pythondriver` 안, import 이름 `helloworlddb` 안) | 없음 | 계획 초안만 있음 (코드 없음). Python 3.2 이상, DB-API 2.0 | 11단계 완료 + 사용자가 일정과 패키지 이름을 정함 | [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류. 자바 8 이상, JDBC 4.2 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 없음 | 보류. 자바 6~7용 JDBC 4.0, 자바 8 이상 실행 호환 | 계획부터 다시 정한다 | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
 | `gui` | `org.duckdns.hjow.helloworlddb.gui` | 없음 | 보류 | 계획부터 다시 정한다 | [gui/PROGRESS.md](gui/PROGRESS.md) |
@@ -64,6 +65,10 @@
 
 ## 사용자 확인이 필요한 사항
 
+`pythonDriver` 계획(2026-10-16)에서 사용자 확인을 기다리는 것이 있다. 자세한 것은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)의 "미결 사항" 1, 2 이다.
+(1) AGENTS.md "구현 계획"에 이 프로젝트의 단계가 없다 : 일정과 `nodejsDriver` 와의 선후, (2) 지켜야 할 사항 6 의 패키지 이름 규칙이 Python 에 어떻게 적용되는지.
+(Python 3.2 시험 환경은 이 PC 에서 해결되었다 : `C:\Python\Py302\python.exe`, 3.13.1 은 `C:\Python\python.exe`. 다른 장비에서 3.2 를 구하는 방법은 정하지 않았다.)
+
 지금 `rdbms` 와 `nodejsDriver` 에서 사용자 확인을 기다리는 것은 없다. 아래 3건은 2026-10-16 에 사용자가 정했고, 결정 내용은 "공통 인수인계 사항" 에 있다.
 
 - 결정 1 : `hwdb` 가 화면에 내는 문구의 언어 → 지금은 영어만 낸다. 다만 언제든 다국어를 붙일 수 있게 문구를 메시지 카탈로그로 분리한다.
@@ -101,3 +106,5 @@ JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 202
 - 2026-10-16 : `rdbms` 10단계(데몬 제어와 CLI) 완료. `hwdb start`(분리된 데몬), `stop`, `status`와 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 비밀번호 숨김 입력, 한글 폭을 맞춘 표, 오류 위치 표시, 초기 암호·롤백 안내)을 구현하고 [rdbms/docs/cli.md](rdbms/docs/cli.md)를 썼다.
   구동 중인지는 PID가 아니라 로컬 전용 채널의 응답으로 판단한다(PID 재사용 대비). 서버·프로토콜에는 `bye.rolledBack`, 정상 종료 뒤 프로세스를 직접 끝내는 처리(클라이언트가 소켓을 읽지 않으면 Windows에서 데몬이 영원히 남던 문제), 오래된 잠금 생성 가드 정리를 더했다. AGENTS.md 14-1, 14-2에 종료 코드·옵션 조합·스크립트 모드의 `exit` 규칙을 보충했다.
   시험 131개를 더해 `npm test` 789개 통과(Node.js 24.21.0), bun 1.3.14에서 CLI 138개·net/daemon 249개 통과, 결함 주입 15건을 모두 잡았다. Windows에서 분리 구동(콘솔 창 없음, 콘솔 프로세스를 끝내도 데몬 유지)과 실제 콘솔의 대화형 모드를 확인했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 확인하지 못했다. 커밋은 하지 않았다.
+- 2026-10-16 : `pythonDriver` 개발 계획을 작성했다([pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)). Python 3.2 이상, DB-API 2.0을 지키는 드라이버를 PY-1 ~ PY-6(패키지 구성과 호환 계층, TCP 프로토콜 코어, DB-API 계층, TLS, UDP, 문서와 검증)으로 나누고 예외 매핑, 타입 대응, Python 3.2 범위 주의 목록을 정리했다. AGENTS.md "구현 계획"에 이 프로젝트의 단계가 없고 패키지 이름 규칙(지켜야 할 사항 6)이 Python을 말하지 않아 사용자 확인 사항 3건을 남겼다. 코드와 AGENTS.md는 바꾸지 않았다.
+- 2026-10-16 : 이 PC의 Python 3.2가 `C:\Python\Py302\python.exe`에 있음을 `pythonDriver/PROGRESS.md`에 반영했다. 실제로 실행해 확인한 것: 3.2 / OpenSSL 1.0.0a(TLS 1.2 불가 → 이 3.2로 SSL을 시험하려면 서버의 `tcp.ssl.minVersion`을 `TLSv1`로 낮춰야 함) / pip·setuptools 없음 / `ssl.match_hostname`이 IP 주소 SAN을 비교하지 못함. 사용자 확인 사항은 2건(일정, 패키지 이름)으로 줄었다.
