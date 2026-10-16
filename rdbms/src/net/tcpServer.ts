@@ -9,7 +9,7 @@
  *    인증서와 키는 구동할 때 한 번 읽는다. 읽기 실패와 형식 오류는 구동 실패이다. 암호가 걸린 키는 지원하지 않는다.
  *    인증서 갱신은 재시작해야 반영된다. (config.json 과 같은 규칙)
  *  - TLS 최소 버전 : `tcp.ssl.minVersion` (기본 TLSv1.2). 최대 버전은 제한하지 않는다.
- *    TLSv1.2 보다 낮추면(자바 5, 6 클라이언트 지원) 그 버전에서 쓰는 암호 스위트도 함께 허용하고 구동 로그에 경고를 남긴다.
+ *    TLSv1.2보다 낮추면(TLS 1.2를 쓸 수 없는 자바 6 클라이언트 지원) 그 버전의 암호 스위트도 허용하고 구동 로그에 경고를 남긴다.
  *    최신 Node.js 의 OpenSSL 3 은 보안 수준 1 에서 TLS 1.0, 1.1 을 끄므로 이때만 `ciphers` 에 `@SECLEVEL=0` 을 붙인다.
  *  - bun 의 한계(2026-10-16 bun 1.3.14 에서 확인. Node.js 24.22.0 에서는 모두 적용된다) : bun 의 TLS 서버는 `minVersion` 옵션을 적용하지 않고
  *    BoringSSL 의 기본값(TLS 1.2 이상)을 쓴다. `secureContext` 로 주면 인증서가 실리지 않아 핸드셰이크가 모두 실패하므로 쓸 수 없다.
@@ -95,7 +95,7 @@ export class TcpServer {
       tls.createSecureContext({ cert, key, minVersion });
     } else {
       this.env.logger.warn(
-        `The TLS minimum version is ${minVersion}, which is insecure; it is meant for old Java 5/6 clients. Raise tcp.ssl.minVersion when they are no longer needed.`,
+        `The TLS minimum version is ${minVersion}, which is insecure; it is meant for Java 6 clients without TLS 1.2 support. Raise tcp.ssl.minVersion when they are no longer needed.`,
       );
       try {
         tls.createSecureContext({ cert, key, minVersion, ciphers: LEGACY_TLS_CIPHERS });

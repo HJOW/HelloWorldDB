@@ -9,7 +9,7 @@
 # 디렉토리 구조
 
 1. rdbms - RDBMS 본체 구현, 접속용 CLI 프로그램 포함
-2. jdbc5 - JDBC (자바 6 ~ 7 지원) 개발  - JDBC 인터페이스 3.0 버전으로 개발, 자바 8 이상 버전에서도 사용은 가능해야 함.
+2. jdbc6 - JDBC (자바 6 ~ 7 지원) 개발 - JDBC 인터페이스 4.0 버전으로 개발, 자바 8 이상 버전에서도 사용은 가능해야 함.
 3. jdbc8 - JDBC (자바 8 이상 지원) 개발 - JDBC 인터페이스 4.2 버전으로 개발
 4. nodejsDriver - Node.js 용 드라이버 개발
 5. gui - GUI DB툴 개발
@@ -58,7 +58,7 @@
 8. 드라이버 개발을 위해 TCP 및 UDP 방식 접속을 지원해야 한다.
    config.json 내용을 통해 TCP 및 UDP 사용여부 및 포트번호를 제어한다.
    config.json 에 SSL 인증서 경로를 입력받은 경우 (선택 사항) TCP에 이를 이용한 보안 통신을 지원해야 한다.
-   Java 5 ~ 7 사용자를 대비해 구버전 TLS 지원도 염두에 두어야 한다.
+   Java 6 ~ 7 사용자를 대비해 구버전 TLS 지원도 염두에 두어야 한다. Java 5는 지원하지 않는다.
 9. 동시 접근 지원 (최대 사용자 10명으로 테스트)
 10. 트랜잭션 및 인덱스 지원 
     (테이블의 인덱스만 만들 수 있으며, UNIQUE 한 인덱스는 PK로만 간접적으로 만들 수 있게 하고, 별도로 만드는 인덱스는 기본 타입만 지원한다.)
@@ -356,7 +356,7 @@ REVOKE { CONNECT | OFFICER | DBA } [, ...] FROM 사용자 [, ...]
 - TCP
   - 프레임 : 본문의 바이트 수(4바이트, 빅엔디언) 뒤에 JSON 본문을 붙인 것이 메시지 하나이다. 연결이 끊기면 세션을 끝낸다.
   - `tcp.ssl` 의 인증서와 개인키가 설정되어 있으면 TCP 포트 전체를 TLS 로 운영한다. 이 때 평문 TCP 접속은 받지 않는다.
-  - TLS 최소 버전은 `tcp.ssl.minVersion` 으로 정하며 기본은 `TLSv1.2` 이다. TLS 1.2 를 쓸 수 없는 자바 5, 6 클라이언트를 받아야 하면 `TLSv1` 로 낮춘다.
+  - TLS 최소 버전은 `tcp.ssl.minVersion` 으로 정하며 기본은 `TLSv1.2` 이다. TLS 1.2를 쓸 수 없는 자바 6 클라이언트를 받아야 하면 `TLSv1`로 낮춘다. 자바 5는 지원 대상이 아니다.
     낮추면 그 버전에서 쓰는 암호 스위트도 함께 허용하고, 구동 로그에 경고를 남긴다.
   - 클라이언트(접속용 CLI, 드라이버)는 TLS 서버 인증서를 기본으로 검증한다. 신뢰할 CA 를 지정하는 방법과 검증을 끄는 방법을 함께 제공한다.
     인증서 오류로 접속에 실패하면 접속을 끊고 100ms 뒤에 다시 시도하며, 다시 시도하는 횟수는 최대 2회이다. 다시 시도할 때도 검증은 그대로 한다.
@@ -372,6 +372,22 @@ REVOKE { CONNECT | OFFICER | DBA } [, ...] FROM 사용자 [, ...]
   - 데몬 제어 요청(상태 조회, 종료)은 이 채널로만 받는다 (14 참조).
   - 이 채널을 열지 못하면 구동에 실패한다.
 - 프로토콜 상세 명세(메시지 필드, TCP 프레임, UDP 패킷 레이아웃, 오류 코드 목록)는 통신 계층 구현 시 `rdbms` 디렉토리 내 문서로 확정한다. 모든 드라이버는 그 문서를 기준으로 구현한다.
+
+### 8-1. JDBC 드라이버 지원 기준
+
+JDBC 인터페이스 버전과 자바 실행 버전은 별도로 정한다. 자바 5 지원은 철회하며, 자바 6~7용 프로젝트와 디렉토리는 `jdbc6`, 패키지는 `org.duckdns.hjow.helloworlddb.jdbc6`으로 한다.
+
+| 프로젝트 | 자바 실행 환경 | JDBC 인터페이스 기준 |
+|---|---|---|
+| `jdbc6` | 자바 6~7을 기본 대상으로 하며 같은 배포본을 자바 8 이상에서도 사용할 수 있어야 한다 | JDBC 4.0 |
+| `jdbc8` | 자바 8 이상 | JDBC 4.2 |
+
+- `jdbc6`의 소스 문법, 바이트코드, 사용 API는 자바 6을 최소 기준으로 한다. 자바 8 이상에서 실행하더라도 제공하는 JDBC 인터페이스 기준은 4.0으로 유지한다.
+- `jdbc8`의 JDBC 구현은 자바 8과 JDBC 4.2를 기준으로 한다. 두 드라이버가 공유하는 프로토콜 코드는 `jdbc6`에서 사용할 수 있도록 자바 6 범위로 작성한다.
+- 두 드라이버 모두 같은 서버 프로토콜, SCRAM-SHA-256 인증, TCP·TLS·UDP 통신, 값 표현과 메타데이터 규칙을 따른다. JDBC 인터페이스 버전의 차이로 서버 프로토콜을 나누지 않는다.
+- `DatabaseMetaData.getJDBCMajorVersion()`과 `getJDBCMinorVersion()`은 각각 `jdbc6`에서 4와 0, `jdbc8`에서 4와 2를 반환한다. RDBMS가 지원하지 않는 기능은 SQLSTATE `0A000`으로 알린다.
+- `jdbc6`는 JDBC 4.0 메서드를 구현하며, 지원하지 않는 DB 기능은 SQLSTATE `0A000`을 담은 `SQLFeatureNotSupportedException`으로 알린다. 상위 자바 런타임에서 추가된 JDBC 메서드는 필요한 호환 처리를 마련하고, 정상적인 드라이버 사용 중 클래스 로딩 오류나 `AbstractMethodError`가 나지 않도록 검증한다.
+- `jdbc6`는 자바 6, 7과 자바 8 이상 환경에서 같은 배포본의 접속·질의·트랜잭션·메타데이터를 검증한다. TLS는 각 런타임이 지원하는 버전으로 시험하며, TLS 1.2를 쓸 수 없는 자바 6 환경에서는 서버의 최소 버전을 낮춘 시험도 포함한다. 자바 5용 빌드와 시험 환경은 마련하지 않는다.
 
 ## 9. 동시 접근
 
@@ -567,7 +583,7 @@ SELECT * FROM HELLO
    (당장은 시스템에 설치된 Node.js 를 사용해 테스트하고, 추후 Node.js 22.X 버전 설치 PC에서 전역 테스트 시 문제가 발견되면 수정하는 것으로 한다.)
 6. Node.js 및 자바 패키지명은 `org.duckdns.hjow.helloworlddb` 로 시작하며, 그 뒤에 프로젝트 디렉토리 이름을 소문자로 붙인다.
    rdbms 는 `org.duckdns.hjow.helloworlddb.rdbms`, nodejsDriver 는 `org.duckdns.hjow.helloworlddb.nodejsdriver`,
-   jdbc5 는 `org.duckdns.hjow.helloworlddb.jdbc5`, jdbc8 은 `org.duckdns.hjow.helloworlddb.jdbc8`, gui 는 `org.duckdns.hjow.helloworlddb.gui` 이다.
+   jdbc6 는 `org.duckdns.hjow.helloworlddb.jdbc6`, jdbc8 은 `org.duckdns.hjow.helloworlddb.jdbc8`, gui 는 `org.duckdns.hjow.helloworlddb.gui` 이다.
 7. 타입스크립트 사용 시 타입스크립트 버전 6 에서도 컴파일이 가능하도록 호환성 있게 코드를 작성한다.
 
 # 구현 계획
@@ -634,9 +650,10 @@ JDBC 와 GUI DB툴은 보류한다. 위의 둘을 마친 뒤 계획부터 다시
     - 타입 대응 : BIGINT 는 `bigint`, NUMERIC 은 문자열, 날짜시간은 정밀도를 잃지 않는 형태로 돌려준다.
     - 완료 기준 : 실제 `rdbms` 를 띄워 수행하는 통합 테스트 통과.
 
-## C. 보류 : JDBC (`jdbc8`, `jdbc5`), GUI DB툴 (`gui`)
+## C. 보류 : JDBC (`jdbc8`, `jdbc6`), GUI DB툴 (`gui`)
 
 - 지금은 계획을 확정하지 않는다. A 와 B 를 마친 뒤 다시 정한다.
 - 보류 전에 잡아 둔 초안은 각 프로젝트의 PROGRESS.md 에 참고용으로 남겨 두었다. 확정된 계획이 아니므로 그대로 착수하지 않는다.
-- RDBMS 사양 중 이들을 위한 부분(자바 5, 6 용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 그대로 구현한다.
+- JDBC 지원 범위는 상세 8-1을 따른다. `jdbc6`는 자바 6~7용 JDBC 4.0이며 자바 8 이상에서도 사용 가능해야 하고, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 자바 5는 지원하지 않는다.
+- RDBMS 사양 중 이들을 위한 부분(TLS 1.2를 쓸 수 없는 자바 6 환경용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 그대로 구현한다.
 

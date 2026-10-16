@@ -5,6 +5,7 @@
 이 문서는 그 사양을 어떤 구조와 순서로 구현할지, 사양이 정하지 않은 부분을 어떻게 정할지를 적었다.
 
 - 읽는 사람 : 9단계를 구현할 개발자, 그리고 프로토콜 명세를 기준으로 드라이버(`nodejsDriver`, 보류 중인 JDBC)를 만들 개발자
+- JDBC 지원 기준(2026-10-16 반영) : `jdbc6`는 자바 6~7용 JDBC 4.0이며 자바 8 이상에서도 사용 가능해야 한다. `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 자바 5는 지원하지 않으며, 두 JDBC 드라이버의 공통 프로토콜 코드는 자바 6 범위로 작성한다. 서버 프로토콜은 공통이다 (AGENTS.md 상세 8-1).
 - 상태 : 구현 완료. 4절(메시지 규약)과 8-4절(UDP 패킷)은 `docs/protocol.md` 로 옮겨 확정했다. 확정 뒤에는 `protocol.md` 가 기준이고, 이 문서는 구조와 작업 순서의 기록이다. 두 문서가 어긋나면 `protocol.md` 를 따른다.
 - 설계 중 사용자가 정할 5건은 2026-10-15 에 결정되었고 19절에 기록했다. 그중 사양을 보충하는 것(클라이언트 TLS 검증과 재시도, `udp.maxPacketSize` 범위, `udp.sessionTimeoutMs = 0`)은 AGENTS.md 상세 7, 8 에 반영했다.
 
@@ -369,8 +370,8 @@ database.connect({
 - TLS : `tcp.ssl.certPath` 와 `keyPath` 가 모두 있으면 `tls.createServer` 로 **포트 전체를 TLS 로** 운영한다. 평문 접속은 받지 않는다(TLS 핸드셰이크가 아닌 바이트는 연결 단계에서 끊긴다). 하나만 있으면 구동 실패(이미 `config.ts` 가 검사한다).
   인증서와 키는 구동 때 한 번 읽는다. 읽기 실패와 형식 오류는 구동 실패이다. 암호가 걸린 키는 지원하지 않는다(config 에 passphrase 키가 없다).
 - 최소 버전 : `minVersion = tcp.ssl.minVersion`(기본 `TLSv1.2`). 최대 버전은 제한하지 않는다.
-- **구버전 TLS(`TLSv1`, `TLSv1.1`)** : 자바 5, 6 클라이언트를 받기 위한 설정이다(사양 8). 최신 Node.js 의 OpenSSL 3 은 보안 수준 1 에서 TLS 1.0/1.1 을 끄므로, `minVersion` 이 `TLSv1.2` 보다 낮을 때만 `ciphers` 에 `@SECLEVEL=0` 을 붙이고(예 : `DEFAULT:@SECLEVEL=0`) 구동 로그에 경고를 남긴다. 사양의 "그 버전에서 쓰는 암호 스위트도 함께 허용" 에 해당한다.
-  - 실제 동작은 OpenSSL 빌드에 달려 있다. 구현 단계에서 (a) Node.js `tls.connect({ maxVersion: 'TLSv1' })` 로 서버에 붙는 시험과 (b) 가능하면 `openssl s_client -tls1` 로 확인한다. 안 되는 환경이면 시험을 건너뛰고 문서에 환경 조건을 적는다. 실제 자바 5, 6 접속 확인은 `jdbc5` 단계의 몫이다(PROGRESS.md 미결 사항 그대로).
+- **구버전 TLS(`TLSv1`, `TLSv1.1`)** : TLS 1.2를 쓸 수 없는 자바 6 클라이언트를 받기 위한 설정이다(사양 8). 최신 Node.js의 OpenSSL 3은 보안 수준 1에서 TLS 1.0/1.1을 끄므로, `minVersion`이 `TLSv1.2`보다 낮을 때만 `ciphers`에 `@SECLEVEL=0`을 붙이고(예 : `DEFAULT:@SECLEVEL=0`) 구동 로그에 경고를 남긴다. 사양의 "그 버전에서 쓰는 암호 스위트도 함께 허용"에 해당한다.
+  - 실제 동작은 OpenSSL 빌드에 달려 있다. 구현 단계에서 (a) Node.js `tls.connect({ maxVersion: 'TLSv1' })`로 서버에 붙는 시험과 (b) 가능하면 `openssl s_client -tls1`로 확인한다. 안 되는 환경이면 시험을 건너뛰고 문서에 환경 조건을 적는다. 실제 자바 6 접속 확인은 `jdbc6` 단계의 몫이다(PROGRESS.md 미결 사항 그대로).
 - 인증서 갱신은 재시작해야 반영된다(config.json 과 같은 규칙).
 - 클라이언트가 서버 인증서를 검증하는 방법과, 인증서 오류 때 다시 시도하는 규칙은 12-1절에 있다.
 - 시험용 인증서 : 자체 서명 인증서와 키를 `test/fixtures/tls/` 에 두고 만드는 명령(`openssl req -x509 …`)을 같은 폴더의 README 에 적는다. 유효 기간은 길게(약 100년) 잡아 시험이 만료로 깨지지 않게 한다. 시험 전용 키이며 실제 서비스에 쓰지 않는다고 적는다.

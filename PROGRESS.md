@@ -8,7 +8,7 @@
 - 최종 갱신 : 2026-10-16
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
 - `rdbms` 는 1 ~ 9단계 구현을 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사에 더해, 9단계에서 **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 로 접속해 로그인, 질의, 대량 결과, 트랜잭션을 하고 데몬이 세 경로를 열고 닫으며 상태 조회·종료 요청을 처리한다. 접속용 클라이언트 라이브러리(`rdbms/src/client`)도 있다.
-- 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
+- 지금 진행할 범위는 `rdbms`와 `nodejsDriver`이다. JDBC(`jdbc8`, `jdbc6`)와 GUI DB툴(`gui`)은 보류했다.
 - 다음 작업 : `rdbms` 10단계(데몬 제어와 CLI `hwdb`). DML 행 단위 접근은 읽기·오버레이(1부)와 제약·참조동작·커밋(2부)을 모두 2026-10-16 완료했다.
   10단계는 9단계의 클라이언트 라이브러리를 그대로 쓰며, `hwdb` 화면 문구는 영어만 낸다(다국어용 메시지 카탈로그 분리). 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)에 있다. 드라이버의 프로토콜 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
@@ -25,14 +25,15 @@
 |---|---|---|---|---|---|
 | `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 9단계와 DML 행 단위 접근 완료. 다음은 10단계(CLI) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
-| `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
-| `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
+| `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류. 자바 8 이상, JDBC 4.2 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
+| `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 없음 | 보류. 자바 6~7용 JDBC 4.0, 자바 8 이상 실행 호환 | 계획부터 다시 정한다 | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
 | `gui` | `org.duckdns.hjow.helloworlddb.gui` | 없음 | 보류 | 계획부터 다시 정한다 | [gui/PROGRESS.md](gui/PROGRESS.md) |
 
 ## 공통 인수인계 사항
 
 - 보류한 프로젝트의 PROGRESS.md 에는 보류 전에 잡아 둔 세부 계획이 초안으로 남아 있다. 확정된 계획이 아니므로 그대로 착수하지 않는다.
-- RDBMS 사양 중 보류한 프로젝트를 위한 부분(자바 5, 6 용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 `rdbms` 에서 그대로 구현한다.
+- JDBC 기준(2026-10-16 사용자 결정) : 자바 5 지원을 철회했다. 프로젝트·폴더·패키지는 `jdbc6` 기준으로 바꾸고 자바 6~7용 JDBC 4.0을 개발한다. 같은 배포본을 자바 8 이상에서도 사용할 수 있어야 한다. `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 두 프로젝트의 공통 프로토콜 코드는 자바 6 범위로 유지한다. 사양은 AGENTS.md 상세 8-1이다.
+- RDBMS 사양 중 보류한 프로젝트를 위한 부분(TLS 1.2를 쓸 수 없는 자바 6 환경용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 `rdbms`에서 그대로 구현한다.
 - 프로토콜 명세는 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)에 확정되어 있다(2026-10-16, 버전 1). 모든 드라이버가 이 문서를 기준으로 삼는다. 클라이언트가 해야 하는 검증(서버 nonce·서명 확인, TLS 인증서 검증과 재시도 등)은 그 문서 15절의 체크리스트이다.
   프로토콜을 바꾸면 프로토콜 버전을 올리고, 영향을 받는 드라이버 프로젝트의 PROGRESS.md 에 알린다.
 - 명령은 `hwdb` 하나이다. `hwdb start`, `hwdb stop`, `hwdb status` 로 데몬을 제어하고, `hwdb` 로 SQL 접속을 한다. 서버 실행 파일을 따로 두지 않는다.
@@ -68,6 +69,8 @@
 
 보류한 프로젝트의 확인 사항(자바 빌드와 시험 환경, UI 프레임워크 등)은 각 PROGRESS.md 의 "미결 사항" 에 있으며, 보류를 풀 때 확인한다.
 
+JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 개발 보류는 유지한다.
+
 ## 작업 이력
 
 - 2026-10-08 : AGENTS.md 에 상세 사양과 구현 계획 작성.
@@ -91,3 +94,4 @@
 - 2026-10-16 : 사용자 요청으로 10단계 전에 DML 행 단위 접근을 진행했고, 작업을 나눌 수 있는 지점인 1부(읽기와 오버레이 계층)까지 마쳤다. 힙 지연 순회, PK 맵을 가진 오버레이, 행 단위 읽기 계층, 인덱스를 타는 조회와 DML 대상 찾기. `npm test` 642개 통과, bun 641개 통과(`t.mock` 1개 제외). 제약 검사·커밋 쓰기(2부)와 10단계는 남았다. 10단계 사전 작업으로 `control status` 응답 필드와 `hwdb` SSL 옵션 사양을 먼저 정했다. 커밋은 하지 않았다.
 
 - 2026-10-16 : `rdbms` DML 행 단위 접근 2부 완료. 제약 검사·FK 참조동작·커밋 쓰기·커밋 FK 재검사에서 전체 테이블 이미지를 없애고 변경 행만 처리한다. 복합 FK와 자기 참조·연쇄, 문장 실패 되돌리기와 잠금 재시도를 유지했다. 16개 시험을 더해 Node.js `npm test` 658개 통과. 2만 행 테이블의 PK 단건 INSERT·UPDATE·DELETE와 명시적 커밋에서 힙 순회가 0회였다. Bun 1.4.2도 전체 실행 657개 통과 + 대량 시험 별도 1개 통과로 658개 검증을 마쳤다(대량 시험은 데이터 준비를 포함해 제한을 120초에서 360초로 조정). 트랜잭션 문서와 진행·인수인계를 갱신했다. 다음은 10단계 CLI이며 커밋은 하지 않았다.
+- 2026-10-16 : JDBC의 자바 5 지원을 철회하고 자바 6~7용 프로젝트·폴더·패키지 이름을 `jdbc6`으로 변경했다. JDBC 인터페이스는 `jdbc6` 4.0, `jdbc8` 4.2이며 `jdbc6`도 자바 8 이상에서 같은 배포본을 사용할 수 있어야 한다. AGENTS.md 상세 8-1, JDBC 초안, TLS 안내와 관련 문서·참조를 동기화했다. Markdown 17개의 UTF-8·로컬 링크·옛 JDBC 참조를 검사했고, 빌드와 TCP/TLS 시험은 Node.js·Bun 각각 28개 통과했다. 개발 보류는 유지하며 커밋은 하지 않았다.

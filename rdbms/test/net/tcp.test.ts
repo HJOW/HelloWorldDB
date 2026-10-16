@@ -402,7 +402,7 @@ test("TLS : 최소 버전 설정이 적용된다 (기본 TLSv1.2, TLSv1.3 으로
 test("TLS : 구버전(TLSv1) 허용 설정은 서버 구동 로그에 경고를 남기고 그 버전의 클라이언트를 받는다", async (t) => {
   const fixture = await setup(t, { tls: { cert: certA, key: keyA, minVersion: "TLSv1" } });
   assert.ok(fixture.logger.lines.some((line) => line.startsWith("warn:") && /TLSv1/.test(line) && /insecure/.test(line)), "경고가 남아야 한다");
-  // 환경(OpenSSL 빌드)이 TLS 1.0 을 쓸 수 없으면 건너뛴다. 실제 자바 5, 6 접속은 jdbc5 단계에서 확인한다.
+  // 환경(OpenSSL 빌드)이 TLS 1.0을 쓸 수 없으면 건너뛴다. 실제 자바 6 접속은 jdbc6 단계에서 확인한다.
   let connection: Connection;
   try {
     connection = await fixture.open({ ca: certA, minVersion: "TLSv1", maxVersion: "TLSv1", ciphers: "DEFAULT:@SECLEVEL=0" });
