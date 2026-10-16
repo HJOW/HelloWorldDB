@@ -10,11 +10,17 @@ Node.js 22 이상과 bun 에서 동작한다. TypeScript 타입 정의를 함께
 
 ## 설치
 
-```sh
-npm install org.duckdns.hjow.helloworlddb.nodejsdriver
-```
+npm 레지스트리에는 올리지 않았다. 저장소를 `git clone` 하여 빌드한 뒤 내 프로젝트에 경로로 설치한다. (처음부터 따라 하는 설명은 [루트 README](../README.md)의 "Node.js 프로그램에서 DB 접속, SQL문 사용"이다)
 
-이 저장소에서 쓸 때는 `nodejsDriver` 디렉토리에서 `npm install` 한 뒤 `npm run build` 하면 `dist` 에 JavaScript 와 타입 정의(`.d.ts`)가 만들어진다.
+```sh
+git clone https://github.com/HJOW/HelloWorldDB.git
+cd HelloWorldDB/nodejsDriver
+npm install            # 개발 의존성(TypeScript 6)
+npm run build          # dist/ 에 JavaScript 와 타입 정의(.d.ts)를 만든다
+
+cd /내/프로젝트
+npm install /경로/HelloWorldDB/nodejsDriver
+```
 
 ## Hello World
 

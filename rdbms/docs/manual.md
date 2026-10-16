@@ -165,7 +165,7 @@ GRANT CONNECT TO ALICE;                    -- 다른 장비에서도 접속하�
 - 조회 결과는 표이고 끝에 행 수와 소요 시간이 붙는다. 오류는 `ERROR [SQLSTATE:내부번호] 메시지` 이다. 오류 메시지는 영어이고 번역하지 않는다. 오류는 SQLSTATE 로 판단한다.
 - 화면 문구(안내, 표 머리글)의 언어는 환경 변수 `HWDB_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` 순으로 고른다. 지금은 영어만 있다.
 
-모든 옵션과 조합 규칙은 [cli.md](cli.md)이다. 서버에 접속하는 **Node.js 드라이버** 는 다음 단계(12단계)에서 만든다.
+모든 옵션과 조합 규칙은 [cli.md](cli.md)이다. 프로그램에서 접속하는 **Node.js 드라이버** 는 [nodejsDriver/README.md](../../nodejsDriver/README.md)를 본다.
 
 ## 7. 여러 인스턴스 (SID 대신 포트 번호)
 
