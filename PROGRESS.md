@@ -9,13 +9,13 @@
 - 사양(AGENTS.md 의 개요와 상세)과 구현 계획을 세웠다.
 - `rdbms` 는 1 ~ 9단계 구현을 마쳤다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사에 더해, 9단계에서 **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 로 접속해 로그인, 질의, 대량 결과, 트랜잭션을 하고 데몬이 세 경로를 열고 닫으며 상태 조회·종료 요청을 처리한다. 접속용 클라이언트 라이브러리(`rdbms/src/client`)도 있다.
 - 지금 진행할 범위는 `rdbms` 와 `nodejsDriver` 이다. JDBC(`jdbc8`, `jdbc5`)와 GUI DB툴(`gui`)은 보류했다.
-- 다음 작업 : `rdbms` 의 **DML 행 단위 접근 2부**(제약 검사·참조동작·커밋 쓰기를 행 단위로. 1부인 읽기와 오버레이 계층은 2026-10-16 에 끝났다) → 10단계(데몬 제어와 CLI `hwdb`). 10단계는 9단계의 클라이언트 라이브러리를 그대로 쓰며, `hwdb` 화면 문구는 영어만 낸다(메시지 카탈로그로 분리해 다국어를 붙일 수 있다).
-  2부의 설계와 10단계 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 "결정 사항"과 "인수인계 사항". 9단계 프로토콜 명세는 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)에 확정되어 있고(드라이버가 기준으로 삼는다), 설계 배경은 [rdbms/docs/communication-design.md](rdbms/docs/communication-design.md)이다.
+- 다음 작업 : `rdbms` 10단계(데몬 제어와 CLI `hwdb`). DML 행 단위 접근은 읽기·오버레이(1부)와 제약·참조동작·커밋(2부)을 모두 2026-10-16 완료했다.
+  10단계는 9단계의 클라이언트 라이브러리를 그대로 쓰며, `hwdb` 화면 문구는 영어만 낸다(다국어용 메시지 카탈로그 분리). 인수인계는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)에 있다. 드라이버의 프로토콜 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
 - 2026-10-15 : 7단계 남은 마무리(`SYS_SESSIONS` 연결, `docs/transactions.md`)를 끝내고 8단계를 완료했다.
-- 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML 의 행 단위 접근은 하지 않았다.
+- 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML의 행 단위 접근은 당시 미구현이었고 2026-10-16에 완료했다.
 - 2026-10-11 병합 점검 : 원격 커밋과 병합하면서 `session.ts`, `dml.ts` 에 충돌 마커가 커밋되어 빌드가 깨져 있었다. 7단계 쪽을 기준으로 정리했고, 병합 중 빠진 6단계 점검 보완 기록을 `rdbms/PROGRESS.md` 에 다시 넣었다.
-- 검증 : Windows의 Node.js 24.22.0 / TypeScript 6.0.3에서 `npm test` 642개 통과. Bun 1.3.14 에서 `bun test --timeout 120000 dist/test/` 641개 통과(`node:test` 의 `t.mock` 을 쓰는 1개 제외). 통신 결함 22건과 읽기 계층 결함 8건을 일부러 주입해 시험이 모두 잡는 것을 확인했다.
+- 검증 : Windows의 Node.js 24.19.0 / TypeScript 6.0.3에서 `npm test` 658개 통과(행 단위 접근 2부 신규 16개 포함). Bun 1.4.2도 658개 검증 완료(전체 실행 657개 통과 + 2만 행 시험 1개 별도 통과). 대량 시험은 준비 시간을 포함해 최초 120초 제한을 넘었으며, 360초 제한으로 재실행해 약 221초에 통과했다. 이전 통신 결함 22건과 읽기 계층 결함 8건의 주입 검증 기록은 유지한다.
 
 ## 프로젝트별 상태
 
@@ -23,7 +23,7 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 9단계까지 완료. DML 행 단위 접근은 1부(읽기·오버레이) 완료, 2부와 10단계(CLI)가 다음 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 9단계와 DML 행 단위 접근 완료. 다음은 10단계(CLI) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 착수 전 | 11단계 완료 | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc5` | `org.duckdns.hjow.helloworlddb.jdbc5` | 없음 | 보류 | 계획부터 다시 정한다 | [jdbc5/PROGRESS.md](jdbc5/PROGRESS.md) |
@@ -43,7 +43,7 @@
 - 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계에서 마쳤고, SQL 트랜잭션과 행 잠금은 7단계에서 구현했다(설계 요약은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 결정 사항).
 - v1 고정 바이너리와 해시 검증 테스트를 보관했다. 개요 3의 1.0 출시 전 포맷 변경 예외는 적용 가능하며, 변경 시 포맷 문서와 테스트 자료도 의도적으로 갱신한다.
 - 변경된 타입 정책은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md)에 정리했다. VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이며 DECIMAL/DEC/NUMERIC의 인자 전체 생략은 (10,3), 정밀도만 지정한 `(p)`는 (p,0)이다. 드라이버와 DB툴은 실제 컬럼 인자를 서버 메타데이터에서 읽는다.
-- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 현재 검증 환경은 Windows, Node.js 24.21.0, TypeScript 6.0.3, bun 1.4.2이다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
+- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 현재 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, Bun 1.4.2이다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
 - 드라이버와 DB툴이 참고할 `rdbms` 문서이다. 타입과 값의 규칙은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md), SQL 의 어휘 규칙·예약어·지원 문법·한도는 [rdbms/docs/sql-syntax.md](rdbms/docs/sql-syntax.md), 저장 포맷은 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md),
   트랜잭션과 잠금의 동작(오류 번호 `55P03`, `40P01` 등)은 [rdbms/docs/transactions.md](rdbms/docs/transactions.md), 계정·권한·오류 번호 `28000`·`42501` 등과 딕셔너리 뷰의 가시성은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md), 프로토콜(전송 계층, 메시지, SCRAM, 값 표현, 커서, 오류 8000번대, 한도, 런타임 차이)은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - **TLS 서버 인증서 검증(모든 클라이언트 공통, 2026-10-15 결정)** : 접속용 CLI(`hwdb --ssl`)와 드라이버는 서버 인증서를 기본으로 검증한다. 신뢰할 CA 를 지정하는 방법과 검증을 끄는 방법을 함께 제공한다.
@@ -53,7 +53,7 @@
 - **사용자 결정(2026-10-16)** 3건이다. 자세한 구현 방침은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 결정 사항.
   1. **화면 문구의 언어** : `hwdb` 의 사용법, 안내, 표 머리글, 경고 같은 문구는 지금 영어만 낸다. 문구를 코드에 박지 않고 메시지 키로 꺼내 쓰는 카탈로그(`rdbms/src/cli/i18n.ts`, 영어 카탈로그 `rdbms/src/cli/messages/en.ts`)로 분리해 두었으므로, 언어를 추가할 때는 카탈로그와 언어 선택만 더하면 된다.
      DB 오류 메시지는 AGENTS.md 상세 0 대로 영문으로 고정하고 SQLSTATE 와 내부 오류 번호가 번역의 열쇠이다. 드라이버와 DB툴도 같은 원칙을 따른다(서버 메시지는 그대로 전달하고, 자기 화면 문구만 카탈로그로 둔다).
-  2. **DML 행 단위 접근** : 보편적인 RDBMS 처럼 대상 행 단위로 접근한다. 테이블 전체를 메모리 이미지로 올리는 방식은 버린다. 사용자가 10단계보다 먼저 하라고 하여(2026-10-16) 1부(읽기와 오버레이 계층)를 마쳤고, 제약 검사·참조동작·커밋 쓰기의 2부가 남았다.
+  2. **DML 행 단위 접근** : 보편적인 RDBMS 처럼 대상 행 단위로 접근한다. 테이블 전체를 메모리 이미지로 올리는 방식은 버린다. 사용자가 10단계보다 먼저 하라고 하여(2026-10-16) 1부(읽기와 오버레이 계층)와 2부(제약 검사·참조동작·커밋 쓰기·커밋 FK 재검사)를 모두 마쳤다. 전체 테이블 이미지를 없애고 PK 단건 DML과 명시적 커밋이 힙을 순회하지 않음을 계측했다.
   3. **사양이 정하지 않은 사용자·권한 규칙** : 보편적인 RDBMS 의 동작을 따른다. 점검 결과 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md) 8절의 규칙은 이미 PostgreSQL, Oracle 의 공통 동작이거나 AGENTS.md 개요 5 의 명시 문구를 따른 것이라 그대로 두었다.
 - 오류는 SQLSTATE, 내부 오류 번호, 영문 메시지에 더해, SQL 문장 안의 위치(줄, 칸)를 가질 수 있다. 문법 오류는 항상 위치를 가진다. 9단계의 프로토콜 오류 메시지에 이 위치를 실어 드라이버와 CLI 가 보여 줄 수 있게 한다.
 - 내부 오류 번호의 배정 : 1 ~ 999 공통, 1000번대 저장 엔진, 2000번대 타입 시스템, 3000번대 SQL 문법, 4000번대 카탈로그와 DDL, 5000번대 질의 실행. 번호와 SQLSTATE 의 목록은 `rdbms/src/common/errors.ts`에 있고 한 번 정한 번호는 바꾸지 않는다.
@@ -89,3 +89,5 @@
 - 2026-10-15 : 9단계 설계의 결정 5건 반영. 클라이언트 TLS 서버 인증서 검증 기본 켬 + 인증서 오류 때 100 ms 뒤 최대 2회 재시도, `SYS_SESSIONS` 열 추가, `udp.sessionTimeoutMs = 0` 은 제한 없음(경고), `udp.maxPacketSize` 64 ~ 65,507, 인증 실패 시 접속 종료(권장안 유지). AGENTS.md 상세 7, 8 에 사양을 보충했다. 코드 변경 없음.
 - 2026-10-16 : 사용자 결정 3건 반영(`hwdb` 화면 문구는 영어만 + 다국어 준비, DML 은 행 단위 접근, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식으로 현행 유지)과 `rdbms` 9단계(통신) 완료. 프로토콜 명세 `rdbms/docs/protocol.md` 확정, 로컬 전용 채널·TCP(TLS)·UDP(신뢰성 계층) 접속, 클라이언트 라이브러리, 서버 조립과 정상 종료·제어 요청, `udp` 설정 검증 보강. `npm test` 631개 통과, bun 630개 통과(`t.mock` 1개 제외). bun 에서는 TLS 서버의 최소 버전을 적용하지 못하는 것을 확인했다(구동 로그에 경고). 커밋은 하지 않았다.
 - 2026-10-16 : 사용자 요청으로 10단계 전에 DML 행 단위 접근을 진행했고, 작업을 나눌 수 있는 지점인 1부(읽기와 오버레이 계층)까지 마쳤다. 힙 지연 순회, PK 맵을 가진 오버레이, 행 단위 읽기 계층, 인덱스를 타는 조회와 DML 대상 찾기. `npm test` 642개 통과, bun 641개 통과(`t.mock` 1개 제외). 제약 검사·커밋 쓰기(2부)와 10단계는 남았다. 10단계 사전 작업으로 `control status` 응답 필드와 `hwdb` SSL 옵션 사양을 먼저 정했다. 커밋은 하지 않았다.
+
+- 2026-10-16 : `rdbms` DML 행 단위 접근 2부 완료. 제약 검사·FK 참조동작·커밋 쓰기·커밋 FK 재검사에서 전체 테이블 이미지를 없애고 변경 행만 처리한다. 복합 FK와 자기 참조·연쇄, 문장 실패 되돌리기와 잠금 재시도를 유지했다. 16개 시험을 더해 Node.js `npm test` 658개 통과. 2만 행 테이블의 PK 단건 INSERT·UPDATE·DELETE와 명시적 커밋에서 힙 순회가 0회였다. Bun 1.4.2도 전체 실행 657개 통과 + 대량 시험 별도 1개 통과로 658개 검증을 마쳤다(대량 시험은 데이터 준비를 포함해 제한을 120초에서 360초로 조정). 트랜잭션 문서와 진행·인수인계를 갱신했다. 다음은 10단계 CLI이며 커밋은 하지 않았다.

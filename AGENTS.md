@@ -9,7 +9,7 @@
 # 디렉토리 구조
 
 1. rdbms - RDBMS 본체 구현, 접속용 CLI 프로그램 포함
-2. jdbc5 - JDBC (자바 6 ~ 7 지원) 개발  - JDBC 인터페이스 3.0 버전으로 개발
+2. jdbc5 - JDBC (자바 6 ~ 7 지원) 개발  - JDBC 인터페이스 3.0 버전으로 개발, 자바 8 이상 버전에서도 사용은 가능해야 함.
 3. jdbc8 - JDBC (자바 8 이상 지원) 개발 - JDBC 인터페이스 4.2 버전으로 개발
 4. nodejsDriver - Node.js 용 드라이버 개발
 5. gui - GUI DB툴 개발

@@ -12,13 +12,13 @@
  *  - 문장이 실패하면 그 문장이 한 변경만 되돌릴 수 있게 한다. (txn/transaction.ts)
  *  - 트랜잭션 커밋 : 오버레이의 변경을 저장 배치로 쓴다. (commitTransaction)
  *
- * 문장은 메모리 이미지(StatementImages)에서 제약을 검사한 뒤, 잠금을 걸고 트랜잭션의 오버레이에 접는다.
+ * 문장은 변경할 행의 값을 먼저 계산하고 오버레이에 적용한 뒤, 변경 행의 제약을 검사하고 잠금을 건다.
  * 데이터 파일에는 쓰지 않는다. 쓰기는 커밋할 때 한 번 한다.
  * 자동 커밋 문장은 문장 하나짜리 트랜잭션이며, 세션이 문장 직후 커밋한다.
  * TRUNCATE 는 DDL 처럼 실행 전후에 자동으로 커밋된다. (session/session.ts)
  *
  * 관련 사양 : AGENTS.md 상세 1-3, 1-4, 10, 11
- * 구현 단계 : 6단계, 7단계(트랜잭션 연동)
+ * 구현 단계 : 6단계, 7단계(트랜잭션 연동), DML 행 단위 접근 2부
  */
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
@@ -41,31 +41,23 @@ import type { KeyColumn } from "../types/codec.js";
 import type { RowId, StorageBatch } from "../storage/format/format.js";
 import type { CatalogStore, StoredTable } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
-import { dataHandlers, executeQuery, readTableRows, scanTableForDml, typeHandlers } from "./executor.js";
+import { dataHandlers, executeQuery, scanTableForDml, typeHandlers } from "./executor.js";
 import type { QueryContext } from "./executor.js";
 import { evaluateExpression } from "./expression.js";
 import { atInnerLevel } from "./expression.js";
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
 import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
-import { lockConflict, pkLockKey, rowLockKey } from "../txn/lockManager.js";
-import { overlayKey, parseCommittedRowKey, pkKeyHex, tableSignature } from "../txn/transaction.js";
+import { parseCommittedRowKey, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
+import { visibleRows } from "../txn/rowAccess.js";
+import { RowChanges, finishRowChanges, revalidateRowReferences, valuesOf } from "./rowChanges.js";
+import type { RowChange, RowTarget } from "./rowChanges.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
   if (position !== undefined) {
     throw withPosition(new DbError(sqlState, code, message), position);
   }
   throw new DbError(sqlState, code, message);
-}
-
-function rowIdKey(id: RowId): string {
-  return `${id.pageId}:${id.slotId}`;
-}
-
-/** 이미지 안에서 행을 가리키는 키이다. 커밋된 행은 위치, 이 트랜잭션이 넣은 행은 임시 번호이다. */
-function imageRowKey(id: RowId | null, tempId: string | null): string {
-  if (id !== null) return `c${rowIdKey(id)}`;
-  return `t${tempId ?? ""}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,281 +130,6 @@ function rewriteForBase(
 }
 
 // ---------------------------------------------------------------------------
-// 문장 안의 메모리 이미지 (제약 검사와 CASCADE용)
-// ---------------------------------------------------------------------------
-
-interface ImageRow {
-  /** 저장된 커밋 행의 위치이다. 이 트랜잭션이 넣은 행과 이번 문장이 넣는 행은 null 이다. */
-  id: RowId | null;
-  /** 이 트랜잭션이 앞선 문장에서 넣은 행의 임시 번호이다. */
-  tempId: string | null;
-  values: SqlValue[];
-  original: SqlValue[] | null;
-  deleted: boolean;
-  added: boolean;
-}
-
-interface TableImage {
-  catalog: CatalogStore;
-  tablespace: string;
-  table: StoredTable;
-  rows: ImageRow[];
-  byId: Map<string, ImageRow>;
-  dirty: boolean;
-}
-
-class StatementImages {
-  private readonly images = new Map<string, TableImage>();
-
-  /** txn 이 있으면 그 트랜잭션이 보는 값(커밋 값 + 자기 변경)으로 이미지를 만든다. */
-  constructor(
-    private readonly manager: TablespaceManager,
-    private readonly txn: Transaction | null,
-  ) {}
-
-  image(tablespace: string, tableName: string): TableImage {
-    const key = `${tablespace}.${tableName}`;
-    const found = this.images.get(key);
-    if (found !== undefined) return found;
-    const catalog = this.manager.requireCatalog(tablespace);
-    const table = catalog.data.tables[tableName];
-    if (table === undefined) {
-      throw new DbError("42P01", ERROR_CODES.TABLE_NOT_FOUND, `Table does not exist: "${key}".`);
-    }
-    const image: TableImage = { catalog, tablespace, table, rows: [], byId: new Map(), dirty: false };
-    for (const stored of readTableRows(catalog, table, this.txn, tablespace)) {
-      const row: ImageRow = {
-        id: stored.id,
-        tempId: stored.tempId,
-        values: stored.values,
-        original: null,
-        deleted: false,
-        added: false,
-      };
-      image.rows.push(row);
-      image.byId.set(imageRowKey(stored.id, stored.tempId), row);
-    }
-    this.images.set(key, image);
-    return image;
-  }
-
-  /** 건드린 이미지들을 돌려준다. */
-  dirtyImages(): TableImage[] {
-    return [...this.images.values()].filter((image) => image.dirty);
-  }
-
-  insertRow(image: TableImage, values: SqlValue[]): ImageRow {
-    const row: ImageRow = { id: null, tempId: null, values, original: null, deleted: false, added: true };
-    image.rows.push(row);
-    image.dirty = true;
-    return row;
-  }
-
-  updateRow(image: TableImage, row: ImageRow, values: SqlValue[]): void {
-    if (row.deleted) {
-      throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "Cannot update a deleted row.");
-    }
-    if (row.original === null && !row.added) {
-      row.original = [...row.values];
-    }
-    row.values = values;
-    image.dirty = true;
-  }
-
-  deleteRow(image: TableImage, row: ImageRow): void {
-    if (row.added) {
-      const index = image.rows.indexOf(row);
-      if (index >= 0) image.rows.splice(index, 1);
-      image.dirty = true;
-      return;
-    }
-    row.deleted = true;
-    image.dirty = true;
-  }
-
-  liveRows(image: TableImage): ImageRow[] {
-    return image.rows.filter((row) => !row.deleted);
-  }
-}
-
-/** 행에서 PK 값을 뽑는다. */
-function pkOf(table: StoredTable, values: SqlValue[]): SqlValue[] {
-  return table.pkColumns.map((column) => {
-    const index = table.columns.findIndex((entry) => entry.name === column);
-    return (values[index] ?? null) as SqlValue;
-  });
-}
-
-/** 행에서 FK 값을 뽑는다. */
-function fkOf(columns: string[], table: StoredTable, values: SqlValue[]): SqlValue[] {
-  return columns.map((column) => {
-    const index = table.columns.findIndex((entry) => entry.name === column);
-    return (values[index] ?? null) as SqlValue;
-  });
-}
-
-/** FK 값에 NULL이 하나라도 있으면 검사를 건너뛴다. */
-function fkIsNull(values: SqlValue[]): boolean {
-  return values.some((value) => value === null);
-}
-
-// ---------------------------------------------------------------------------
-// 제약 검사와 참조동작
-// ---------------------------------------------------------------------------
-
-/** 살아 있는 행들의 NOT NULL을 검사한다. */
-function checkNotNull(image: TableImage, position?: SourcePosition): void {
-  for (const row of image.rows) {
-    if (row.deleted) continue;
-    for (let index = 0; index < image.table.columns.length; index++) {
-      const column = image.table.columns[index] as StoredTable["columns"][number];
-      if (column.notNull && (row.values[index] ?? null) === null) {
-        fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${column.name}".`, position);
-      }
-    }
-  }
-}
-
-/**
- * 값 묶음을 비교할 수 있는 문자열로 바꾼다. 인덱스 키와 같은 인코딩이므로 CHAR 의 뒤쪽 공백을 무시하고,
- * 같은 값이면 같은 문자열이다. 쌍마다 견주지 않고 집합으로 찾기 위해 쓴다.
- */
-function tupleKey(values: SqlValue[], types: DataType[]): string {
-  return encodeKey(
-    values,
-    types.map((type): KeyColumn => ({ type, descending: false })),
-  ).toString("latin1");
-}
-
-function columnTypes(table: StoredTable, columns: readonly string[]): DataType[] {
-  return columns.map((column) => (table.columns.find((entry) => entry.name === column) as StoredTable["columns"][number]).dataType);
-}
-
-/** 살아 있는 행들의 PK 유일성을 검사한다. */
-function checkPrimaryKey(image: TableImage, position?: SourcePosition): void {
-  if (image.table.pkName === null) return;
-  const types = columnTypes(image.table, image.table.pkColumns);
-  const seen = new Set<string>();
-  for (const row of image.rows) {
-    if (row.deleted) continue;
-    const key = tupleKey(pkOf(image.table, row.values), types);
-    if (seen.has(key)) {
-      fail("23505", ERROR_CODES.DUPLICATE_KEY, `Duplicate primary key in table "${image.table.name}".`, position);
-    }
-    seen.add(key);
-  }
-}
-
-/** 자식 쪽 FK 존재 검사를 한다. CASCADE로 지워지지 않은 orphan이 있으면 오류이다. */
-function checkForeignKeys(images: StatementImages, image: TableImage, position?: SourcePosition): void {
-  for (const constraint of Object.values(image.catalog.data.constraints)) {
-    if (constraint.kind !== "FOREIGN KEY" || constraint.table !== image.table.name) continue;
-    const parent = images.image(image.tablespace, constraint.refTable as string);
-    const refColumns = constraint.refColumns as string[];
-    const parentTypes = columnTypes(parent.table, refColumns);
-    const parentKeys = new Set<string>();
-    for (const parentRow of parent.rows) {
-      if (parentRow.deleted) continue;
-      parentKeys.add(tupleKey(fkOf(refColumns, parent.table, parentRow.values), parentTypes));
-    }
-    for (const row of image.rows) {
-      if (row.deleted) continue;
-      const key = fkOf(constraint.columns, image.table, row.values);
-      if (fkIsNull(key)) continue;
-      if (!parentKeys.has(tupleKey(key, parentTypes))) {
-        fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
-      }
-    }
-  }
-}
-
-/** 부모 변경에 따른 참조동작을 끝까지 적용한다. */
-function applyReferentialActions(
-  images: StatementImages,
-  kind: "delete" | "update",
-  position?: SourcePosition,
-): void {
-  for (;;) {
-    let progressed = false;
-    for (const image of images.dirtyImages()) {
-      for (const constraint of Object.values(image.catalog.data.constraints)) {
-        if (constraint.kind !== "FOREIGN KEY") continue;
-        // 자식 이미지를 준비한다. 같은 테이블스페이스만 참조하므로 같이 있다.
-        const child = images.image(image.tablespace, constraint.table);
-        const parent = images.image(image.tablespace, constraint.refTable as string);
-        const refColumns = constraint.refColumns as string[];
-        const parentTypes = columnTypes(parent.table, refColumns);
-        // 부모의 현재 키와 원래 키를 한 번씩만 모은다. 자기 테이블 참조로 부모가 중간에 바뀌어도
-        // 바깥 반복(progressed)이 다시 돌면서 새로 모으므로 결국 같은 결과에 이른다.
-        const aliveKeys = new Set<string>();
-        const originalKeys = new Set<string>();
-        for (const parentRow of parent.rows) {
-          if (!parentRow.deleted) aliveKeys.add(tupleKey(fkOf(refColumns, parent.table, parentRow.values), parentTypes));
-          const original = parentRow.original ?? (parentRow.deleted ? parentRow.values : null);
-          if (original !== null) originalKeys.add(tupleKey(fkOf(refColumns, parent.table, original), parentTypes));
-        }
-        // 바뀐 부모의 원래 키 → 새 값 (ON UPDATE CASCADE 용)
-        const updatedByOriginal = new Map<string, SqlValue[]>();
-        if (kind === "update") {
-          for (const parentRow of parent.rows) {
-            if (parentRow.deleted || parentRow.original === null) continue;
-            updatedByOriginal.set(tupleKey(fkOf(refColumns, parent.table, parentRow.original), parentTypes), parentRow.values);
-          }
-        }
-        for (const childRow of [...child.rows]) {
-          if (childRow.deleted) continue;
-          const key = fkOf(constraint.columns, child.table, childRow.values);
-          if (fkIsNull(key)) continue;
-          const keyText = tupleKey(key, parentTypes);
-          // 현재 부모에 있으면 할 일이 없다.
-          if (aliveKeys.has(keyText)) continue;
-          // 원래 부모에 있었는지 본다. 없었으면 이 문장이 만든 orphan이므로 동작 없이 오류이다.
-          if (!originalKeys.has(keyText)) {
-            fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
-          }
-          const action = kind === "delete" ? constraint.onDelete : constraint.onUpdate;
-          if (action === "CASCADE") {
-            if (kind === "delete") {
-              images.deleteRow(child, childRow);
-              progressed = true;
-            } else {
-              // 바뀐 부모를 찾아 새 PK로 맞춘다.
-              const updated = updatedByOriginal.get(keyText);
-              if (updated === undefined) {
-                fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
-              }
-              const newValues = [...childRow.values];
-              (constraint.columns as string[]).forEach((column, index) => {
-                const columnIndex = child.table.columns.findIndex((entry) => entry.name === column);
-                const refIndex = parent.table.columns.findIndex((entry) => entry.name === refColumns[index]);
-                newValues[columnIndex] = (updated[refIndex] ?? null) as SqlValue;
-              });
-              images.updateRow(child, childRow, newValues);
-              progressed = true;
-            }
-          } else if (action === "SET NULL") {
-            const newValues = [...childRow.values];
-            for (const column of constraint.columns) {
-              const columnIndex = child.table.columns.findIndex((entry) => entry.name === column);
-              const definition = child.table.columns[columnIndex] as StoredTable["columns"][number];
-              if (definition.notNull) {
-                fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `SET NULL violates NOT NULL of column "${column}".`, position);
-              }
-              newValues[columnIndex] = null;
-            }
-            images.updateRow(child, childRow, newValues);
-            progressed = true;
-          } else {
-            fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Foreign key "${constraint.name}" is violated.`, position);
-          }
-        }
-      }
-    }
-    if (!progressed) break;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // INSERT
 // ---------------------------------------------------------------------------
 
@@ -471,22 +188,14 @@ export function executeInsert(
       );
     }
   }
-  // 전체 행으로 펼친다. 적지 않은 컬럼은 DEFAULT나 NULL이다.
-  const images = new StatementImages(manager, ctx.txn);
-  const image = images.image(resolved.tablespace, table.name);
-  for (const source of sourceRows) {
-    const full = table.columns.map((column) => {
-      const position = insertColumns.findIndex((entry) => entry.name === column.name);
-      if (position >= 0) return (source[position] ?? null) as SqlValue;
-      return evaluateColumnDefault(column, ctx);
-    });
-    images.insertRow(image, full);
-  }
-  checkNotNull(image, stmt.target.position);
-  checkPrimaryKey(image, stmt.target.position);
-  applyReferentialActions(images, "update", stmt.target.position);
-  checkForeignKeys(images, image, stmt.target.position);
-  applyToTransaction(ctx, images);
+  // 생략한 컬럼의 DEFAULT도 변경을 적용하기 전에 모두 계산한다.
+  const fullRows = sourceRows.map((source) => table.columns.map((column) => {
+    const position = insertColumns.findIndex((entry) => entry.name === column.name);
+    return position >= 0 ? (source[position] ?? null) as SqlValue : evaluateColumnDefault(column, ctx);
+  }));
+  const changes = new RowChanges(ctx.txn);
+  for (const values of fullRows) changes.insert(resolved, values);
+  finishRowChanges(changes, ctx.locker, stmt.target.position);
   return sourceRows.length;
 }
 
@@ -575,14 +284,10 @@ export function executeUpdate(
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const images = new StatementImages(manager, ctx.txn);
-  const image = images.image(resolved.tablespace, table.name);
-  const found = scanTableForDml(image.catalog, table, resolved.tablespace, alias, where, ctx);
-  let count = 0;
-  for (const row of found) {
-    const stored = image.byId.get(imageRowKey(row.id, row.tempId));
-    if (stored === undefined || stored.deleted) continue;
-    const newValues = [...stored.values];
+  const found = scanTableForDml(resolved.catalog, table, resolved.tablespace, alias, where, ctx);
+  // 서브쿼리와 DEFAULT는 문장 시작 상태에서 평가한다. 아직 오버레이를 바꾸지 않는다.
+  const updates = found.map((row) => {
+    const newValues = [...row.values];
     for (const assignment of assignments) {
       const index = table.columns.findIndex((entry) => entry.name === assignment.column.name);
       if (assignment.value.kind === "Default") {
@@ -604,23 +309,12 @@ export function executeUpdate(
         stmt.target.position,
       );
     }
-    images.updateRow(image, stored, newValues);
-    count++;
-  }
-  if (count === 0) return 0;
-  checkNotNull(image, stmt.target.position);
-  checkPrimaryKey(image, stmt.target.position);
-  applyReferentialActions(images, "update", stmt.target.position);
-  checkForeignKeys(images, image, stmt.target.position);
-  // 다른 테이블의 CASCADE로 바뀐 이미지들도 검사한다.
-  for (const other of images.dirtyImages()) {
-    if (other === image) continue;
-    checkNotNull(other, stmt.target.position);
-    checkPrimaryKey(other, stmt.target.position);
-    checkForeignKeys(images, other, stmt.target.position);
-  }
-  applyToTransaction(ctx, images);
-  return count;
+    return { row, values: newValues };
+  });
+  const changes = new RowChanges(ctx.txn);
+  for (const update of updates) changes.update(resolved, update.row, update.values);
+  finishRowChanges(changes, ctx.locker, stmt.target.position);
+  return found.length;
 }
 
 /** DELETE를 실행하고 지운 행 수를 돌려준다. */
@@ -637,21 +331,10 @@ export function executeDelete(
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const images = new StatementImages(manager, ctx.txn);
-  const image = images.image(resolved.tablespace, table.name);
-  const found = scanTableForDml(image.catalog, table, resolved.tablespace, alias, where, ctx);
-  for (const row of found) {
-    const stored = image.byId.get(imageRowKey(row.id, row.tempId));
-    if (stored !== undefined && !stored.deleted) images.deleteRow(image, stored);
-  }
-  if (found.length === 0) return 0;
-  applyReferentialActions(images, "delete", stmt.target.position);
-  for (const other of images.dirtyImages()) {
-    checkNotNull(other, stmt.target.position);
-    checkPrimaryKey(other, stmt.target.position);
-    checkForeignKeys(images, other, stmt.target.position);
-  }
-  applyToTransaction(ctx, images);
+  const found = scanTableForDml(resolved.catalog, table, resolved.tablespace, alias, where, ctx);
+  const changes = new RowChanges(ctx.txn);
+  for (const row of found) changes.delete(resolved, row);
+  finishRowChanges(changes, ctx.locker, stmt.target.position);
   return found.length;
 }
 
@@ -677,25 +360,10 @@ export function executeTruncate(
     const childCatalog = manager.requireCatalog(resolved.tablespace);
     const childTable = childCatalog.data.tables[constraint.table];
     if (childTable === undefined) continue;
-    const childRows = readTableRows(childCatalog, childTable);
-    if (childRows.length === 0) continue;
-    const parentRows = readTableRows(resolved.catalog, resolved.table);
-    if (parentRows.length === 0) continue;
-    // 참조 행이 실제로 있는지 본다. 없으면 그냥 비운다.
-    const parentTypes = (constraint.refColumns as string[]).map((column) => {
-      const found = resolved.table.columns.find((entry) => entry.name === column);
-      return (found as StoredTable["columns"][number]).dataType;
-    });
-    const refColumns = constraint.refColumns as string[];
-    const parentKeys = new Set(
-      parentRows.map((parentRow) => tupleKey(fkOf(refColumns, resolved.table, parentRow.values), parentTypes)),
-    );
-    const referenced = childRows.some((childRow) => {
-      const key = fkOf(constraint.columns, childTable, childRow.values);
-      if (fkIsNull(key)) return false;
-      return parentKeys.has(tupleKey(key, parentTypes));
-    });
-    if (referenced) {
+    // 참조 무결성이 유지되므로 NULL이 없는 자식 FK는 부모에 존재한다.
+    // 첫 참조 행에서 멈추며 부모 테이블을 읽지 않는다.
+    for (const row of visibleRows(childCatalog, resolved.tablespace, childTable, null)) {
+      if (valuesOf(childTable, constraint.columns, row.values).includes(null)) continue;
       fail("23503", ERROR_CODES.FOREIGN_KEY_VIOLATION, `Table "${resolved.table.name}" is referenced by "${constraint.table}".`, stmt.name.position);
     }
   }
@@ -704,248 +372,113 @@ export function executeTruncate(
 }
 
 // ---------------------------------------------------------------------------
-// 트랜잭션에 접기와 커밋
+// 커밋 : 변경 행만 저장 배치에 쓴다.
 // ---------------------------------------------------------------------------
 
-/** 테이블의 PK 컬럼 타입이다. PK 가 없으면 null 이다. */
-function pkTypesOf(table: StoredTable): DataType[] | null {
-  if (table.pkName === null) return null;
-  return table.pkColumns.map((column) => {
-    const found = table.columns.find((entry) => entry.name === column);
-    return (found as StoredTable["columns"][number]).dataType;
-  });
+interface CommitTarget extends RowTarget {
+  overlay: TableOverlay;
 }
 
-/**
- * 이미지의 변경 행들이 필요로 하는 잠금 키를 모은다.
- *  - 저장된 행을 바꾸거나 지우면 행 잠금
- *  - 새 행이거나 PK 가 바뀐 행이면 새 PK 값의 PK 잠금 (같은 PK 를 동시에 넣으려는 쪽끼리 순서를 정한다)
- */
-function collectLockKeys(image: TableImage, keys: string[]): void {
-  const pkTypes = pkTypesOf(image.table);
-  const lockPk = (values: SqlValue[]): void => {
-    if (pkTypes === null) return;
-    const pk = pkOf(image.table, values);
-    if (pk.some((value) => value === null)) return;
-    keys.push(pkLockKey(image.tablespace, image.table.name, pkKeyHex(pk, pkTypes)));
-  };
-  for (const row of image.rows) {
-    if (row.added) {
-      lockPk(row.values);
-      continue;
-    }
-    if (row.deleted) {
-      if (row.id !== null) keys.push(rowLockKey(image.tablespace, image.table.name, row.id));
-      continue;
-    }
-    if (row.original === null) continue;
-    if (row.id !== null) keys.push(rowLockKey(image.tablespace, image.table.name, row.id));
-    if (pkTypes !== null && tupleKey(pkOf(image.table, row.original), pkTypes) !== tupleKey(pkOf(image.table, row.values), pkTypes)) {
-      lockPk(row.values);
-    }
-  }
-}
-
-/**
- * 문장이 끝났을 때 변경을 트랜잭션에 접는다.
- * 잠금을 먼저 한꺼번에 걸고, 충돌하면 아무것도 바꾸지 않고 충돌 오류를 던진다.
- * (세션이 기다렸다가 문장을 처음부터 다시 실행한다)
- */
-function applyToTransaction(ctx: QueryContext, images: StatementImages): void {
-  const dirty = images.dirtyImages();
-  const keys: string[] = [];
-  for (const image of dirty) collectLockKeys(image, keys);
-  const result = ctx.locker.tryAcquireAll(ctx.txn.id, keys);
-  if (!result.ok) throw lockConflict(result.key);
-  for (const image of dirty) {
-    for (const row of image.rows) {
-      if (row.added || row.deleted || row.original !== null) {
-        foldImageRow(ctx.txn, image.tablespace, image.table, row);
-      }
-    }
-  }
-}
-
-/**
- * 문장 이미지의 한 행을 트랜잭션의 오버레이에 접는다. 호출 전에 잠금을 걸어야 한다.
- * 오버레이 쪽은 행 단위 API(`insertRow`, `updateRow`, `deleteRow`)이고 되돌리기 항목을 남긴다.
- * (이미지 방식은 DML 의 제약 검사가 행 단위로 바뀔 때 사라진다. PROGRESS.md "DML 행 단위 접근")
- */
-function foldImageRow(txn: Transaction, tablespace: string, table: StoredTable, row: ImageRow): void {
-  if (row.added) {
-    txn.insertRow(tablespace, table, row.values);
-    return;
-  }
-  if (row.tempId !== null) {
-    // 이 트랜잭션이 앞서 넣은 행이다.
-    if (row.deleted) txn.deleteRow(tablespace, table, { id: null, tempId: row.tempId });
-    else if (row.original !== null) txn.updateRow(tablespace, table, { id: null, tempId: row.tempId }, row.values);
-    return;
-  }
-  if (row.id === null) {
-    throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "Transaction row has no identity.");
-  }
-  if (row.deleted) txn.deleteRow(tablespace, table, { id: row.id, tempId: null });
-  else if (row.original !== null) txn.updateRow(tablespace, table, { id: row.id, tempId: null }, row.values);
-}
-
-function parseRowKey(key: string): RowId {
-  return parseCommittedRowKey(key);
-}
-
-/** 오버레이를 쓸 수 있는 이미지로 바꾼다. 트랜잭션 중에 테이블 정의가 바뀌었으면 40001 이다. */
-function overlayToImage(manager: TablespaceManager, overlay: TableOverlay): TableImage {
-  const changed = (what: string): DbError =>
-    new DbError(
-      "40001",
-      ERROR_CODES.TRANSACTION_CONFLICT,
-      `Table "${overlay.tablespace}.${overlay.table}" was ${what} during the transaction.`,
-    );
+/** 테이블 정의가 트랜잭션 시작 이후 바뀌지 않았는지 확인한다. */
+function resolveOverlay(manager: TablespaceManager, overlay: TableOverlay): CommitTarget {
+  const changed = (what: string): DbError => new DbError("40001", ERROR_CODES.TRANSACTION_CONFLICT,
+    `Table "${overlay.tablespace}.${overlay.table}" was ${what} during the transaction.`);
   if (!manager.has(overlay.tablespace)) throw changed("dropped");
   const catalog = manager.requireCatalog(overlay.tablespace);
   const table = catalog.data.tables[overlay.table];
   if (table === undefined) throw changed("dropped");
   if (tableSignature(table) !== overlay.signature) throw changed("altered");
-  const rows: ImageRow[] = [];
-  for (const key of overlay.deletedKeys()) {
-    rows.push({ id: parseRowKey(key), tempId: null, values: [], original: null, deleted: true, added: false });
-  }
-  for (const [key, values] of overlay.updatedRows()) {
-    rows.push({ id: parseRowKey(key), tempId: null, values, original: values, deleted: false, added: false });
-  }
-  for (const insert of overlay.insertedRows()) {
-    rows.push({ id: null, tempId: insert.tempId, values: insert.values, original: null, deleted: false, added: true });
-  }
-  return { catalog, tablespace: overlay.tablespace, table, rows, byId: new Map(), dirty: true };
+  return { catalog, tablespace: overlay.tablespace, table, overlay };
 }
 
-/**
- * 커밋 직전에 참조 무결성을 다시 확인한다.
- * 문장을 실행한 뒤 다른 트랜잭션이 커밋한 변경(부모 삭제 등)과 어긋나지 않는지 본다.
- * 검사는 커밋된 값에 이 트랜잭션의 변경을 합친 값으로 하며, FK 로 엮인 테이블만 본다.
- */
-function revalidateReferences(manager: TablespaceManager, txn: Transaction, overlays: TableOverlay[]): void {
-  const images = new StatementImages(manager, txn);
-  const toCheck = new Map<string, TableImage>();
-  for (const overlay of overlays) {
-    const catalog = manager.requireCatalog(overlay.tablespace);
-    for (const constraint of Object.values(catalog.data.constraints)) {
-      if (constraint.kind !== "FOREIGN KEY") continue;
-      if (constraint.table !== overlay.table && constraint.refTable !== overlay.table) continue;
-      toCheck.set(overlayKey(overlay.tablespace, constraint.table), images.image(overlay.tablespace, constraint.table));
+/** 바꾼 커밋 행만 위치로 읽어 FK 재검사용 옛 값과 새 값을 모은다. */
+function referenceChanges(targets: CommitTarget[]): RowChange[] {
+  const changes: RowChange[] = [];
+  for (const target of targets) {
+    const { catalog, table, overlay } = target;
+    const types = table.columns.map((column) => column.dataType);
+    const oldValues = (id: RowId): SqlValue[] => {
+      const data = catalog.space.heap(table.heapRoot).get(id);
+      if (data === null) throw new DbError("40001", ERROR_CODES.TRANSACTION_CONFLICT, "Changed row does not exist.");
+      return decodeRow(data, types);
+    };
+    for (const key of overlay.deletedKeys()) {
+      const id = parseCommittedRowKey(key);
+      changes.push({ target, ref: { id, tempId: null }, before: oldValues(id), after: null });
+    }
+    for (const [key, values] of overlay.updatedRows()) {
+      const id = parseCommittedRowKey(key);
+      changes.push({ target, ref: { id, tempId: null }, before: oldValues(id), after: values });
+    }
+    for (const row of overlay.insertedRows()) {
+      changes.push({ target, ref: { id: null, tempId: row.tempId }, before: null, after: row.values });
     }
   }
-  for (const image of toCheck.values()) checkForeignKeys(images, image);
+  return changes;
 }
 
-/**
- * 트랜잭션의 오버레이를 저장소에 쓴다. 쓰기는 테이블스페이스마다 배치 하나이며, 성공하면 fsync 를 마친 뒤이다.
- * 잠금은 호출한 세션이 성공과 실패에 상관없이 푼다.
- * validate 가 true 이면 쓰기 전에 참조 무결성을 다시 확인한다.
- * (문장 하나짜리 트랜잭션은 문장과 커밋 사이에 다른 문장이 끼어들 수 없으므로 생략한다)
- */
+/** 변경을 테이블스페이스마다 배치 하나로 쓴다. 성공 시 fsync가 끝나 있다. */
 export function commitTransaction(manager: TablespaceManager, txn: Transaction, validate: boolean): void {
-  const overlays = txn.touchedOverlays();
-  if (overlays.length === 0) return;
-  const images = overlays.map((overlay) => overlayToImage(manager, overlay));
-  if (validate) revalidateReferences(manager, txn, overlays);
-  writeTableImages(images);
-}
-
-/** 이미지들을 저장 배치로 쓴다. 테이블스페이스마다 배치 하나를 공유한다. */
-function writeTableImages(images: TableImage[]): void {
+  const targets = txn.touchedOverlays().map((overlay) => resolveOverlay(manager, overlay));
+  if (targets.length === 0) return;
+  if (validate) revalidateRowReferences(txn, referenceChanges(targets));
   const batches = new Map<string, StorageBatch>();
   try {
-    for (const image of images) {
-      let batch = batches.get(image.tablespace);
+    for (const target of targets) {
+      let batch = batches.get(target.tablespace);
       if (batch === undefined) {
-        batch = image.catalog.space.begin();
-        batches.set(image.tablespace, batch);
+        batch = target.catalog.space.begin();
+        batches.set(target.tablespace, batch);
       }
-      writeImage(image, batch);
+      writeOverlay(target, batch);
     }
-    for (const batch of batches.values()) {
-      batch.commit();
-    }
+    for (const batch of batches.values()) batch.commit();
   } catch (error) {
     for (const batch of batches.values()) {
-      try {
-        batch.rollback();
-      } catch {
-        // 원래 오류를 유지한다.
-      }
+      try { batch.rollback(); } catch { /* 원래 오류를 유지한다. */ }
     }
     throw error;
   }
 }
 
-/**
- * 이미지 하나의 변경을 배치에 쓴다. 힙과 인덱스를 함께 고친다.
- * 지운 행과 바꾸기 전 값의 인덱스 항목을 먼저 모두 지운 뒤 새 항목을 넣는다.
- * 같은 PK 를 지우고 다시 넣거나 PK 값을 서로 맞바꾸어도 유일 인덱스에서 부딪치지 않는다.
- */
-function writeImage(image: TableImage, batch: StorageBatch): void {
-  const types = image.table.columns.map((column) => column.dataType);
+/** 옛 인덱스 항목을 모두 지운 뒤 새 항목을 넣어 PK 맞바꾸기도 처리한다. */
+function writeOverlay(target: CommitTarget, batch: StorageBatch): void {
+  const { catalog, table, overlay } = target;
+  const types = table.columns.map((column) => column.dataType);
   const indexes: { root: number; columns: { name: string; descending: boolean }[] }[] = [];
-  if (image.table.pkName !== null && image.table.pkIndexRoot !== null) {
-    indexes.push({ root: image.table.pkIndexRoot, columns: image.table.pkColumns.map((name) => ({ name, descending: false })) });
+  if (table.pkName !== null && table.pkIndexRoot !== null) {
+    indexes.push({ root: table.pkIndexRoot, columns: table.pkColumns.map((name) => ({ name, descending: false })) });
   }
-  for (const index of Object.values(image.catalog.data.indexes)) {
-    if (index.table === image.table.name) {
-      indexes.push({ root: index.indexRoot, columns: index.columns });
-    }
+  for (const index of Object.values(catalog.data.indexes)) {
+    if (index.table === table.name) indexes.push({ root: index.indexRoot, columns: index.columns });
   }
-  const keyOf = (values: SqlValue[]): Buffer[] => indexes.map((index) => {
-    const keyColumns: KeyColumn[] = index.columns.map((column) => {
-      const found = image.table.columns.find((entry) => entry.name === column.name);
-      return { type: (found as StoredTable["columns"][number]).dataType, descending: column.descending };
-    });
-    const keyValues = index.columns.map((column) => {
-      const position = image.table.columns.findIndex((entry) => entry.name === column.name);
-      return (values[position] ?? null) as SqlValue;
-    });
-    return encodeKey(keyValues, keyColumns);
-  });
-  const oldKeysOf = (id: RowId, what: string): Buffer[] => {
-    const stored = image.catalog.space.heap(image.table.heapRoot).get(id);
-    if (stored === null) {
-      throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, `Row to ${what} does not exist.`);
-    }
-    return keyOf(decodeRow(stored, types));
+  const keyColumns = indexes.map((index) => index.columns.map((column): KeyColumn => ({
+    type: table.columns.find((entry) => entry.name === column.name)!.dataType,
+    descending: column.descending,
+  })));
+  const keysOf = (values: SqlValue[]): Buffer[] => indexes.map((index, position) =>
+    encodeKey(valuesOf(table, index.columns.map((column) => column.name), values), keyColumns[position]!));
+  const removeOldKeys = (id: RowId): void => {
+    const stored = catalog.space.heap(table.heapRoot).get(id);
+    if (stored === null) throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "Changed row does not exist.");
+    const keys = keysOf(decodeRow(stored, types));
+    indexes.forEach((index, position) => batch.index(index.root).delete(keys[position]!, id));
   };
-  // 1단계 : 지운 행과 바꿀 행의 옛 인덱스 항목, 지운 행의 힙 자리를 없앤다.
-  for (const row of image.rows) {
-    if (row.added || row.id === null) continue;
-    const id = row.id;
-    if (row.deleted) {
-      const oldKeys = oldKeysOf(id, "delete");
-      indexes.forEach((index, position) => {
-        batch.index(index.root).delete(oldKeys[position] as Buffer, id);
-      });
-      batch.heap(image.table.heapRoot).delete(id);
-    } else if (row.original !== null) {
-      const oldKeys = oldKeysOf(id, "update");
-      indexes.forEach((index, position) => {
-        batch.index(index.root).delete(oldKeys[position] as Buffer, id);
-      });
-    }
+  for (const key of overlay.deletedKeys()) {
+    const id = parseCommittedRowKey(key);
+    removeOldKeys(id);
+    batch.heap(table.heapRoot).delete(id);
   }
-  // 2단계 : 바꾼 행과 새 행을 쓰고 새 인덱스 항목을 넣는다.
-  for (const row of image.rows) {
-    if (row.added && !row.deleted) {
-      const id = batch.heap(image.table.heapRoot).insert(encodeRow(row.values, types));
-      row.id = id;
-      const keys = keyOf(row.values);
-      indexes.forEach((index, position) => {
-        batch.index(index.root).insert(keys[position] as Buffer, id);
-      });
-    } else if (!row.added && !row.deleted && row.original !== null && row.id !== null) {
-      const id = row.id;
-      batch.heap(image.table.heapRoot).update(id, encodeRow(row.values, types));
-      const newKeys = keyOf(row.values);
-      indexes.forEach((index, position) => {
-        batch.index(index.root).insert(newKeys[position] as Buffer, id);
-      });
-    }
+  for (const [key] of overlay.updatedRows()) removeOldKeys(parseCommittedRowKey(key));
+  for (const [key, values] of overlay.updatedRows()) {
+    const id = parseCommittedRowKey(key);
+    batch.heap(table.heapRoot).update(id, encodeRow(values, types));
+    const keys = keysOf(values);
+    indexes.forEach((index, position) => batch.index(index.root).insert(keys[position]!, id));
+  }
+  for (const row of overlay.insertedRows()) {
+    const id = batch.heap(table.heapRoot).insert(encodeRow(row.values, types));
+    const keys = keysOf(row.values);
+    indexes.forEach((index, position) => batch.index(index.root).insert(keys[position]!, id));
   }
 }
