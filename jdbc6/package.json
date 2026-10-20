@@ -9,6 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test scripts/test.mjs",
-    "test:matrix": "node --test scripts/matrix.test.mjs"
+    "test:matrix": "node --test scripts/matrix.test.mjs",
+    "test:integration": "node scripts/integration.mjs"
   }
 }

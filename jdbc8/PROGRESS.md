@@ -2,15 +2,16 @@
 
 HelloWorldDB용 JDBC 4.2 드라이버(자바 8 이상)를 개발하는 프로젝트이다. 공통 프로토콜 계층은 자바 6용 `jdbc6`와 공유한다.
 사양은 루트의 AGENTS.md 가 기준이다. 이 문서에는 세부 계획, 진행 상황, 인수인계 사항만 적는다.
-아래의 단계 번호(13-1 등)는 보류 전 계획에서 쓰던 번호이다. "상세 N" 은 AGENTS.md "RDBMS 에 구현되어야 할 사항 (상세)" 의 N번 절을 가리킨다.
+단계 번호(13-1 등)는 기존 계획의 번호를 유지한다. 2026-10-20 추가 작업 지시에 따라 13-4까지 진행했다. "상세 N" 은 AGENTS.md "RDBMS 에 구현되어야 할 사항 (상세)" 의 N번 절을 가리킨다.
 
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
-- 진행 단계 : 보류 (코드 없음)
+- 진행 단계 : **13-1 ~ 13-4 완료**. 빌드·자동 등록, 공유 프로토콜, JDBC 4.2와 타입 대응을 구현했다.
 - 확정된 지원 기준 : 자바 8 이상, JDBC 4.2 (AGENTS.md 상세 8-1). `jdbc6`는 JDBC 4.0을 제공하며 자바 8 이상에서도 실행 가능해야 한다.
-- 착수 조건 : `rdbms` 와 `nodejsDriver` 를 마친 뒤 계획부터 다시 정한다. 아래 세부 계획은 보류 전에 잡아 둔 초안이며 확정된 것이 아니므로 그대로 착수하지 않는다.
-- 다음 작업 : 없음
+- 착수 조건 : 선행 두 프로젝트 완료와 사용자의 추가 작업 지시로 충족했다. 기존 번호와 범위를 유지하고 Maven 제안 대신 jdbc6과 같은 JDK·Node.js 방식으로 정했다.
+- 검증 : Windows `VM-W11-Codex`, 실제 JDK 8 `1.8.0_432`로 빌드한 같은 JAR을 Java 8·21 `21.0.12.1`에서 실행해 **130개 통과·실패와 건너뜀 0**. 서버는 Node.js `24.19.0`이다.
+- 다음 작업 : **13-5 최종 검증**. 독립 배포 소비자·범용 DB툴(DBeaver 등) 등록과 객체 탐색. 자동 서버 시험은 13-4까지의 구현 검증으로 수행했다.
 
 ## 작업 규칙
 
@@ -32,39 +33,39 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 & "C:\Program Files\Java\jdk8u432-b06\bin\javac.exe" -version
 ```
 
-같은 설치본을 `jdbc6`의 자바 8 실행 호환성 시험에도 사용한다. 빌드 도구와 JDBC 구현은 아직 준비하지 않았으며 개발 보류를 유지한다.
+같은 설치본을 `jdbc6`의 자바 8 실행 호환성 시험에도 사용한다. JDK 21은 사용자가 지정한 `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot`이며 실제 버전 `21.0.12.1`을 확인했다. `HWDB_JAVA8_HOME`, `HWDB_JAVA21_HOME`으로 바꿀 수 있다.
 
-## 세부 계획 초안 (보류 전의 13단계)
+## 세부 계획 (13단계)
 
 ### 13-1. 빌드 구성
 
-- [ ] 빌드 도구 구성 (Maven 제안). 자바 8 을 대상으로 컴파일한다
-- [ ] 외부 라이브러리 없이 JDK 표준 API 만 쓴다. 테스트 도구만 예외이다
-- [ ] `META-INF/services/java.sql.Driver` 로 드라이버를 자동 등록한다
-- [ ] 통합 테스트에서 `rdbms` 를 임시 데이터 디렉토리로 띄우고 내리는 방법을 마련한다
+- [x] 실제 JDK 8 javac·jar를 Node.js 표준 모듈로 조정한다. 클래스 버전 52, 라이선스 포함·시험 클래스 제외
+- [x] 실행·시험 모두 JDK 표준 API만 쓴다. Maven·Gradle·외부 Java 라이브러리는 사용하지 않는다
+- [x] 서비스 등록과 Class.forName 로딩
+- [x] 실제 rdbms를 임시 설치·데이터 디렉토리와 빈 포트로 띄우고 종료·정리하는 시험 실행기
 
 ### 13-2. 프로토콜 계층
 
-사용자의 2026-10-20 작업 지시에 따라 `jdbc6`에서 공통 프로토콜 계층을 먼저 구현한다. `jdbc8` 착수 시 이를 공유하며 자바 6에 없는 문법과 API를 쓰지 않는다. ([jdbc6/PROGRESS.md](../jdbc6/PROGRESS.md)의 "자바 6 범위 주의 목록" 참고). JDBC 4.2 구현 계층은 자바 8 기준으로 작성한다.
+공통 원본은 `jdbc6/src/.../jdbc6/protocol`에 두었다. `npm run sync:protocol`로 패키지 선언만 바꾸어 복사하며 빌드에서 일치를 검사한다. 실제 JDK 6으로 컴파일하고 JDBC 4.2 계층은 자바 8 기준으로 유지한다.
 
-- [ ] JSON 읽기와 쓰기 (직접 구현)
-- [ ] TCP 전송 : `Socket`, 길이를 앞에 붙인 프레임. SSL 은 `SSLSocket` (상세 8)
-- [ ] UDP 전송 : `DatagramSocket`, 신뢰성 계층의 클라이언트 쪽
-- [ ] 핸드셰이크와 프로토콜 버전 협상
-- [ ] SCRAM-SHA-256 인증. PBKDF2는 `HmacSHA256`으로 직접 구현한다 (`PBKDF2WithHmacSHA256`은 자바 8부터 있어 자바 6용 공통 코드에서 쓸 수 없다)
-- [ ] 문장 실행, 결과 수신, 다음 행 묶음 요청, 커서 닫기, ping
+- [x] JSON 직접 구현, UTF-8·서러게이트·중복 키·깊이 검증
+- [x] TCP 프레임·인증 전후 크기 한도·응답 제한 시간, TLS 인증서 검증·CA·검증 끄기·재시도
+- [x] UDP ACK·RFC 6298 RTO·Karn·32조각 창·재전송·재조립·중복 제거·순서 보장·FIN·유휴 ping
+- [x] 핸드셰이크·버전 협상·응답 ID/종류/구조 검증·id 0 오류 보존
+- [x] SCRAM-SHA-256, NFKC·nonce·반복수·서버 서명 검증. HmacSHA256 PBKDF2와 Java 6용 base64 직접 구현
+- [x] 문장 실행·fetch·커서 닫기·ping·정상 종료. 잘못된 응답과 시간 초과는 연결 종료
 
 ### 13-3. JDBC 구현 (JDBC 4.2)
 
-- [ ] `Driver` : URL 해석, 접속 속성
-- [ ] `Connection` : 자동 커밋, 커밋, 롤백, 세이브포인트, `isValid`. 격리 수준은 READ COMMITTED 만 받는다
-- [ ] `Statement`, `PreparedStatement` : `?` 바인딩, `setFetchSize`, 배치 실행
-- [ ] `ResultSet` : 전진 전용, 읽기 전용. fetch 단위로 받아 온다
-- [ ] `ResultSetMetaData`, `ParameterMetaData`
-- [ ] `DatabaseMetaData` : SYSTEM 의 딕셔너리 뷰를 조회하여 구현한다. 테이블스페이스는 스키마로 보여 준다 (상세 3)
-- [ ] `DatabaseMetaData.getJDBCMajorVersion()`과 `getJDBCMinorVersion()`은 4와 2를 반환한다. `jdbc6`의 JDBC 4.0 메타데이터와 구분한다
-- [ ] `SQLException` 에 SQLSTATE 와 내부 오류 번호를 담는다
-- [ ] 지원하지 않는 기능은 `SQLFeatureNotSupportedException` 으로 알린다 (`CallableStatement`, CLOB, BLOB, 스크롤이나 갱신이 되는 `ResultSet` 등)
+- [x] Driver URL·접속 속성·자동/명시적 등록
+- [x] Connection 자동 커밋·커밋·롤백·세이브포인트·isValid·스키마·READ COMMITTED·네트워크 제한 시간
+- [x] Statement·PreparedStatement 바인딩·fetch 크기·일반/large 배치·부분 실패 수·SQLType
+- [x] 전진·읽기 전용 ResultSet, 현재 묶음만 보관·수명·wasNull·라벨·홀더블 커서
+- [x] ResultSetMetaData·ParameterMetaData. 서버가 제공하지 않는 정보는 unknown
+- [x] SYSTEM 딕셔너리의 권한 필터로 스키마·테이블·뷰·시스템 객체·컬럼·PK·FK·인덱스·타입 조회. 뷰 컬럼은 WHERE 1 = 0 메타데이터로 보완
+- [x] JDBC 버전 메타데이터 4.2
+- [x] SQLException SQLSTATE·내부 번호 보존
+- [x] 미지원 기능은 SQLFeatureNotSupportedException/0A000. 동적 프록시로 상위 런타임 메서드도 처리
 
 ### 13-4. 타입 대응
 
@@ -85,7 +86,7 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 | TIMESTAMP WITH TIME ZONE | `TIMESTAMP_WITH_TIMEZONE` | `OffsetDateTime` |
 | INTERVAL | `OTHER` | `String` |
 
-- [ ] `getXxx`, `getObject`, `setXxx`, `setObject` 를 위 표대로 구현
+- [x] getXxx·getObject·setXxx·setObject를 위 표대로 구현. 전 타입 왕복·숫자 범위·소수 초·오프셋·NULL·Calendar·SQLType·스트림 시험
 
 ### 13-5. 검증
 
@@ -94,12 +95,18 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 - [ ] 범용 DB툴(DBeaver 등)에 드라이버를 등록하여 접속, 객체 탐색, 질의가 되는지 확인
 - 완료 기준 : 실제 `rdbms` 를 상대로 한 통합 테스트 통과. `DatabaseMetaData` 로 테이블과 컬럼 목록이 조회된다.
 
-## 미결 사항
+## 검증 기록과 남은 사항
 
-- Maven 좌표와 빌드 도구. 자바 패키지 이름은 `org.duckdns.hjow.helloworlddb.jdbc8` 로 정해졌다 (AGENTS.md 지켜야 할 사항 6)
-- JDBC URL 형식. 제안 : `jdbc:helloworlddb://호스트[:포트][/테이블스페이스][?옵션]`. 호스트 외에는 생략할 수 있고, 옵션으로 UDP 사용과 SSL 사용을 고른다. 접속 대상은 호스트와 포트 번호만으로 정해지므로 SID 나 DB 이름 부분은 두지 않는다 (상세 15)
+- Java 8·21 각각 단위 12개, TCP 12개, UDP 13개, 결함 주입 UDP 13개, TLS 12개, TLS 거부/검증 끄기 3개. 합계 **130개 통과**, 실패·건너뜀 0.
+- UDP 유실·중복·지연과 60KB 이상 UTF-8 메시지를 시험했다. 중계 도우미는 JDBC 접속마다 별도 송신 소켓을 두어 서버의 주소·세션 식별 규칙을 보존한다.
+- jdbc6도 같은 공통 코드를 사용하여 Java 6·7·8·21에서 실제 서버 시험 200개를 통과했다. 빌드·API 제한 회귀 시험 14개도 통과했다.
+- 독립 배포 소비자·DBeaver와 기타 DB툴·다른 OS 시험은 13-5에 남아 있다. Java 9~20을 각각 실행하지는 않았다.
+- 파라미터 타입은 서버 describe 기능이 없어 UNKNOWN이다. SELECT 권한이 없는 뷰의 컬럼은 보완 조회하지 않는다. 자세한 API와 한계는 [README.md](README.md)를 따른다.
 
 ## 결정 사항
+
+- 사용자 추가 지시(2026-10-20)로 보류를 풀고 13-4까지 구현했다. Maven 제안 대신 실제 JDK 직접 빌드·Node.js 실행기를 사용한다. 배포 JAR은 외부 의존성이 없다.
+- URL은 `jdbc:helloworlddb://호스트[:포트][?옵션]`이다. 현재 테이블스페이스는 tablespace 속성으로 지정하며 경로·SID·DB 이름은 없다. jdbc6도 같은 URL과 접속 속성을 사용한다.
 
 - 사용자 결정(2026-10-16) : 이 프로젝트는 자바 8 이상과 JDBC 4.2 기준이다. 자바 6~7용 프로젝트는 `jdbc6`, JDBC 4.0이며 자바 8 이상에서도 사용 가능해야 한다. 공통 프로토콜 코드는 자바 6 범위로 유지한다.
 - SSL 접속 시 서버 인증서는 기본으로 검증한다. 인증서 오류 때 접속을 끊고 100 ms 뒤 최대 2회 다시 시도한다 (AGENTS.md 상세 8, 사용자 결정 2026-10-15). 보류 해제 때 URL 옵션으로 CA 지정과 검증 끄기를 제공한다.
@@ -108,10 +115,12 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 
 - 프로토콜을 추측해서 구현하지 않는다. `rdbms/docs` 의 프로토콜 명세가 기준이다. `nodejsDriver` 의 구현도 참고할 수 있다.
 - 프로토콜 계층(13-2)의 코드는 패키지 선언 외에는 `jdbc6`와 같게 유지한다. 한쪽을 고치면 다른 쪽도 고친다.
-- JDBC URL 형식은 `jdbc6`의 14-3에서 확정하고 두 프로젝트에서 동일하게 사용한다. 미결 사항의 기존 URL 제안은 참고용이다.
+- JDBC URL과 속성은 [README.md](README.md)의 형식을 두 프로젝트에서 공유한다.
 - DECIMAL/DEC/NUMERIC의 선언 인자를 모두 생략하면 (10,3), VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이다. 실제 컬럼 길이/정밀도/소수 자릿수는 서버 메타데이터에서 읽는다. `NUMERIC(p)` 등 명시한 선언을 기본값 (10,3)으로 덮어쓰지 않는다. [rdbms 타입 정책](../rdbms/docs/data-types.md)을 참고한다.
 
 ## 작업 이력
+
+- 2026-10-20 : 추가 지시로 13-1 ~ 13-4 구현. JDK 8 빌드, 공유 Java 6 프로토콜, TCP·TLS·UDP, JDBC 4.2와 타입·메타데이터·실제 서버 실행기 추가. Java 8·21에서 130개 통과. jdbc6 14-4도 완료했고 공유 코드를 검증했다. README·진행·인수인계를 갱신했다. 다음은 13-5이며 커밋·푸시는 하지 않았다.
 
 - 2026-10-08 : 세부 계획 작성.
 - 2026-10-08 : 보류로 전환. 세부 계획은 초안으로 남김. 자바 패키지 이름 확정.

@@ -1,0 +1,14 @@
+{
+  "name": "org.duckdns.hjow.helloworlddb.jdbc8",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
+    "test:matrix": "node scripts/test.mjs",
+    "sync:protocol": "node scripts/sync-protocol.mjs"
+  }
+}

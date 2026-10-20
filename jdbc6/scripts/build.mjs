@@ -15,6 +15,8 @@ export function build() {
   const meta = path.join(classes, "META-INF");
   fs.mkdirSync(meta);
   fs.copyFileSync(path.join(ROOT, "..", "LICENSE"), path.join(meta, "LICENSE"));
+  fs.mkdirSync(path.join(meta, "services"));
+  fs.writeFileSync(path.join(meta, "services", "java.sql.Driver"), "org.duckdns.hjow.helloworlddb.jdbc6.Driver\n", "utf8");
   const manifest = path.join(BUILD, "MANIFEST.MF");
   fs.writeFileSync(manifest, ["Manifest-Version: 1.0", "Implementation-Title: HelloWorldDB JDBC 4.0 Driver",
     `Implementation-Version: ${PACKAGE.version}`, "Implementation-Vendor: HJOW", "", ""].join("\r\n"), "utf8");

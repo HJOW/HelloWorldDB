@@ -1,0 +1,93 @@
+# HelloWorldDB JDBC 4.2
+
+Java 8 이상용 HelloWorldDB 드라이버이다. 배포 JAR의 실행에는 JDK 표준 API만 필요하다. 서버는 별도로 구동한다.
+
+## 빌드·시험
+
+이 디렉토리에서 실행한다. 실제 JDK 8의 javac·jar로 빌드하며 클래스 버전은 52이다. Maven·Gradle은 사용하지 않는다. Node.js 22 이상은 빌드·시험만 조정한다.
+
+```powershell
+$env:HWDB_JAVA8_HOME = 'C:\Program Files\Java\jdk8u432-b06'
+$env:HWDB_JAVA21_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
+npm run build
+npm test
+```
+
+배포물은 `dist/org.duckdns.hjow.helloworlddb.jdbc8-0.1.0.jar`이다. 위 경로는 이 PC의 기본값이며 다른 장비에서는 환경 변수로 지정한다. `npm run test:matrix`는 `npm test`와 같다.
+
+시험은 Java 8·21에서 같은 JAR을 실행한다. 서버를 임시 설치·데이터 디렉토리와 빈 포트로 띄우고 끝나면 정상 종료·정리한다. `../rdbms/node_modules`가 준비되어 있어야 하며 서버는 항상 다시 컴파일한다. `HWDB_TEST_RUNTIME`으로 서버 실행 파일을 지정할 수 있다(기본 Node.js). 공유 코드의 Java 6 API 검사를 위해 전체 시험에는 JDK 6도 필요하다(`HWDB_JAVA6_HOME`, 이 PC 기본 `C:\Program Files\Java\jdk1.6.0_45`).
+
+## 접속
+
+드라이버 클래스는 `org.duckdns.hjow.helloworlddb.jdbc8.Driver`이다. JAR을 클래스 경로에 두면 서비스 등록으로 자동 로딩된다. `Class.forName`으로 명시적으로 로딩해도 된다.
+
+```java
+import java.sql.*;
+import java.util.Properties;
+
+Properties options = new Properties();
+options.setProperty("user", "SYSTEM");
+options.setProperty("password", "HelloWorldDB");
+try (Connection connection = DriverManager.getConnection(
+        "jdbc:helloworlddb://127.0.0.1:7410", options);
+     Statement statement = connection.createStatement();
+     ResultSet rows = statement.executeQuery("SELECT 'Hello World' AS MESSAGE")) {
+    while (rows.next()) System.out.println(rows.getString("MESSAGE"));
+}
+```
+
+URL은 `jdbc:helloworlddb://호스트[:포트][?키=값&키=값]`이다. IPv6는 `[::1]`처럼 쓴다. SID·DB 이름·경로는 없으며 현재 테이블스페이스는 `tablespace` 속성으로 지정한다. URL 쿼리는 UTF-8 URL 인코딩을 사용하고 Properties보다 우선한다. 모르는 속성과 잘못된 조합은 `08001`이다. jdbc6도 같은 URL을 사용한다.
+
+| 속성 | 기본값 | 설명 |
+|---|---|---|
+| `user` | 필수 | 사용자명 |
+| `password` | 빈 문자열 | 비밀번호 |
+| `tablespace` | 사용자 기본값 | 현재 테이블스페이스 |
+| `timeZone` | 서버 기본값 | 세션 타임존 |
+| `transport` | `tcp` | `tcp` 또는 `udp` |
+| `ssl` | `false` | TCP TLS 사용 |
+| `sslCa` | JDK 신뢰 저장소 | 신뢰할 PEM CA 파일 |
+| `sslVerify` | `true` | 인증서 체인·유효 기간·호스트 이름 검증 |
+| `connectTimeoutMs` | `10000` | 연결·인증 요청 제한. DriverManager 로그인 제한이 있으면 그 값을 기본으로 사용 |
+| `socketTimeoutMs` | `30000` | 응답 제한. 0은 무제한 |
+| `fetchSize` | `500` | 1~100,000행 |
+
+포트 기본값은 7410이다. TLS에서 `ssl=true`와 필요 시 `sslCa`를 지정한다. 인증서 오류만 새 연결에서 100 ms 뒤 최대 두 번 재시도하며 최종 실패는 `08001`/8007이다. `sslVerify=false`는 명시했을 때만 검증을 끈다. `sslCa`와 검증 끄기는 함께 쓸 수 없고 SSL 옵션은 UDP에서 사용할 수 없다.
+
+## JDBC와 타입
+
+- 자동 커밋은 기본 ON이다. 커밋·롤백·세이브포인트와 READ COMMITTED를 지원한다. `getAutoCommit`·`getSchema`는 현재 서버 세션을 조회하여 직접 실행한 `SET AUTOCOMMIT`·`USE`도 반영한다.
+- PreparedStatement는 SQL과 파라미터를 분리해 전송한다. 바인딩 누락은 `07001`, 잘못된 인덱스는 `07009`이다. 배치는 순서대로 실행하며 실패 시 앞선 성공 수를 BatchUpdateException에 담는다.
+- ResultSet은 전진·읽기 전용이며 현재 fetch 묶음만 보관한다. 커밋·롤백 뒤에도 읽을 수 있는 HOLD_CURSORS_OVER_COMMIT만 지원한다. Statement를 다시 실행하거나 닫으면 기존 결과를 닫는다.
+- `setQueryTimeout`·`setNetworkTimeout`은 응답 대기 시간을 제한한다. 초과 시 SQLTimeoutException(`08006`/8006)을 내고 응답 경계 보존을 위해 연결도 닫는다. 별도 실행 취소 프로토콜이 없어 `cancel`은 미지원이다.
+- DatabaseMetaData는 SYSTEM 딕셔너리의 권한 필터를 사용한다. 테이블스페이스를 스키마로 표현하고 카탈로그는 없다. 테이블·뷰·시스템 객체·컬럼·PK·FK·인덱스·타입을 제공한다. 뷰 컬럼은 WHERE 1 = 0 결과 메타데이터로 보완하며 SELECT 권한이 없는 뷰는 생략한다. 권한 목록은 직접 부여한 객체 권한을 보여 준다.
+- 서버에 prepare/describe 요청이 없어 실행 전 PreparedStatement.getMetaData()는 null이다. ParameterMetaData는 개수·IN 모드만 확정하며 타입 OTHER/UNKNOWN, precision·scale 0, NULL 허용 unknown을 반환한다. 결과의 기반 테이블 이름과 NULL 허용 여부도 추정하지 않는다.
+- CallableStatement, LOB, SQLXML, RowId, 배열, 생성 키, 스크롤·갱신 ResultSet 등은 SQLFeatureNotSupportedException(`0A000`)이다. 동적 프록시가 상위 런타임의 미지원 메서드도 처리한다. 전체 JDBC 적합성을 선언하지 않는다(`jdbcCompliant() == false`).
+
+| DB 타입 | `getObject()` | 추가 대응 |
+|---|---|---|
+| CHAR, VARCHAR | String | NCHAR·NVARCHAR도 동일한 UTF-8 규칙 |
+| BINARY, VARBINARY | byte[] | getBytes·setBytes·스트림 |
+| SMALLINT, INTEGER | Integer | 정수 getter/setter |
+| BIGINT | Long | 문자열 전송으로 64비트 정밀도 보존 |
+| NUMERIC, DECIMAL | BigDecimal | 소수 자릿수 보존 |
+| REAL / DOUBLE PRECISION | Float / Double | NaN·무한대는 오류 |
+| BOOLEAN | Boolean | NULL은 기본형 getter와 wasNull로 구분 |
+| DATE | java.sql.Date | LocalDate |
+| TIME | java.sql.Time | LocalTime으로 소수 초 보존 |
+| TIMESTAMP | java.sql.Timestamp | LocalDateTime |
+| TIME WITH TIME ZONE | OffsetTime | Types.TIME_WITH_TIMEZONE |
+| TIMESTAMP WITH TIME ZONE | OffsetDateTime | Types.TIMESTAMP_WITH_TIMEZONE |
+| INTERVAL | String | Types.OTHER |
+
+`getObject(i, LocalDate.class)` 등과 java.time 값의 `setObject`, JDBCType/SQLType 오버로드를 지원한다. Calendar 오버로드는 해당 타임존의 필드를 사용한다. 일반 SQL 날짜시간 getter는 JVM 기본 타임존을 따른다. java.sql.Time은 소수 초를 담지 못하므로 필요하면 LocalTime으로 읽는다. 오프셋 타입은 OffsetTime/OffsetDateTime 또는 getString으로 읽는다.
+
+길이·precision·scale은 서버 메타데이터를 따른다. NUMERIC 별칭은 서버가 정규화한 DECIMAL로 보고한다. 인자 생략은 (10,3), NUMERIC(12)는 (12,0)이다.
+
+## 공유와 검증 범위
+
+프로토콜 원본은 `../jdbc6/src/.../jdbc6/protocol`이며 `npm run sync:protocol`로 패키지 선언만 바꾸어 복사한다. 빌드는 두 코드의 일치를 검사한다. JDBC 계층은 각 프로젝트의 Java API 기준에 맞게 별도로 유지한다. 서버·UDP 결함 주입 시험 도우미는 `scripts/test-support.mjs`를 공유한다.
+
+2026-10-20 Windows `VM-W11-Codex`, Java 8 `1.8.0_432`, Java 21 `21.0.12.1`, Node.js `24.19.0`에서 130개가 통과했다. 후속 13-5의 독립 배포 소비자·DBeaver·다른 OS 검증은 남아 있다. 자세한 진행 상황은 [PROGRESS.md](PROGRESS.md)를 따른다.
+
+기준 문서: [서버 프로토콜](../rdbms/docs/protocol.md), [타입 정책](../rdbms/docs/data-types.md), [Java 8 ResultSet API](https://docs.oracle.com/javase/8/docs/api/java/sql/ResultSet.html), [PreparedStatement API](https://docs.oracle.com/javase/8/docs/api/java/sql/PreparedStatement.html).

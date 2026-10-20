@@ -88,6 +88,7 @@ export function testRuntimes(tools) {
   const homes = [
     ["HWDB_JAVA7_HOME", process.platform === "win32" ? "C:/Program Files/Java/jdk1.7.0_80" : "", 7],
     ["HWDB_JAVA8_HOME", process.platform === "win32" ? "C:/Program Files/Java/jdk8u432-b06" : "", 8],
+    ["HWDB_JAVA21_HOME", process.platform === "win32" ? "C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot" : "", 21],
   ];
   const candidates = [tools.java];
   for (const [key, fallback, expectedMajor] of homes) {
