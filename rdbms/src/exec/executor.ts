@@ -20,6 +20,8 @@
  * 구현 단계 : 6단계, 7단계(트랜잭션 연동)
  */
 
+import { runSync, mapWork, filterWork, someWork, findWork, sortWork } from "./work.js";
+import type { Work } from "./work.js";
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import { objectKey } from "../common/objectKey.js";
 import type { SourcePosition } from "../common/errors.js";
@@ -47,7 +49,7 @@ import { bindSource, validateGroupBy } from "./analyzer.js";
 import type { BoundSource } from "./analyzer.js";
 import { chooseIndex } from "./planner.js";
 import type { IndexChoice } from "./planner.js";
-import { atInnerLevel, containsAggregate, evaluateCondition, evaluateExpression } from "./expression.js";
+import { atInnerLevel, containsAggregate, evaluateCondition, evaluateExpression, evaluateConditionSteps, evaluateExpressionSteps } from "./expression.js";
 import type { EvalContext, RowScope } from "./expression.js";
 import type { TypedValue } from "./functions.js";
 import type { OverlayRow, Transaction } from "../txn/transaction.js";
@@ -64,6 +66,8 @@ function fail(sqlState: string, code: number, message: string, position?: Source
 
 /** 질의를 실행할 때의 문맥이다. */
 export interface QueryContext {
+  readonly boundParameterTypes?: readonly (DataType | null)[];
+  readonly parameterType?: (index: number, expected?: DataType) => DataType;
   readonly manager: TablespaceManager;
   readonly currentTablespace: string;
   readonly currentUser: string;
@@ -74,16 +78,16 @@ export interface QueryContext {
   /** 뷰 전개의 순환을 막는다. */
   readonly viewStack: readonly string[];
   /**
-   * 문장이 속한 트랜잭션이다. 자기 변경을 합쳐 읽고, 변경은 여기에 쌓는다.
-   * 자동 커밋 문장도 문장 하나짜리 트랜잭션 안에서 실행하며, 번호가 잠금 소유자를 겸한다.
-   */
+     * 문장이 속한 트랜잭션이다. 자기 변경을 합쳐 읽고, 변경은 여기에 쌓는다.
+     * 자동 커밋 문장도 문장 하나짜리 트랜잭션 안에서 실행하며, 번호가 잠금 소유자를 겸한다.
+     */
   readonly txn: Transaction;
   /** 잠금 걸기이다. 실행기는 기다리지 않는다. 충돌하면 오류를 던지고 세션이 기다렸다가 문장을 다시 시도한다. */
   readonly locker: LockSink;
   /**
-   * 딕셔너리 뷰의 원천(세션 현황, 사용자, 권한, 그리고 조회하는 사용자에게 보일 행의 판정자)을 돌려준다.
-   * 세션 밖에서 질의를 실행하면 없을 수 있고, 그때는 카탈로그의 모든 행이 보인다.
-   */
+     * 딕셔너리 뷰의 원천(세션 현황, 사용자, 권한, 그리고 조회하는 사용자에게 보일 행의 판정자)을 돌려준다.
+     * 세션 밖에서 질의를 실행하면 없을 수 있고, 그때는 카탈로그의 모든 행이 보인다.
+     */
   readonly dictionary?: () => DictionarySources;
 }
 
@@ -106,7 +110,6 @@ interface OutputColumn {
 // ---------------------------------------------------------------------------
 // 테이블 행 읽기
 // ---------------------------------------------------------------------------
-
 /** 테이블의 행을 모두 읽는다. 트랜잭션이 있으면 커밋 값에 자기 변경을 합친다. */
 export function readTableRows(
   catalog: CatalogStore,
@@ -125,28 +128,44 @@ export function tableColumnTypes(table: StoredTable): DataType[] {
 // ---------------------------------------------------------------------------
 // 서브쿼리 핸들러
 // ---------------------------------------------------------------------------
-
 /** 서브쿼리를 실제로 실행하는 핸들러이다. DML 도 같은 것을 쓴다. */
 export function dataHandlers(scopes: RowScope[], ctx: QueryContext) {
+  return runSync(dataHandlersSteps(scopes, ctx));
+}
+
+// ---------------------------------------------------------------------------
+// 서브쿼리 핸들러
+// ---------------------------------------------------------------------------
+/** 서브쿼리를 실제로 실행하는 핸들러이다. DML 도 같은 것을 쓴다. */
+export function* dataHandlersSteps(scopes: RowScope[], ctx: QueryContext) {
   const leveled = atInnerLevel(ctx.outerScopes, scopes);
   const outer = [...ctx.outerScopes, ...leveled];
   return {
-    scalar: (query: Query): TypedValue => executeScalar(query, scopes, ctx),
-    exists: (query: Query): boolean =>
-      executeQuery(query, { ...ctx, outerScopes: outer }).rows.length > 0,
-    columnValues: (query: Query): { values: SqlValue[]; type: DataType } => {
-      const result = executeQuery(query, { ...ctx, outerScopes: outer });
+    scalar: function* (query: Query): Work<TypedValue> {
+      return (yield* executeScalarSteps(query, scopes, ctx));
+    },
+    exists: function* (query: Query): Work<boolean> {
+      return (yield* executeQuerySteps(query, { ...ctx, outerScopes: outer })).rows.length > 0;
+    },
+    columnValues: function* (query: Query): Work<{
+      values: SqlValue[];
+      type: DataType;
+    }> {
+      const result = (yield* executeQuerySteps(query, { ...ctx, outerScopes: outer }));
       if (result.columns.length !== 1) {
         fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Subquery must return a single column.");
       }
       const type = (result.columns[0] as { type: DataType }).type;
-      return { values: result.rows.map((row) => row[0] as SqlValue), type };
+      return { values: (yield* mapWork(result.rows, function* (row) {
+          return row[0] as SqlValue;
+        })), type };
     },
   };
 }
 
 /** 서브쿼리의 결과 타입만 알아보는 핸들러이다. 행을 읽지 않는다. */
-export function typeHandlers(ctx: QueryContext) {
+export function typeHandlers(ctx: QueryContext, scopes: RowScope[] = []) {
+  ctx = { ...ctx, outerScopes: [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, scopes)] };
   return {
     scalar: (query: Query): TypedValue => {
       const columns = inferOutputColumns(query, ctx);
@@ -155,7 +174,7 @@ export function typeHandlers(ctx: QueryContext) {
       }
       return { value: null, type: (columns[0] as { type: DataType }).type };
     },
-    exists: (_query: Query): boolean => false,
+    exists: (query: Query): boolean => { inferOutputColumns(query, ctx); return false; },
     columnValues: (query: Query): { values: SqlValue[]; type: DataType } => {
       const columns = inferOutputColumns(query, ctx);
       if (columns.length !== 1) {
@@ -167,14 +186,16 @@ export function typeHandlers(ctx: QueryContext) {
 }
 
 /** 식 평가 문맥을 만든다. */
-function evalContextFor(scopes: RowScope[], ctx: QueryContext, typeOnly: boolean): EvalContext {
+export function evalContextFor(scopes: RowScope[], ctx: QueryContext, typeOnly: boolean): EvalContext {
   return {
+    boundParameterTypes: ctx.boundParameterTypes,
+    parameterType: ctx.parameterType,
     typeCtx: ctx.typeCtx,
     params: ctx.params,
     scopes: [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, scopes)],
     currentUser: ctx.currentUser,
-    subqueries: typeOnly ? typeHandlers(ctx) : dataHandlers(scopes, ctx),
-    typeSubqueries: typeHandlers(ctx),
+    subqueries: typeOnly ? typeHandlers(ctx, scopes) : dataHandlers(scopes, ctx),
+    typeSubqueries: typeHandlers(ctx, scopes),
     typeOnly: typeOnly ? true : undefined,
   };
 }
@@ -182,6 +203,7 @@ function evalContextFor(scopes: RowScope[], ctx: QueryContext, typeOnly: boolean
 /** 집계 그룹 안에서 쓸 식 평가 문맥을 만든다. */
 function groupEvalContext(rep: CombinedRow, groupRows: CombinedRow[], ctx: QueryContext): EvalContext {
   return {
+    boundParameterTypes: ctx.boundParameterTypes,
     typeCtx: ctx.typeCtx,
     params: ctx.params,
     scopes: [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, rep)],
@@ -194,9 +216,9 @@ function groupEvalContext(rep: CombinedRow, groupRows: CombinedRow[], ctx: Query
 }
 
 /** 스칼라 서브쿼리를 실행한다. 0행이면 NULL, 2행 이상이면 오류이다. */
-function executeScalar(query: Query, scopes: RowScope[], ctx: QueryContext): TypedValue {
+function* executeScalarSteps(query: Query, scopes: RowScope[], ctx: QueryContext): Work<TypedValue> {
   const outer = [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, scopes)];
-  const result = executeQuery(query, { ...ctx, outerScopes: outer });
+  const result = (yield* executeQuerySteps(query, { ...ctx, outerScopes: outer }));
   if (result.columns.length !== 1) {
     fail("21000", ERROR_CODES.CARDINALITY_VIOLATION, "Scalar subquery must return a single column.");
   }
@@ -212,22 +234,74 @@ function executeScalar(query: Query, scopes: RowScope[], ctx: QueryContext): Typ
 // ---------------------------------------------------------------------------
 // 질의 실행 입구
 // ---------------------------------------------------------------------------
-
 /** 질의 하나를 실행한다. */
 export function executeQuery(query: Query, ctx: QueryContext): QueryResult {
+  return runSync(executeQuerySteps(query, ctx));
+}
+
+// ---------------------------------------------------------------------------
+// 질의 실행 입구
+// ---------------------------------------------------------------------------
+/** 질의 하나를 실행한다. */
+export function* executeQuerySteps(query: Query, ctx: QueryContext): Work<QueryResult> {
   if (query.forUpdate) checkForUpdateAllowed(query, ctx);
-  const bodyResult = executeBody(query.body, ctx);
-  const ordered = applyOrderAndLimit(
-    bodyResult.columns,
-    bodyResult.rows,
-    bodyResult.rowSources,
-    query.orderBy,
-    query.offset,
-    query.fetch,
-    ctx,
-  );
-  if (query.forUpdate) lockSelectedRows(ordered.sources, ctx);
+  const bodyResult = (yield* executeBodySteps(query.body, ctx));
+  const ordered = (yield* applyOrderAndLimitSteps(bodyResult.columns, bodyResult.rows, bodyResult.rowSources, query.orderBy, query.offset, query.fetch, ctx));
+  if (query.forUpdate)
+    (yield* lockSelectedRowsSteps(ordered.sources, ctx));
   return { columns: ordered.columns, rows: ordered.rows };
+}
+
+/** 단순 SELECT를 스캔→필터→투영→스풀로 넘긴다. 전체 입력이 필요한 연산은 기존 실행기를 사용한다. */
+export function* streamQuerySteps(query: Query, ctx: QueryContext, sink: (values: SqlValue[], types: DataType[]) => void): Work<QueryResult> {
+  const select = query.body;
+  const simple = select.kind === "Select" && !query.forUpdate && query.orderBy.length === 0 && !select.distinct && select.groupBy.length === 0 && select.having === null
+    && !select.items.some(item => item.kind === "Expression" && containsAggregate(item.expression));
+  const sources: BoundSource[] = [];
+  const flatten = (source: BoundSource): boolean => {
+    if (source.kind === "join" && source.type === "CROSS") return flatten(source.left) && flatten(source.right);
+    if (!["table", "dual", "bare"].includes(source.kind)) return false;
+    sources.push(source); return true;
+  };
+  const canStream = simple && select.kind === "Select" && select.from.every(reference => flatten(bindSource(ctx.manager, reference, ctx.currentTablespace, ctx.viewStack)));
+  if (!canStream || select.kind !== "Select") {
+    const result = yield* executeQuerySteps(query, ctx);
+    const types = result.columns.map(column => column.type);
+    for (const row of result.rows) { yield; sink(row, types); }
+    return { columns: result.columns, rows: [] };
+  }
+  let columns = inferOutputColumns(query, ctx);
+  const offset = query.offset === null ? 0n : yield* limitValueSteps(query.offset, ctx);
+  const count = query.fetch === null ? null : query.fetch.count === null ? 1n : yield* limitValueSteps(query.fetch.count, ctx);
+  if (offset < 0n || (count !== null && count < 0n)) fail("22023", ERROR_CODES.TYPE_PARAMETER_INVALID, "Row limits must not be negative.");
+  let matched = 0n, emitted = 0n;
+  const done = () => count !== null && emitted >= count;
+  function* walk(level: number, scopes: CombinedRow): Work<void> {
+    if (done()) return;
+    if (level === sources.length) {
+      if (select.kind !== "Select") return;
+      if (select.where !== null && (yield* evaluateConditionSteps(select.where, evalContextFor(scopes, ctx, false))) !== true) return;
+      if (matched++ < offset) return;
+      const output = yield* projectRowSteps(select.items, scopes, ctx);
+      if (emitted++ === 0n) columns = output.map(column => ({ name: column.name, type: column.type }));
+      sink(output.map(column => column.value), columns.map(column => column.type));
+      return;
+    }
+    const source = sources[level]!;
+    if (source.kind === "table") {
+      const candidates = sources.length === 1 ? yield* indexedCandidatesSteps(source.catalog, source.tablespace, source.def, source.alias ?? source.table, select.kind === "Select" ? select.where : null, ctx) : null;
+      for (const row of candidates ?? visibleRows(source.catalog, source.tablespace, source.def, ctx.txn)) {
+        yield;
+        yield* walk(level + 1, [...scopes, ...rowToScope(source.tablespace, source.table, source.alias, source.def, row)]);
+        if (done()) break;
+      }
+    } else {
+      const rows = yield* scanSourceSteps(source, ctx, null);
+      for (const row of rows) { yield; yield* walk(level + 1, [...scopes, ...row]); if (done()) break; }
+    }
+  }
+  yield* walk(0, []);
+  return { columns, rows: [] };
 }
 
 /**
@@ -263,10 +337,12 @@ function checkForUpdateAllowed(query: Query, ctx: QueryContext): void {
 }
 
 /** 질의가 돌려주는 행이 읽은 저장 행을 모두 잠근다. 충돌하면 아무것도 잠그지 않고 오류를 던진다. */
-function lockSelectedRows(sources: CombinedRow[], ctx: QueryContext): void {
+function* lockSelectedRowsSteps(sources: CombinedRow[], ctx: QueryContext): Work<void> {
   const keys: string[] = [];
   for (const combined of sources) {
+    yield;
     for (const scope of combined) {
+      yield;
       if (scope.lockRef !== undefined) {
         keys.push(rowLockKey(scope.lockRef.tablespace, scope.lockRef.table, scope.lockRef.rowId));
       }
@@ -284,46 +360,63 @@ interface BodyResult {
   rowSources: CombinedRow[];
 }
 
-function executeBody(body: QueryBody, ctx: QueryContext): BodyResult {
-  if (body.kind === "Select") return executeSelect(body, ctx);
-  if (body.kind === "SetOperation") return executeSetOperation(body, ctx);
-  const inner = executeQuery(body, ctx);
-  return { columns: inner.columns, rows: inner.rows, rowSources: inner.rows.map(() => []) };
+function* executeBodySteps(body: QueryBody, ctx: QueryContext): Work<BodyResult> {
+  if (body.kind === "Select")
+    return (yield* executeSelectSteps(body, ctx));
+  if (body.kind === "SetOperation")
+    return (yield* executeSetOperationSteps(body, ctx));
+  const inner = (yield* executeQuerySteps(body, ctx));
+  return { columns: inner.columns, rows: inner.rows, rowSources: (yield* mapWork(inner.rows, function* () {
+      return [];
+    })) };
 }
 
 // ---------------------------------------------------------------------------
 // SELECT
 // ---------------------------------------------------------------------------
-
-function executeSelect(select: Select, ctx: QueryContext): BodyResult {
-  const boundList = select.from.map((reference) => bindSource(ctx.manager, reference, ctx.currentTablespace, ctx.viewStack));
+function* executeSelectSteps(select: Select, ctx: QueryContext): Work<BodyResult> {
+  const boundList = (yield* mapWork(select.from, function* (reference) {
+    return bindSource(ctx.manager, reference, ctx.currentTablespace, ctx.viewStack);
+  }));
   let rows: CombinedRow[] = [[]];
   for (const bound of boundList) {
-    rows = crossWithSource(rows, bound, select.where, ctx);
+    yield;
+    rows = (yield* crossWithSourceSteps(rows, bound, select.where, ctx));
   }
   // WHERE (인덱스가 걸러낸 나머지를 확정한다)
   if (select.where !== null) {
     const where = select.where;
-    rows = rows.filter((row) => evaluateCondition(where, evalContextFor(row, ctx, false)) === true);
+    rows = (yield* filterWork(rows, function* (row) {
+      return (yield* evaluateConditionSteps(where, evalContextFor(row, ctx, false))) === true;
+    }));
   }
   const hasGroupBy = select.groupBy.length > 0;
-  const hasAggregate = select.items.some((item) => item.kind === "Expression" && containsAggregate(item.expression)) ||
+  const hasAggregate = (yield* someWork(select.items, function* (item) {
+    return item.kind === "Expression" && containsAggregate(item.expression);
+  })) ||
     (select.having !== null && containsAggregate(select.having));
   if (hasGroupBy || hasAggregate) {
     validateGroupBy(select, selectPosition(select));
-    return executeGrouped(select, rows, boundList, ctx);
+    return (yield* executeGroupedSteps(select, rows, boundList, ctx));
   }
   // 집계 없음 : 행마다 투영한다.
-  let projected = rows.map((row) => projectRow(select.items, row, ctx));
+  let projected = (yield* mapWork(rows, function* (row) {
+    return (yield* projectRowSteps(select.items, row, ctx));
+  }));
   if (select.distinct) {
-    projected = deduplicate(projected);
+    projected = (yield* deduplicateSteps(projected));
   }
   const columns = projected.length > 0
-    ? (projected[0] as OutputColumn[]).map((column) => ({ name: column.name, type: column.type }))
-    : inferSelectColumns(select, boundList, ctx);
+    ? (yield* mapWork((projected[0] as OutputColumn[]), function* (column) {
+      return ({ name: column.name, type: column.type });
+    })) : inferSelectColumns(select, boundList, ctx);
   return {
     columns,
-    rows: projected.map((output) => output.map((column) => column.value)),
+    rows: (yield* mapWork(projected, function* (output) {
+      return (yield* mapWork(output, function* (column) {
+        return column.value;
+      }));
+    })),
     rowSources: rows,
   };
 }
@@ -338,12 +431,15 @@ function selectPosition(select: Select): SourcePosition {
 }
 
 /** FROM 출처 하나로 곱한다. 조인은 묶음대로 처리한다. */
-function crossWithSource(rows: CombinedRow[], bound: BoundSource, where: Expression | null, ctx: QueryContext): CombinedRow[] {
-  if (bound.kind === "join") return executeJoin(rows, bound, ctx);
-  const sourceRows = scanSource(bound, ctx, where);
+function* crossWithSourceSteps(rows: CombinedRow[], bound: BoundSource, where: Expression | null, ctx: QueryContext): Work<CombinedRow[]> {
+  if (bound.kind === "join")
+    return (yield* executeJoinSteps(rows, bound, ctx));
+  const sourceRows = (yield* scanSourceSteps(bound, ctx, where));
   const out: CombinedRow[] = [];
   for (const left of rows) {
+    yield;
     for (const right of sourceRows) {
+      yield;
       out.push([...left, ...right]);
     }
   }
@@ -351,9 +447,11 @@ function crossWithSource(rows: CombinedRow[], bound: BoundSource, where: Express
 }
 
 /** 조인을 실행한다. 중첩 루프로 돌린다. */
-function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "join" }>, ctx: QueryContext): CombinedRow[] {
-  const leftRows = expandJoinSide(rows, bound.left, ctx);
-  const rightScopes = scanSource(bound.right, ctx, null);
+function* executeJoinSteps(rows: CombinedRow[], bound: Extract<BoundSource, {
+  kind: "join";
+}>, ctx: QueryContext): Work<CombinedRow[]> {
+  const leftRows = (yield* expandJoinSideSteps(rows, bound.left, ctx));
+  const rightScopes = (yield* scanSourceSteps(bound.right, ctx, null));
   // USING 병합 열은 오른쪽에서 가린다. 왼쪽의 NULL 범위는 열을 그대로 둔다.
   const hide = bound.on !== null ? [] : (bound.using ?? []);
   const nullRight = (source: BoundSource): RowScope[] => hideUsingColumns(nullScopes(source, ctx), hide);
@@ -361,7 +459,9 @@ function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "j
   const out: CombinedRow[] = [];
   if (bound.type === "CROSS") {
     for (const left of leftRows) {
+      yield;
       for (const right of rightScopes) {
+        yield;
         out.push([...left, ...right]);
       }
     }
@@ -372,22 +472,25 @@ function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "j
     // 오른쪽 맞물림을 기억하여 RIGHT/FULL에서 쓴다.
     const rightMatched = new Array<boolean>(rightScopes.length).fill(false);
     for (const left of leftRows) {
+      yield;
       let matched = false;
       for (let rightIndex = 0; rightIndex < rightScopes.length; rightIndex++) {
+        yield;
         const right = rightScopes[rightIndex] as CombinedRow;
         const combined = [...left, ...right];
-        if (evaluateCondition(on, evalContextFor(combined, ctx, false)) === true) {
+        if ((yield* evaluateConditionSteps(on, evalContextFor(combined, ctx, false))) === true) {
           matched = true;
           rightMatched[rightIndex] = true;
           out.push(combined);
         }
       }
       if (!matched && (bound.type === "LEFT" || bound.type === "FULL")) {
-        out.push([...left, ...nullRight(bound.right)]);
-      }
+      out.push([...left, ...nullRight(bound.right)]);
+    }
     }
     if (bound.type === "RIGHT" || bound.type === "FULL") {
       for (let rightIndex = 0; rightIndex < rightScopes.length; rightIndex++) {
+        yield;
         if (rightMatched[rightIndex] !== true) {
           out.push([...nullLeft(bound.left), ...(rightScopes[rightIndex] as CombinedRow)]);
         }
@@ -399,8 +502,10 @@ function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "j
   const using = (bound.using ?? []) as string[];
   const rightMatchedUsing = new Array<boolean>(rightScopes.length).fill(false);
   for (const left of leftRows) {
+    yield;
     let matched = false;
     for (let rightIndex = 0; rightIndex < rightScopes.length; rightIndex++) {
+      yield;
       const right = rightScopes[rightIndex] as CombinedRow;
       if (usingMatch(left, right, using, ctx)) {
         matched = true;
@@ -414,6 +519,7 @@ function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "j
   }
   if (bound.type === "RIGHT" || bound.type === "FULL") {
     for (let rightIndex = 0; rightIndex < rightScopes.length; rightIndex++) {
+      yield;
       if (rightMatchedUsing[rightIndex] !== true) {
         const right = rightScopes[rightIndex] as CombinedRow;
         out.push([...fillUsingNulls(nullLeft(bound.left), right, using), ...hideUsingColumns(right, using)]);
@@ -424,14 +530,16 @@ function executeJoin(rows: CombinedRow[], bound: Extract<BoundSource, { kind: "j
 }
 
 /** 조인의 한쪽을 펼친다. 왼쪽 행렬과 결합하기 전 단계이다. */
-function expandJoinSide(rows: CombinedRow[], side: BoundSource, ctx: QueryContext): CombinedRow[] {
+function* expandJoinSideSteps(rows: CombinedRow[], side: BoundSource, ctx: QueryContext): Work<CombinedRow[]> {
   if (side.kind === "join") {
-    return executeJoin(rows, side, ctx);
+    return (yield* executeJoinSteps(rows, side, ctx));
   }
-  const sourceRows = scanSource(side, ctx, null);
+  const sourceRows = (yield* scanSourceSteps(side, ctx, null));
   const out: CombinedRow[] = [];
   for (const left of rows) {
+    yield;
     for (const right of sourceRows) {
+      yield;
       out.push([...left, ...right]);
     }
   }
@@ -549,29 +657,34 @@ function nullScopes(source: BoundSource, ctx: QueryContext): RowScope[] {
 // ---------------------------------------------------------------------------
 // 출처 스캔
 // ---------------------------------------------------------------------------
-
 /** FROM 출처 하나의 행들을 범위로 만든다. */
-function scanSource(bound: BoundSource, ctx: QueryContext, where: Expression | null): RowScope[][] {
+function* scanSourceSteps(bound: BoundSource, ctx: QueryContext, where: Expression | null): Work<RowScope[][]> {
   switch (bound.kind) {
     case "table":
-      return scanTable(bound, ctx, where);
+      return (yield* scanTableSteps(bound, ctx, where));
     case "view":
-      return scanView(bound, ctx);
+      return (yield* scanViewSteps(bound, ctx));
     case "derived":
-      return scanDerived(bound, ctx);
+      return (yield* scanDerivedSteps(bound, ctx));
     case "join":
       // 단독으로 스캔할 때는 빈 왼쪽과 묶는다.
-      return executeJoin([[]], bound, ctx).map((row) => [...row]);
+      return (yield* mapWork((yield* executeJoinSteps([[]], bound, ctx)), function* (row) {
+        return [...row];
+      }));
     case "dual":
       return [[{ tablespace: "SYSTEM", table: "DUAL", alias: null, slots: [{ column: "DUMMY", value: "X", type: varcharType(1) }] }]];
     case "dictionary": {
       const columns = getDictionaryColumns(bound.view);
-      return getDictionaryRows(ctx.manager, bound.view, ctx.dictionary?.() ?? {}).map((row) => [{
-        tablespace: "SYSTEM",
-        table: bound.view,
-        alias: null,
-        slots: columns.map((column, index) => ({ column: column.name, value: row[index] as SqlValue, type: column.dataType })),
-      }]);
+      return (yield* mapWork(getDictionaryRows(ctx.manager, bound.view, ctx.dictionary?.() ?? {}), function* (row) {
+        return [{
+            tablespace: "SYSTEM",
+            table: bound.view,
+            alias: null,
+            slots: (yield* mapWork(columns, function* (column, index) {
+              return ({ column: column.name, value: row[index] as SqlValue, type: column.dataType });
+            })),
+          }];
+      }));
     }
     case "bare":
       return [[]];
@@ -616,47 +729,39 @@ function rowToScope(
  * 조건의 앞쪽 컬럼에 맞는 인덱스가 있으면 그 인덱스로 후보 행을 읽고 자기 트랜잭션의 변경을 합친다. (행 단위 접근)
  * 없거나 인덱스 탐색에 실패하면 null 이다. 후보는 조건의 상위 집합이므로 호출자가 조건을 다시 건다.
  */
-function indexedCandidates(
-  catalog: CatalogStore,
-  tablespace: string,
-  table: StoredTable,
-  alias: string,
-  where: Expression | null,
-  ctx: QueryContext,
-): OverlayRow[] | null {
+function* indexedCandidatesSteps(catalog: CatalogStore, tablespace: string, table: StoredTable, alias: string, where: Expression | null, ctx: QueryContext): Work<OverlayRow[] | null> {
   const choice = chooseIndex(catalog, table, alias, where, constantEvaluator(ctx));
   if (choice === null) return null;
   try {
-    const ids = indexEntryIds(catalog, table, choice, ctx);
+    const ids = (yield* indexEntryIdsSteps(catalog, table, choice, ctx));
     return mergeIndexEntries(catalog, tablespace, table, ctx.txn, ids);
-  } catch {
+  }
+  catch {
     // 인덱스 탐색에 실패하면 전체 스캔으로 돌아간다.
     return null;
   }
 }
 
 /** 테이블을 읽는다. 앞쪽 컬럼 조건에 맞는 인덱스가 있으면 탄다. 자기 트랜잭션이 건드린 테이블도 인덱스를 탄다. */
-function scanTable(
-  bound: Extract<BoundSource, { kind: "table" }>,
-  ctx: QueryContext,
-  where: Expression | null,
-): RowScope[][] {
+function* scanTableSteps(bound: Extract<BoundSource, {
+  kind: "table";
+}>, ctx: QueryContext, where: Expression | null): Work<RowScope[][]> {
   const table = bound.def;
-  const candidates = indexedCandidates(bound.catalog, bound.tablespace, table, bound.alias ?? bound.table, where, ctx);
+  const candidates = (yield* indexedCandidatesSteps(bound.catalog, bound.tablespace, table, bound.alias ?? bound.table, where, ctx));
   const rows = candidates ?? visibleRows(bound.catalog, bound.tablespace, table, ctx.txn);
   const out: RowScope[][] = [];
-  for (const row of rows) out.push(rowToScope(bound.tablespace, bound.table, bound.alias, table, row));
+  for (const row of rows) {
+    yield;
+    out.push(rowToScope(bound.tablespace, bound.table, bound.alias, table, row));
+  }
   return out;
 }
 
 /** 인덱스로 앞쪽 조건을 만족하는 커밋 행의 식별자를 찾는다. 남은 조건은 호출자가 다시 건다. */
-function indexEntryIds(
-  catalog: CatalogStore,
-  table: StoredTable,
-  choice: IndexChoice,
-  ctx: QueryContext,
-): RowId[] {
-  const keyColumns: KeyColumn[] = choice.columns.map((column) => ({ type: column.type, descending: column.descending }));
+function* indexEntryIdsSteps(catalog: CatalogStore, table: StoredTable, choice: IndexChoice, ctx: QueryContext): Work<RowId[]> {
+  const keyColumns: KeyColumn[] = (yield* mapWork(choice.columns, function* (column) {
+    return ({ type: column.type, descending: column.descending });
+  }));
   // 앞쪽 동등값을 컬럼 타입에 맞춘다. 타입 없는 문자열은 리터럴 해석을 쓴다.
   const coercePrefix = (entry: TypedValue, type: DataType): SqlValue => {
     if (entry.value === null) throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "NULL index prefix.");
@@ -666,19 +771,20 @@ function indexEntryIds(
     }
     return castValue(entry.value, entryType, type, ctx.typeCtx);
   };
-  const prefixValues = choice.prefixValues.map((entry, index) => {
+  const prefixValues = (yield* mapWork(choice.prefixValues, function* (entry, index) {
     const type = (choice.columns[index] as { type: DataType }).type;
     return coercePrefix(entry, type);
-  });
+  }));
   const space = catalog.space;
-  let entries: { key: Buffer; rowId: RowId }[];
+  let entries: Iterable<{ key: Buffer; rowId: RowId }>;
   if (choice.prefixCount === choice.columns.length && choice.lower === null && choice.upper === null) {
     const key = encodeKey(prefixValues, keyColumns);
-    entries = space.index(choice.indexRoot).find(key).map((rowId) => ({ key, rowId }));
-  } else if (choice.prefixCount > 0 && choice.lower === null && choice.upper === null) {
+    entries = space.index(choice.indexRoot).iterate({ lower: key, upper: key });
+  }
+  else if (choice.prefixCount > 0 && choice.lower === null && choice.upper === null) {
     const prefix = encodeKey(prefixValues, keyColumns.slice(0, choice.prefixCount));
     const upper = prefixUpperBound(prefix);
-    entries = space.index(choice.indexRoot).range(
+    entries = space.index(choice.indexRoot).iterate(
       upper === null ? { lower: prefix, lowerInclusive: true } : { lower: prefix, lowerInclusive: true, upper, upperInclusive: false },
     );
   } else {
@@ -704,69 +810,88 @@ function indexEntryIds(
     const end = last === null
       ? (prefixKey === null ? undefined : prefixUpperBound(prefixKey) ?? undefined)
       : last.inclusive ? prefixUpperBound(last.key) ?? undefined : last.key;
-    entries = space.index(choice.indexRoot).range({
+    entries = space.index(choice.indexRoot).iterate({
       ...(start !== undefined ? { lower: start, lowerInclusive: true } : {}),
       ...(end !== undefined ? { upper: end, upperInclusive: false } : {}),
     });
   }
-  return entries.map((entry) => entry.rowId);
+  const ids: RowId[] = [];
+  for (const entry of entries) { yield; ids.push(entry.rowId); }
+  return ids;
 }
 
 /** 뷰를 전개하여 행을 만든다. 정의 안의 생략된 이름은 뷰의 테이블스페이스에서 찾는다. */
-function scanView(bound: Extract<BoundSource, { kind: "view" }>, ctx: QueryContext): RowScope[][] {
+function* scanViewSteps(bound: Extract<BoundSource, {
+  kind: "view";
+}>, ctx: QueryContext): Work<RowScope[][]> {
   const key = objectKey(bound.tablespace, bound.view);
-  const result = executeQuery(bound.query, { ...ctx, currentTablespace: bound.tablespace, viewStack: [...ctx.viewStack, key] });
-  const names = bound.def.columns.length === result.columns.length ? bound.def.columns : result.columns.map((column) => column.name);
-  return result.rows.map((row) => [
-    {
-      tablespace: bound.tablespace,
-      table: bound.view,
-      alias: bound.alias,
-      slots: result.columns.map((column, index) => ({
-        column: (names[index] as string) ?? column.name,
-        value: (row[index] ?? null) as SqlValue,
-        type: column.type,
-      })),
-    },
-  ]);
+  const result = (yield* executeQuerySteps(bound.query, { ...ctx, currentTablespace: bound.tablespace, viewStack: [...ctx.viewStack, key] }));
+  const names = bound.def.columns.length === result.columns.length ? bound.def.columns : (yield* mapWork(result.columns, function* (column) {
+    return column.name;
+  }));
+  return (yield* mapWork(result.rows, function* (row) {
+    return [
+      {
+        tablespace: bound.tablespace,
+        table: bound.view,
+        alias: bound.alias,
+        slots: (yield* mapWork(result.columns, function* (column, index) {
+          return ({
+            column: (names[index] as string) ?? column.name,
+            value: (row[index] ?? null) as SqlValue,
+            type: column.type,
+          });
+        })),
+      },
+    ];
+  }));
 }
 
 /** 인라인 뷰를 실행한다. */
-function scanDerived(bound: Extract<BoundSource, { kind: "derived" }>, ctx: QueryContext): RowScope[][] {
-  const result = executeQuery(bound.query, ctx);
-  const names = bound.columns ?? result.columns.map((column) => column.name);
+function* scanDerivedSteps(bound: Extract<BoundSource, {
+  kind: "derived";
+}>, ctx: QueryContext): Work<RowScope[][]> {
+  const result = (yield* executeQuerySteps(bound.query, ctx));
+  const names = bound.columns ?? (yield* mapWork(result.columns, function* (column) {
+    return column.name;
+  }));
   if (bound.columns !== null && bound.columns.length !== result.columns.length) {
     fail("42804", ERROR_CODES.SET_OPERATION_MISMATCH, "Derived table column count does not match.");
   }
-  return result.rows.map((row) => [
-    {
-      tablespace: null,
-      table: null,
-      alias: bound.alias,
-      slots: result.columns.map((column, index) => ({
-        column: (names[index] as string) ?? column.name,
-        value: (row[index] ?? null) as SqlValue,
-        type: column.type,
-      })),
-    },
-  ]);
+  return (yield* mapWork(result.rows, function* (row) {
+    return [
+      {
+        tablespace: null,
+        table: null,
+        alias: bound.alias,
+        slots: (yield* mapWork(result.columns, function* (column, index) {
+          return ({
+            column: (names[index] as string) ?? column.name,
+            value: (row[index] ?? null) as SqlValue,
+            type: column.type,
+          });
+        })),
+      },
+    ];
+  }));
 }
 
 // ---------------------------------------------------------------------------
 // 투영과 집계
 // ---------------------------------------------------------------------------
-
 /** 선택 목록을 한 행에 적용한다. */
-function projectRow(items: SelectItem[], row: CombinedRow, ctx: QueryContext): OutputColumn[] {
+function* projectRowSteps(items: SelectItem[], row: CombinedRow, ctx: QueryContext): Work<OutputColumn[]> {
   const out: OutputColumn[] = [];
   for (const item of items) {
+    yield;
     if (item.kind === "Star") {
       for (const column of expandStar(item.qualifier, row, item.position)) {
+        yield;
         out.push(column);
       }
       continue;
     }
-    const bound = evaluateExpression(item.expression, evalContextFor(row, ctx, false));
+    const bound = (yield* evaluateExpressionSteps(item.expression, evalContextFor(row, ctx, false)));
     const name = item.alias ?? defaultColumnName(item.expression, `COL${out.length + 1}`);
     out.push({ name, type: resultTypeOf(bound), value: bound.value });
   }
@@ -814,27 +939,34 @@ interface Group {
 }
 
 /** GROUP BY와 집계를 실행한다. */
-function executeGrouped(select: Select, rows: CombinedRow[], boundList: BoundSource[], ctx: QueryContext): BodyResult {
-  const groups = groupRows(select.groupBy, rows, ctx);
+function* executeGroupedSteps(select: Select, rows: CombinedRow[], boundList: BoundSource[], ctx: QueryContext): Work<BodyResult> {
+  const groups = (yield* groupRowsSteps(select.groupBy, rows, ctx));
   // HAVING
   const kept = select.having === null
     ? groups
-    : groups.filter((group) => {
+    : (yield* filterWork(groups, function* (group) {
       const rep = repScopes(group, boundList, ctx);
-      return evaluateCondition(select.having as Expression, groupEvalContext(rep, group.rows, ctx)) === true;
-    });
-  const outputs = kept.map((group) => {
+      return (yield* evaluateConditionSteps(select.having as Expression, groupEvalContext(rep, group.rows, ctx))) === true;
+    }));
+  const outputs = (yield* mapWork(kept, function* (group) {
     const rep = repScopes(group, boundList, ctx);
-    return projectRowGrouped(select.items, rep, group.rows, ctx);
-  });
-  const distinct = select.distinct ? deduplicate(outputs) : outputs;
+    return (yield* projectRowGroupedSteps(select.items, rep, group.rows, ctx));
+  }));
+  const distinct = select.distinct ? (yield* deduplicateSteps(outputs)) : outputs;
   const columns = distinct.length > 0
-    ? (distinct[0] as OutputColumn[]).map((column) => ({ name: column.name, type: column.type }))
-    : inferSelectColumns(select, boundList, ctx);
+    ? (yield* mapWork((distinct[0] as OutputColumn[]), function* (column) {
+      return ({ name: column.name, type: column.type });
+    })) : inferSelectColumns(select, boundList, ctx);
   return {
     columns,
-    rows: distinct.map((output) => output.map((column) => column.value)),
-    rowSources: kept.map((group) => (group.rows[0] ?? []) as CombinedRow),
+    rows: (yield* mapWork(distinct, function* (output) {
+      return (yield* mapWork(output, function* (column) {
+        return column.value;
+      }));
+    })),
+    rowSources: (yield* mapWork(kept, function* (group) {
+      return (group.rows[0] ?? []) as CombinedRow;
+    })),
   };
 }
 
@@ -844,16 +976,18 @@ function repScopes(group: Group, boundList: BoundSource[], ctx: QueryContext): C
   return typeScopes(boundList, ctx);
 }
 
-function projectRowGrouped(items: SelectItem[], rep: CombinedRow, groupRows: CombinedRow[], ctx: QueryContext): OutputColumn[] {
+function* projectRowGroupedSteps(items: SelectItem[], rep: CombinedRow, groupRows: CombinedRow[], ctx: QueryContext): Work<OutputColumn[]> {
   const out: OutputColumn[] = [];
   for (const item of items) {
+    yield;
     if (item.kind === "Star") {
       for (const column of expandStar(item.qualifier, rep, item.position)) {
+        yield;
         out.push(column);
       }
       continue;
     }
-    const bound = evaluateExpression(item.expression, groupEvalContext(rep, groupRows, ctx));
+    const bound = (yield* evaluateExpressionSteps(item.expression, groupEvalContext(rep, groupRows, ctx)));
     const name = item.alias ?? defaultColumnName(item.expression, `COL${out.length + 1}`);
     out.push({ name, type: resultTypeOf(bound), value: bound.value });
   }
@@ -861,20 +995,30 @@ function projectRowGrouped(items: SelectItem[], rep: CombinedRow, groupRows: Com
 }
 
 /** GROUP BY 키로 행을 나눈다. */
-function groupRows(groupBy: Expression[], rows: CombinedRow[], ctx: QueryContext): Group[] {
+function* groupRowsSteps(groupBy: Expression[], rows: CombinedRow[], ctx: QueryContext): Work<Group[]> {
   if (groupBy.length === 0) {
     // 전역 집계 : 행이 없어도 그룹 하나를 둔다.
     return [{ key: [], keyTypes: [], rows }];
   }
   const groups: Group[] = [];
   for (const row of rows) {
+    yield;
     const evalCtx = evalContextFor(row, ctx, false);
-    const key = groupBy.map((expression) => evaluateExpression(expression, evalCtx));
-    const found = groups.find((group) => keysEqual(group, key));
+    const key = (yield* mapWork(groupBy, function* (expression) {
+      return (yield* evaluateExpressionSteps(expression, evalCtx));
+    }));
+    const found = (yield* findWork(groups, function* (group) {
+      return keysEqual(group, key);
+    }));
     if (found !== undefined) {
       found.rows.push(row);
-    } else {
-      groups.push({ key: key.map((entry) => entry.value), keyTypes: key.map((entry) => entry.type), rows: [row] });
+    }
+    else {
+      groups.push({ key: (yield* mapWork(key, function* (entry) {
+          return entry.value;
+        })), keyTypes: (yield* mapWork(key, function* (entry) {
+          return entry.type;
+        })), rows: [row] });
     }
   }
   return groups;
@@ -892,10 +1036,14 @@ function keysEqual(group: Group, key: TypedValue[]): boolean {
 }
 
 /** DISTINCT로 중복 행을 없앤다. */
-function deduplicate(rows: OutputColumn[][]): OutputColumn[][] {
+function* deduplicateSteps(rows: OutputColumn[][]): Work<OutputColumn[][]> {
   const kept: OutputColumn[][] = [];
   for (const row of rows) {
-    if (!kept.some((other) => rowEquals(other, row))) kept.push(row);
+    yield;
+    if (!(yield* someWork(kept, function* (other) {
+      return rowEquals(other, row);
+    })))
+      kept.push(row);
   }
   return kept;
 }
@@ -913,33 +1061,55 @@ function rowEquals(left: OutputColumn[], right: OutputColumn[]): boolean {
 // ---------------------------------------------------------------------------
 // 집합 연산
 // ---------------------------------------------------------------------------
-
-function executeSetOperation(body: Extract<QueryBody, { kind: "SetOperation" }>, ctx: QueryContext): BodyResult {
-  const left = executeBody(body.left, ctx);
-  const right = executeBody(body.right, ctx);
+function* executeSetOperationSteps(body: Extract<QueryBody, {
+  kind: "SetOperation";
+}>, ctx: QueryContext): Work<BodyResult> {
+  const left = (yield* executeBodySteps(body.left, ctx));
+  const right = (yield* executeBodySteps(body.right, ctx));
   if (left.columns.length !== right.columns.length) {
     fail("42804", ERROR_CODES.SET_OPERATION_MISMATCH, "Set operation queries must have the same number of columns.");
   }
-  const columns = left.columns.map((column, index) => {
+  const columns = (yield* mapWork(left.columns, function* (column, index) {
     const rightType = (right.columns[index] as { type: DataType }).type;
     const common = commonType(column.type, rightType);
     if (common === null) {
       fail("42804", ERROR_CODES.SET_OPERATION_MISMATCH, "Set operation queries have incompatible types.");
     }
     return { name: column.name, type: common as DataType };
-  });
-  const types = columns.map((column) => column.type);
-  const leftRows = left.rows.map((row) => castRow(row, left.columns.map((column) => column.type), types, ctx));
-  const rightRows = right.rows.map((row) => castRow(row, right.columns.map((column) => column.type), types, ctx));
+  }));
+  const types = (yield* mapWork(columns, function* (column) {
+    return column.type;
+  }));
+  const leftRows = (yield* mapWork(left.rows, function* (row) {
+    return castRow(row, (yield* mapWork(left.columns, function* (column) {
+      return column.type;
+    })), types, ctx);
+  }));
+  const rightRows = (yield* mapWork(right.rows, function* (row) {
+    return castRow(row, (yield* mapWork(right.columns, function* (column) {
+      return column.type;
+    })), types, ctx);
+  }));
   let rows: SqlValue[][];
   if (body.operator === "UNION" && body.all) {
     rows = [...leftRows, ...rightRows];
-  } else if (body.operator === "UNION") {
-    rows = unionDistinct(leftRows, rightRows, types);
-  } else if (body.operator === "INTERSECT") {
-    rows = deduplicateTyped(leftRows.filter((row) => rightRows.some((other) => typedRowEquals(row, other, types))), types);
-  } else {
-    rows = deduplicateTyped(leftRows.filter((row) => !rightRows.some((other) => typedRowEquals(row, other, types))), types);
+  }
+  else if (body.operator === "UNION") {
+    rows = (yield* unionDistinctSteps(leftRows, rightRows, types));
+  }
+  else if (body.operator === "INTERSECT") {
+    rows = (yield* deduplicateTypedSteps((yield* filterWork(leftRows, function* (row) {
+      return (yield* someWork(rightRows, function* (other) {
+        return typedRowEquals(row, other, types);
+      }));
+    })), types));
+  }
+  else {
+    rows = (yield* deduplicateTypedSteps((yield* filterWork(leftRows, function* (row) {
+      return !(yield* someWork(rightRows, function* (other) {
+        return typedRowEquals(row, other, types);
+      }));
+    })), types));
   }
   return { columns, rows, rowSources: [] };
 }
@@ -964,18 +1134,26 @@ function typedRowEquals(left: SqlValue[], right: SqlValue[], types: DataType[]):
   return true;
 }
 
-function unionDistinct(left: SqlValue[][], right: SqlValue[][], types: DataType[]): SqlValue[][] {
+function* unionDistinctSteps(left: SqlValue[][], right: SqlValue[][], types: DataType[]): Work<SqlValue[][]> {
   const kept: SqlValue[][] = [];
   for (const row of [...left, ...right]) {
-    if (!kept.some((other) => typedRowEquals(other, row, types))) kept.push(row);
+    yield;
+    if (!(yield* someWork(kept, function* (other) {
+      return typedRowEquals(other, row, types);
+    })))
+      kept.push(row);
   }
   return kept;
 }
 
-function deduplicateTyped(rows: SqlValue[][], types: DataType[]): SqlValue[][] {
+function* deduplicateTypedSteps(rows: SqlValue[][], types: DataType[]): Work<SqlValue[][]> {
   const kept: SqlValue[][] = [];
   for (const row of rows) {
-    if (!kept.some((other) => typedRowEquals(other, row, types))) kept.push(row);
+    yield;
+    if (!(yield* someWork(kept, function* (other) {
+      return typedRowEquals(other, row, types);
+    })))
+      kept.push(row);
   }
   return kept;
 }
@@ -983,25 +1161,30 @@ function deduplicateTyped(rows: SqlValue[][], types: DataType[]): SqlValue[][] {
 // ---------------------------------------------------------------------------
 // 정렬과 행 수 제한
 // ---------------------------------------------------------------------------
-
-function applyOrderAndLimit(
-  columns: { name: string; type: DataType }[],
-  rows: SqlValue[][],
-  rowSources: CombinedRow[],
-  orderBy: Query["orderBy"],
-  offset: Query["offset"],
-  fetch: Query["fetch"],
-  ctx: QueryContext,
-): { columns: { name: string; type: DataType }[]; rows: SqlValue[][]; sources: CombinedRow[] } {
+function* applyOrderAndLimitSteps(columns: {
+  name: string;
+  type: DataType;
+}[], rows: SqlValue[][], rowSources: CombinedRow[], orderBy: Query["orderBy"], offset: Query["offset"], fetch: Query["fetch"], ctx: QueryContext): Work<{
+  columns: {
+    name: string;
+    type: DataType;
+  }[];
+  rows: SqlValue[][];
+  sources: CombinedRow[];
+}> {
   let orderedRows = rows;
   let orderedSources = rowSources;
   if (orderBy.length > 0) {
-    const keys = rows.map((row, index) => ({
-      row,
-      source: (rowSources[index] ?? []) as CombinedRow,
-      keys: orderBy.map((item) => evaluateOrderKey(item, columns, row, (rowSources[index] ?? []) as CombinedRow, ctx)),
+    const keys = (yield* mapWork(rows, function* (row, index) {
+      return ({
+        row,
+        source: (rowSources[index] ?? []) as CombinedRow,
+        keys: (yield* mapWork(orderBy, function* (item) {
+          return (yield* evaluateOrderKeySteps(item, columns, row, (rowSources[index] ?? []) as CombinedRow, ctx));
+        })),
+      });
     }));
-    keys.sort((left, right) => {
+    (yield* sortWork(keys, (left, right) => {
       for (let index = 0; index < orderBy.length; index++) {
         const item = orderBy[index] as Query["orderBy"][number];
         const leftEntry = left.keys[index] as TypedValue;
@@ -1014,15 +1197,19 @@ function applyOrderAndLimit(
         if (order !== 0) return order;
       }
       return 0;
-    });
-    orderedRows = keys.map((entry) => entry.row);
-    orderedSources = keys.map((entry) => entry.source);
+    }));
+    orderedRows = (yield* mapWork(keys, function* (entry) {
+      return entry.row;
+    }));
+    orderedSources = (yield* mapWork(keys, function* (entry) {
+      return entry.source;
+    }));
   }
-  const offsetCount = offset === null ? 0n : limitValue(offset, ctx);
+  const offsetCount = offset === null ? 0n : (yield* limitValueSteps(offset, ctx));
   if (offsetCount < 0n) {
     fail("22023", ERROR_CODES.TYPE_PARAMETER_INVALID, "OFFSET must not be negative.");
   }
-  const fetchCount = fetch === null ? null : fetch.count === null ? 1n : limitValue(fetch.count, ctx);
+  const fetchCount = fetch === null ? null : fetch.count === null ? 1n : (yield* limitValueSteps(fetch.count, ctx));
   if (fetchCount !== null && fetchCount < 0n) {
     fail("22023", ERROR_CODES.TYPE_PARAMETER_INVALID, "FETCH count must not be negative.");
   }
@@ -1037,13 +1224,10 @@ function applyOrderAndLimit(
 }
 
 /** ORDER BY 식을 한 행에 적용한다. 출력 별칭이 출처 열보다 먼저이다. */
-function evaluateOrderKey(
-  item: Query["orderBy"][number],
-  columns: { name: string; type: DataType }[],
-  row: SqlValue[],
-  sources: CombinedRow,
-  ctx: QueryContext,
-): TypedValue {
+function* evaluateOrderKeySteps(item: Query["orderBy"][number], columns: {
+  name: string;
+  type: DataType;
+}[], row: SqlValue[], sources: CombinedRow, ctx: QueryContext): Work<TypedValue> {
   // 출력 열과 같은 이름이면 그 값을 쓴다.
   const orderExpr: Expression = item.expression;
   if (orderExpr.kind === "Column" && orderExpr.qualifier.length === 0) {
@@ -1056,14 +1240,16 @@ function evaluateOrderKey(
     tablespace: null,
     table: null,
     alias: null,
-    slots: columns.map((column, index) => ({ column: column.name, value: (row[index] ?? null) as SqlValue, type: column.type })),
+    slots: (yield* mapWork(columns, function* (column, index) {
+      return ({ column: column.name, value: (row[index] ?? null) as SqlValue, type: column.type });
+    })),
   };
-  return evaluateExpression(item.expression, evalContextFor([...sources, outputScope], ctx, false));
+  return (yield* evaluateExpressionSteps(item.expression, evalContextFor([...sources, outputScope], ctx, false)));
 }
 
 /** 행 수 제한 값을 음이 아닌 정수로 바꾼다. */
-function limitValue(expression: Expression, ctx: QueryContext): bigint {
-  const bound = evaluateExpression(expression, evalContextFor([], ctx, true));
+function* limitValueSteps(expression: Expression, ctx: QueryContext): Work<bigint> {
+  const bound = (yield* evaluateExpressionSteps(expression, evalContextFor([], ctx, true)));
   if (bound.value === null) {
     fail("22023", ERROR_CODES.TYPE_PARAMETER_INVALID, "Row limit must not be NULL.");
   }
@@ -1080,7 +1266,6 @@ function limitValue(expression: Expression, ctx: QueryContext): bigint {
 // ---------------------------------------------------------------------------
 // 타입 전용 추론 (행이 없을 때의 메타데이터)
 // ---------------------------------------------------------------------------
-
 /** 행 없이 질의의 출력 열을 알아본다. */
 export function inferOutputColumns(query: Query, ctx: QueryContext): { name: string; type: DataType }[] {
   const body = query.body;
@@ -1115,9 +1300,28 @@ function inferBodyColumns(body: QueryBody, ctx: QueryContext): { name: string; t
 }
 
 /** SELECT의 출력 열을 행 없이 알아본다. */
-function inferSelectColumns(select: Select, boundList: BoundSource[], ctx: QueryContext): { name: string; type: DataType }[] {
+function inferSelectColumns(select: Select, boundList: BoundSource[], ctx: QueryContext): {
+  name: string;
+  type: DataType;
+}[] {
   const scopes = typeScopes(boundList, ctx);
   const evalCtx = evalContextFor(scopes, ctx, true);
+  // 선택 목록 이외의 이름·식도 행을 읽지 않고 검증한다.
+  const validateSource = (source: BoundSource): void => {
+    if (source.kind === "join") {
+      validateSource(source.left); validateSource(source.right);
+      if (source.on !== null) evaluateExpression(source.on, evalCtx);
+      for (const name of source.using ?? []) {
+        for (const side of [source.left, source.right]) {
+          evaluateExpression({ kind: "Column", qualifier: [], name, position: selectPosition(select) }, evalContextFor(typeScopesOf(side, ctx), ctx, true));
+        }
+      }
+    }
+  };
+  boundList.forEach(validateSource);
+  for (const expression of [select.where, ...select.groupBy, select.having]) {
+    if (expression !== null) evaluateExpression(expression, evalCtx);
+  }
   const out: { name: string; type: DataType }[] = [];
   select.items.forEach((item, index) => {
     if (item.kind === "Star") {
@@ -1133,7 +1337,7 @@ function inferSelectColumns(select: Select, boundList: BoundSource[], ctx: Query
 }
 
 /** 출처들의 타입 전용 범위를 만든다. 값은 모두 NULL 이다. */
-function typeScopes(boundList: BoundSource[], ctx: QueryContext): RowScope[] {
+export function typeScopes(boundList: BoundSource[], ctx: QueryContext): RowScope[] {
   const scopes: RowScope[] = [];
   for (const bound of boundList) {
     scopes.push(...typeScopesOf(bound, ctx));
@@ -1227,29 +1431,44 @@ export function inferSourceColumns(source: BoundSource, ctx: QueryContext): { na
  * 조건의 앞쪽 컬럼에 맞는 인덱스(PK 포함)가 있으면 그 인덱스로 후보만 읽는다. 없으면 힙을 하나씩 읽는 지연 순회로 훑으며
  * 조건에 맞는 행만 모은다. (테이블 전체를 메모리에 올리지 않는다) 어느 쪽이든 조건은 모든 후보에 다시 건다.
  */
-export function scanTableForDml(
-  catalog: CatalogStore,
-  table: StoredTable,
-  tablespace: string,
-  alias: string | null,
-  where: Expression | null,
-  ctx: QueryContext,
-): { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] {
-  const candidates = where === null ? null : indexedCandidates(catalog, tablespace, table, alias ?? table.name, where, ctx);
+export function scanTableForDml(catalog: CatalogStore, table: StoredTable, tablespace: string, alias: string | null, where: Expression | null, ctx: QueryContext): {
+  id: RowId | null;
+  tempId: string | null;
+  values: SqlValue[];
+  scopes: RowScope[];
+}[] {
+  return runSync(scanTableForDmlSteps(catalog, table, tablespace, alias, where, ctx));
+}
+
+/**
+ * DML의 WHERE 탐색에 쓸 단일 테이블 스캔이다. 행 식별자와 함께 돌려준다.
+ * 조건의 앞쪽 컬럼에 맞는 인덱스(PK 포함)가 있으면 그 인덱스로 후보만 읽는다. 없으면 힙을 하나씩 읽는 지연 순회로 훑으며
+ * 조건에 맞는 행만 모은다. (테이블 전체를 메모리에 올리지 않는다) 어느 쪽이든 조건은 모든 후보에 다시 건다.
+ */
+export function* scanTableForDmlSteps(catalog: CatalogStore, table: StoredTable, tablespace: string, alias: string | null, where: Expression | null, ctx: QueryContext): Work<{
+  id: RowId | null;
+  tempId: string | null;
+  values: SqlValue[];
+  scopes: RowScope[];
+}[]> {
+  const candidates = where === null ? null : (yield* indexedCandidatesSteps(catalog, tablespace, table, alias ?? table.name, where, ctx));
   const rows = candidates ?? visibleRows(catalog, tablespace, table, ctx.txn);
   const out: { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] = [];
   for (const row of rows) {
+    yield;
     const scopes: RowScope[] = [{
-      tablespace,
-      table: table.name,
-      alias,
-      slots: table.columns.map((column, index) => ({
-        column: column.name,
-        value: (row.values[index] ?? null) as SqlValue,
-        type: column.dataType,
-      })),
-    }];
-    if (where !== null && evaluateCondition(where, evalContextFor(scopes, ctx, false)) !== true) {
+        tablespace,
+        table: table.name,
+        alias,
+        slots: (yield* mapWork(table.columns, function* (column, index) {
+          return ({
+            column: column.name,
+            value: (row.values[index] ?? null) as SqlValue,
+            type: column.dataType,
+          });
+        })),
+      }];
+    if (where !== null && (yield* evaluateConditionSteps(where, evalContextFor(scopes, ctx, false))) !== true) {
       continue;
     }
     out.push({ id: row.id, tempId: row.tempId, values: row.values, scopes });

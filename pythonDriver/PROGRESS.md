@@ -8,6 +8,7 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
+- 서버 후속 구현 인수인계 : rdbms 변경 중간 스냅샷의 Python 3.2·3.12.4 회귀가 각각 124개 통과했다(`.codex-compat.log`). 이후 마지막 서버 오류 수정 뒤의 재검증은 다음 작업이다. 사용자 지시에 따라 추가 테스트를 시작하지 않고 종료했으며 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)에 재개 순서를 적었다. 기존 PY-4 ~ PY-6과 새 요청 API 연동 체크리스트는 계속 미완료이다.
 - 진행 단계 : **PY-3 완료** (DB-API 2.0 계층). `types.py`(값 변환·타입 객체·생성자), `cursor.py`(`Cursor`), `connection.py`(`Connection`, `connect()`), 모듈 수준(`apilevel`, `threadsafety`, `paramstyle`, 예외·생성자·타입 객체)을 구현했다. TLS와 UDP는 `NotSupportedError` 이며 PY-4·PY-5에서 둔다.
 - 이 PC (`DESKTOP-HJOW`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\P312\python.exe`이다. 2026-10-20 실제 실행으로 재확인했다. 이전 기록의 `C:\Python\python.exe`(3.13.1)는 현재 없어 이번에 시험하지 않았다.
 - 이 PC (`VM-W11-Codex`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\312\python.exe`이다. 2026-10-20 실제 실행으로 확인했다 (OpenSSL 1.0.0a, `unicodedata` 6.0.0. `DESKTOP-HJOW` 의 3.2와 같다).
@@ -286,6 +287,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - `gui` 는 보류 중이며 `nodejsDriver` 를 쓴다. 이 드라이버를 쓰는 프로젝트는 아직 없다.
 
 ## 작업 이력
+
+- 2026-10-20 : rdbms 후속 구현의 중간 스냅샷으로 Python 3.2·3.12.4 회귀 각각 124개를 통과했다. 마지막 서버 오류 수정 뒤의 재시험은 사용자 지시에 따라 다음 작업으로 남겼다. 드라이버 소스 변경은 없으며 상세는 rdbms/HANDOFF.md에 있다.
 
 - 2026-10-20 : 서버 prepare/describe·cancel 구현 후의 연동을 다음 작업으로 등록했다. DB-API 확장 API·description·취소 예외·스레드 수신 구조와 Python 3.2 회귀 검증을 미완료 항목으로 추가했다. PY-4 ~ PY-6은 유지하며 이번 변경은 문서만 해당한다.
 

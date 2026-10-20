@@ -181,6 +181,12 @@ export const ERROR_CODES = {
   CONNECTION_FAILURE: 8006,
   /** 접속을 맺지 못함 : TLS 서버 인증서 검증 실패. 클라이언트가 만드는 오류이며 서버는 보내지 않는다. SQLSTATE 08001. */
   CONNECTION_REJECTED: 8007,
+  /** 준비 문장 ID 없음. SQLSTATE 26000. */
+  PREPARED_NOT_FOUND: 8008,
+  /** 준비 후 객체 정의 또는 현재 테이블스페이스 변경. SQLSTATE 0A000. */
+  PREPARED_INVALIDATED: 8009,
+  /** 사용자 요청으로 문장 취소. SQLSTATE 57014. */
+  STATEMENT_CANCELLED: 8010,
 } as const;
 
 /** SQL 문장 안의 위치. 줄과 칸은 1 부터 세며, 칸은 UTF-16 단위이다. */

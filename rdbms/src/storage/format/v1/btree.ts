@@ -51,9 +51,14 @@ export class V1Index implements StorageIndex {
   }
 
   range(options: IndexRange = {}): IndexEntry[] {
+    return [...this.iterate(options)];
+  }
+
+  /** 범위의 결과를 한 번에 모으지 않고 리프에서 하나씩 읽는다. */
+  *iterate(options: IndexRange = {}): IterableIterator<IndexEntry> {
     if (options.limit !== undefined) uint(options.limit);
-    if (options.limit === 0) return [];
-    if (options.lower !== undefined && options.upper !== undefined && Buffer.compare(options.lower, options.upper) > 0) return [];
+    if (options.limit === 0) return;
+    if (options.lower !== undefined && options.upper !== undefined && Buffer.compare(options.lower, options.upper) > 0) return;
     const target: IndexEntry = { key: options.lower ?? Buffer.alloc(0), rowId: { pageId: 0, slotId: 0 } };
     let id = this.metadata().readUInt32LE(8);
     const visited = new Set<number>();
@@ -65,7 +70,7 @@ export class V1Index implements StorageIndex {
       const child = options.lower === undefined ? 0 : this.childFor(node, target);
       id = node.children[child]!;
     }
-    const result: IndexEntry[] = [];
+    let count = 0;
     const leaves = new Set<number>();
     let previous: number | undefined;
     while (id !== 0) {
@@ -77,14 +82,13 @@ export class V1Index implements StorageIndex {
         const lower = options.lower === undefined ? 1 : Buffer.compare(entry.key, options.lower);
         if (lower < 0 || (lower === 0 && options.lowerInclusive === false)) continue;
         const upper = options.upper === undefined ? -1 : Buffer.compare(entry.key, options.upper);
-        if (upper > 0 || (upper === 0 && options.upperInclusive === false)) return result;
-        result.push({ key: Buffer.from(entry.key), rowId: { ...entry.rowId } });
-        if (options.limit !== undefined && result.length >= options.limit) return result;
+        if (upper > 0 || (upper === 0 && options.upperInclusive === false)) return;
+        yield { key: Buffer.from(entry.key), rowId: { ...entry.rowId } };
+        if (options.limit !== undefined && ++count >= options.limit) return;
       }
       previous = id;
       id = node.next;
     }
-    return result;
   }
 
   insert(key: Buffer, rowId: RowId): void {

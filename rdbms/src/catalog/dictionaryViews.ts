@@ -174,6 +174,8 @@ export interface DictionaryAccess {
 
 /** 테이블스페이스 카탈로그 밖에서 오는 딕셔너리 뷰의 원천이다. */
 export interface DictionarySources {
+  /** 실행기에서 행 없이 분석한 뷰의 컬럼이다. 카탈로그가 실행기를 import하지 않도록 주입한다. */
+  viewColumns?: (tablespace: string, view: string) => readonly { name: string; dataType: DataType; nullable: "YES" | "NO" | "UNKNOWN" }[];
   /** SYS_SESSIONS 에 보일 세션 현황이다. */
   sessions?: readonly SessionInfo[];
   /** SYS_USERS 에 보일 사용자이다. 비밀번호 검증 정보는 넘기지 않는다. */
@@ -256,6 +258,12 @@ export function getDictionaryRows(
               column.defaultText,
             ]);
           });
+        }
+        for (const view of Object.values(catalog.data.views)) {
+          if (!objectVisible(name, view.name)) continue;
+          for (const [index, column] of (sources.viewColumns?.(name, view.name) ?? []).entries()) {
+            rows.push([name, view.name, column.name, BigInt(index + 1), formatDataType(column.dataType), column.nullable, null]);
+          }
         }
       }
       rows.sort(compareRows);

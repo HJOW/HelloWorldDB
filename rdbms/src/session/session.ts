@@ -77,6 +77,13 @@ import { commitTransaction, executeDelete, executeInsert, executeTruncate, execu
 import { LockManager, isLockConflict, lockConflict, objectLockKey } from "../txn/lockManager.js";
 import { Transaction } from "../txn/transaction.js";
 import { SessionManager } from "./sessionManager.js";
+import { executeQuerySteps, streamQuerySteps } from "../exec/executor.js";
+import { RowSpool } from "../exec/rowSpool.js";
+import { executeInsertSteps, executeUpdateSteps, executeDeleteSteps } from "../exec/dml.js";
+import { Execution, StatementChanged, runAsync } from "../exec/work.js";
+import { describeStatement } from "../exec/describe.js";
+import type { Description } from "../exec/describe.js";
+export type { Description } from "../exec/describe.js";
 import type { ConnectionChannel } from "./sessionManager.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
@@ -90,7 +97,7 @@ function fail(sqlState: string, code: number, message: string, position?: Source
 /** 실행 결과이다. DML은 영향받은 행 수를 함께 돌려준다. */
 export type ExecuteResult =
   | { kind: "ok"; message: string; rowCount?: number }
-  | { kind: "select"; columns: { name: string; dataType: DataType }[]; rows: SqlValue[][] };
+  | { kind: "select"; columns: { name: string; dataType: DataType }[]; rows: SqlValue[][]; dispose?: () => void };
 
 export interface DatabaseOptions {
   serverVersion?: string;
@@ -144,6 +151,10 @@ export interface LoginOptions extends SessionOptions {
  * 잠금 관리자와 세션 목록을 하나씩 가지며 모든 세션이 이것을 함께 쓴다.
  */
 export class Database {
+  dataRevision = 0;
+  schemaRevision = 0;
+  private preparedSeq = 0;
+  nextPreparedId(): number { return ++this.preparedSeq; }
   /** 모든 세션이 함께 쓰는 잠금 관리자이다. */
   readonly locks = new LockManager();
   readonly sessions: SessionManager;
@@ -298,6 +309,57 @@ export type SessionCloseReason = "closed" | "idle" | "shutdown";
  * 문장은 실행하기 전에 사용자의 권한을 확인한다. (auth/authorizer.ts)
  */
 export class Session {
+  private readonly resultSpools = new Set<RowSpool>();
+  createExecution(): Execution { const execution = new Execution(); execution.spillResults = true; return execution; }
+  private boundParameterTypes: readonly (DataType | null)[] | undefined;
+  private namespaceRevision = 0;
+  private activeExecution: Execution | null = null;
+  private readonly prepared = new Map<number, { sql: string; ast: Statement; count: number; revision: number; namespace: number; tablespace: string; hints?: readonly (string | null)[] }>();
+
+  prepare(sql: string, hints?: readonly (string | null)[]): Description & { statement: number } {
+    this.ensureOpen();
+    if (this.prepared.size >= 64 || [...this.prepared.values()].reduce((sum, entry) => sum + Buffer.byteLength(entry.sql), Buffer.byteLength(sql)) > 16 * 1024 * 1024) throw new DbError("53400", ERROR_CODES.CONFIGURATION_LIMIT_EXCEEDED, "Prepared statement limit exceeded.");
+    const parsed = parseStatement(sql);
+    this.authorize(parsed.statement);
+    const description = describeStatement(parsed.statement, parsed.parameterCount, this.queryContext([], new Transaction(0, false)), hints);
+    const statement = this.database.nextPreparedId();
+    this.prepared.set(statement, { sql, ast: parsed.statement, count: parsed.parameterCount, revision: this.database.schemaRevision, namespace: this.namespaceRevision, tablespace: this.currentTablespace, hints: hints?.slice() });
+    return { ...description, statement };
+  }
+
+  private requirePrepared(id: number) {
+    this.ensureOpen();
+    const entry = this.prepared.get(id);
+    if (entry === undefined) throw new DbError("26000", ERROR_CODES.PREPARED_NOT_FOUND, "Prepared statement does not exist in this session.");
+    this.authorize(entry.ast);
+    if (entry.revision !== this.database.schemaRevision || entry.namespace !== this.namespaceRevision) throw new DbError("0A000", ERROR_CODES.PREPARED_INVALIDATED, "Prepared statement was invalidated; prepare it again.");
+    return entry;
+  }
+
+  describe(id: number, hints?: readonly (string | null)[]): Description & { statement: number } {
+    const entry = this.requirePrepared(id);
+    const description = describeStatement(entry.ast, entry.count, this.queryContext([], new Transaction(0, false)), hints ?? entry.hints);
+    if (hints !== undefined) entry.hints = hints.slice();
+    return { ...description, statement: id };
+  }
+
+  closePrepared(id: number): void { this.prepared.delete(id); }
+
+  executePreparedAsync(id: number, params: SqlValue[] = [], execution = new Execution()): Promise<ExecuteResult> {
+    const result = this.chain.then(() => {
+      const entry = this.requirePrepared(id);
+      const description = this.describe(id);
+      return this.runAsync(entry.sql, params, execution, entry.ast, entry.count, description.parameters);
+    });
+    this.chain = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  cancelExecution(execution: Execution): "accepted" | "notRunning" | "tooLate" {
+    const status = execution.cancel();
+    if (status === "accepted" && this.waitingOwner !== null) this.database.locks.cancelWait(this.waitingOwner, new DbError("57014", ERROR_CODES.STATEMENT_CANCELLED, "Statement was cancelled."));
+    return status;
+  }
   autocommit = true;
   currentTablespace: string;
   /** 마지막으로 문장을 시작하거나 끝낸 시각(epoch ms)이다. 유휴 판정에 쓴다. */
@@ -365,6 +427,9 @@ export class Session {
   close(reason: SessionCloseReason = "closed"): void {
     if (this.closed) return;
     this.closed = true;
+    this.activeExecution?.cancel();
+    this.prepared.clear();
+    for (const spool of this.resultSpools) spool.close();
     if (this.waitingOwner !== null) this.database.locks.cancelWait(this.waitingOwner);
     if (this.txn !== null) this.dropTransaction(this.txn);
     this.database.sessions.remove(this);
@@ -380,6 +445,7 @@ export class Session {
   /** 문장 실행용 질의 문맥을 만든다. 한 문장 안에서 현재 시각은 같은 값이다. */
   private queryContext(params: readonly SqlValue[], txn: Transaction): QueryContext {
     return {
+      boundParameterTypes: this.boundParameterTypes,
       manager: this.database.manager,
       currentTablespace: this.currentTablespace,
       currentUser: this.user,
@@ -400,6 +466,14 @@ export class Session {
   private dictionarySources(): DictionarySources {
     const registry = this.database.manager.systemCatalog().data.system;
     return {
+      viewColumns: (tablespace, view) => {
+        const definition = this.database.manager.requireCatalog(tablespace).data.views[view]!;
+        const parsed = parseStatement(definition.queryText);
+        const ctx = { ...this.queryContext([], new Transaction(0, false)), currentTablespace: tablespace };
+        return describeStatement(parsed.statement, parsed.parameterCount, ctx).columns.map((column, index) => ({
+          name: definition.columns[index] ?? column.name, dataType: column.type, nullable: column.nullable,
+        }));
+      },
       sessions: this.database.sessions.list(),
       users: this.database.users.list().map((user) => ({ name: user.name, defaultTablespace: user.defaultTablespace })),
       privileges: registry?.privileges ?? [],
@@ -444,6 +518,7 @@ export class Session {
    */
   execute(sql: string, params: SqlValue[] = []): ExecuteResult {
     this.ensureOpen();
+    if (this.running) throw new DbError("25001", ERROR_CODES.ACTIVE_TRANSACTION, "A statement is already running in this session.");
     const statement = this.parse(sql, params);
     this.running = true;
     this.lastActivity = Date.now();
@@ -462,8 +537,8 @@ export class Session {
    * 잠금을 만나면 `lockTimeoutMs` 까지 기다린다. 넘으면 55P03 으로 그 문장만 실패하고,
    * 교착 상태가 되면 이 트랜잭션을 롤백하고 40P01 로 끝낸다.
    */
-  executeAsync(sql: string, params: SqlValue[] = []): Promise<ExecuteResult> {
-    const result = this.chain.then(() => this.runAsync(sql, params));
+  executeAsync(sql: string, params: SqlValue[] = [], execution = new Execution()): Promise<ExecuteResult> {
+    const result = this.chain.then(() => this.runAsync(sql, params, execution));
     this.chain = result.then(
       () => undefined,
       () => undefined,
@@ -471,16 +546,24 @@ export class Session {
     return result;
   }
 
-  private async runAsync(sql: string, params: SqlValue[]): Promise<ExecuteResult> {
+  private async runAsync(sql: string, params: SqlValue[], execution: Execution, ast?: Statement, count?: number, parameterTypes?: readonly (DataType | null)[]): Promise<ExecuteResult> {
     this.ensureOpen();
-    const statement = this.parse(sql, params);
+    if (count !== undefined && count !== params.length) throw new DbError("07001", ERROR_CODES.PARAM_COUNT_MISMATCH, "Parameter count does not match.");
+    const statement = ast ?? this.parse(sql, params);
+    this.activeExecution = execution;
+    this.boundParameterTypes = parameterTypes;
     this.running = true;
     this.lastActivity = Date.now();
     try {
-      return await this.executeStatementAsync(statement, params);
+      execution.check();
+      return await this.executeStatementAsync(statement, params, execution);
     } catch (error) {
       throw this.normalizeError(error);
     } finally {
+      execution.phase = "done";
+      execution.guard = undefined;
+      this.activeExecution = null;
+      this.boundParameterTypes = undefined;
       this.running = false;
       this.lastActivity = Date.now();
     }
@@ -543,24 +626,42 @@ export class Session {
     }
   }
 
-  private async executeStatementAsync(stmt: Statement, params: SqlValue[]): Promise<ExecuteResult> {
+  private async executeStatementAsync(stmt: Statement, params: SqlValue[], execution: Execution): Promise<ExecuteResult> {
     const deadline = Date.now() + this.database.lockTimeoutMs;
     switch (statementClass(stmt)) {
       case "data": {
         const { txn, implicit } = this.statementTransaction();
         try {
-          let result: ExecuteResult;
+          let result: ExecuteResult | undefined;
           for (;;) {
             try {
-              result = this.attemptData(stmt, params, txn);
+              this.authorize(stmt);
+              const mark = txn.mark();
+              const revision = this.database.dataRevision;
+              const schemaRevision = this.database.schemaRevision;
+              execution.guard = () => {
+                if (revision !== this.database.dataRevision || schemaRevision !== this.database.schemaRevision) throw new StatementChanged();
+              };
+              try {
+                result = await this.executeDataAsync(stmt, params, txn, execution);
+                execution.check();
+                execution.phase = "finalizing";
+                execution.guard = undefined;
+              }
+              catch (error) { if (result?.kind === "select") result.dispose?.(); txn.truncateTo(mark); throw error; }
               break;
             } catch (error) {
+              if (error instanceof StatementChanged) {
+                execution.guard = undefined;
+                if (Date.now() >= deadline) throw new DbError("40001", ERROR_CODES.TRANSACTION_CONFLICT, "Concurrent changes prevented a consistent statement; retry the statement.");
+                continue;
+              }
               if (!isLockConflict(error)) throw error;
               await this.waitLock(txn.id, error.conflictKey, deadline);
             }
           }
           if (implicit) this.commitTransaction(txn);
-          return result;
+          return result!;
         } catch (error) {
           // 교착 상태이면 트랜잭션 전체를 롤백한다. 그 밖에는 자동 커밋 문장만 정리한다.
           if (implicit || isDeadlock(error)) this.dropTransaction(txn);
@@ -569,6 +670,8 @@ export class Session {
       }
       case "ddl": {
         this.authorize(stmt);
+        execution.check();
+        execution.phase = "finalizing";
         this.commitBeforeDdl();
         const owner = this.database.nextTransactionId();
         try {
@@ -585,6 +688,8 @@ export class Session {
         }
       }
       case "control":
+        execution.check();
+        execution.phase = "finalizing";
         return this.executeControl(stmt);
     }
   }
@@ -659,10 +764,35 @@ export class Session {
     }
   }
 
+  private async executeDataAsync(stmt: Statement, params: SqlValue[], txn: Transaction, execution: Execution): Promise<ExecuteResult> {
+    const ctx = this.queryContext(params, txn);
+    if (stmt.kind === "Query") {
+      if (execution.spillResults) {
+        const spool = new RowSpool(() => this.resultSpools.delete(spool));
+        this.resultSpools.add(spool);
+        try {
+          const result = await runAsync(streamQuerySteps(stmt, ctx, (row, types) => spool.append(row, types)), execution);
+          return { kind: "select", columns: result.columns.map(column => ({ name: column.name, dataType: column.type })), rows: spool.rows(), dispose: () => spool.close() };
+        } catch (error) { spool.close(); throw error; }
+      }
+      const result = await runAsync(executeQuerySteps(stmt, ctx), execution);
+      return { kind: "select", columns: result.columns.map(column => ({ name: column.name, dataType: column.type })), rows: result.rows };
+    }
+    const manager = this.database.manager;
+    const work = stmt.kind === "Insert" ? executeInsertSteps(manager, this.currentTablespace, ctx, stmt)
+      : stmt.kind === "Update" ? executeUpdateSteps(manager, this.currentTablespace, ctx, stmt)
+      : stmt.kind === "Delete" ? executeDeleteSteps(manager, this.currentTablespace, ctx, stmt) : null;
+    if (work === null) throw new DbError("XX000", ERROR_CODES.INTERNAL_ERROR, "Not a data statement.");
+    const rowCount = await runAsync(work, execution);
+    return { kind: "ok", message: `${stmt.kind.toUpperCase()} ${rowCount}`, rowCount };
+  }
+
   /** 트랜잭션을 커밋한다. 성공하든 실패하든 트랜잭션은 끝나고 잠금은 풀린다. */
   private commitTransaction(txn: Transaction): void {
     try {
+      const changed = txn.hasChanges();
       commitTransaction(this.database.manager, txn, txn.explicit);
+      if (changed) this.database.dataRevision++;
     } finally {
       this.dropTransaction(txn);
     }
@@ -691,6 +821,7 @@ export class Session {
     let result: ExecuteResult;
     try {
       result = this.executeDdl(stmt, params, owner);
+      if (!["Grant", "Revoke", "GrantGroup", "RevokeGroup", "CreateUser", "AlterUser", "DropUser"].includes(stmt.kind)) this.database.schemaRevision++;
     } catch (error) {
       // 일부만 실행되고 실패했을 수 있으므로 정리하되, 정리 오류가 원래 오류를 가리지 않게 한다.
       try {
@@ -865,6 +996,7 @@ export class Session {
         // 사용 불가 상태의 테이블스페이스로는 옮길 수 없다.
         manager.requireCatalog(stmt.tablespace);
         this.currentTablespace = stmt.tablespace;
+        this.namespaceRevision++;
         return { kind: "ok", message: `Current tablespace is "${stmt.tablespace}".` };
       }
       case "SetTimeZone": {

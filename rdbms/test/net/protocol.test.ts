@@ -60,6 +60,11 @@ test("프로토콜 버전과 인증 방식 상수는 서버 모듈과 같은 값
 
 test("모든 요청 종류가 해석된다", () => {
   const cases: Array<{ message: Record<string, unknown>; expect: Record<string, unknown> }> = [
+    { message: { id: 11, type: "prepare", sql: "SELECT ?", parameterTypes: ["INTEGER"] }, expect: { parameterTypes: ["INTEGER"] } },
+    { message: { id: 12, type: "describe", statement: 1 }, expect: { statement: 1 } },
+    { message: { id: 13, type: "executePrepared", statement: 1 }, expect: { params: [] } },
+    { message: { id: 14, type: "closePrepared", statement: 1 }, expect: { statement: 1 } },
+    { message: { id: 15, type: "cancel", targetId: 5 }, expect: { targetId: 5 } },
     { message: { id: 1, type: "hello", versions: [1, 2], client: "t", mechanisms: ["SCRAM-SHA-256"] }, expect: { versions: [1, 2], client: "t" } },
     { message: { id: 2, type: "authStart", mechanism: "SCRAM-SHA-256", clientFirst: "n,,n=A,r=x", tablespace: "APP", timeZone: "+09:00" }, expect: { tablespace: "APP", timeZone: "+09:00" } },
     { message: { id: 3, type: "authFinish", clientFinal: "c=biws,r=x,p=y" }, expect: { clientFinal: "c=biws,r=x,p=y" } },
@@ -161,6 +166,10 @@ test("짝이 맞지 않는 서러게이트가 든 SQL 과 파라미터는 22021 
 
 test("응답을 해석한다", () => {
   const good: unknown[] = [
+    { id: 11, type: "prepared", statement: 1, parameterCount: 0, parameters: [], columns: [], resultKind: "ok" },
+    { id: 12, type: "description", statement: 1, parameterCount: 0, parameters: [], columns: [], resultKind: "ok" },
+    { id: 13, type: "preparedClosed" },
+    { id: 14, type: "cancelAck", targetId: 5, status: "accepted" },
     { id: 1, type: "helloOk", version: 1, server: "s", mechanism: "SCRAM-SHA-256", maxMessageBytes: 1, defaultFetchSize: 500 },
     { id: 2, type: "authChallenge", serverFirst: "r=1,s=2,i=3" },
     { id: 3, type: "authOk", serverFinal: "v=x", session: { id: 1, user: "A", tablespace: null, timeZone: "+00:00", autocommit: true } },

@@ -21,6 +21,8 @@
  * 구현 단계 : 6단계, 7단계(트랜잭션 연동), DML 행 단위 접근 2부
  */
 
+import { runSync, mapWork, findWork } from "./work.js";
+import type { Work } from "./work.js";
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
 import { NO_TABLESPACE } from "../common/instance.js";
@@ -41,16 +43,16 @@ import type { KeyColumn } from "../types/codec.js";
 import type { RowId, StorageBatch } from "../storage/format/format.js";
 import type { CatalogStore, StoredTable } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
-import { dataHandlers, executeQuery, scanTableForDml, typeHandlers } from "./executor.js";
+import { dataHandlers, executeQuery, scanTableForDml, typeHandlers, dataHandlersSteps, executeQuerySteps, scanTableForDmlSteps } from "./executor.js";
 import type { QueryContext } from "./executor.js";
-import { evaluateExpression } from "./expression.js";
+import { evaluateExpression, evaluateExpressionSteps } from "./expression.js";
 import { atInnerLevel } from "./expression.js";
 import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
 import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 import { parseCommittedRowKey, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
 import { visibleRows } from "../txn/rowAccess.js";
-import { RowChanges, finishRowChanges, revalidateRowReferences, valuesOf } from "./rowChanges.js";
+import { RowChanges, finishRowChanges, revalidateRowReferences, valuesOf, finishRowChangesSteps } from "./rowChanges.js";
 import type { RowChange, RowTarget } from "./rowChanges.js";
 
 function fail(sqlState: string, code: number, message: string, position?: SourcePosition): never {
@@ -63,7 +65,6 @@ function fail(sqlState: string, code: number, message: string, position?: Source
 // ---------------------------------------------------------------------------
 // 변경 대상 해석 (테이블 또는 갱신 가능한 뷰)
 // ---------------------------------------------------------------------------
-
 interface DmlTarget {
   catalog: CatalogStore;
   tablespace: string;
@@ -132,51 +133,61 @@ function rewriteForBase(
 // ---------------------------------------------------------------------------
 // INSERT
 // ---------------------------------------------------------------------------
-
 /** INSERT를 실행하고 넣은 행 수를 돌려준다. */
-export function executeInsert(
-  manager: TablespaceManager,
-  currentTablespace: string,
-  ctx: QueryContext,
-  stmt: InsertStatement,
-): number {
+export function executeInsert(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: InsertStatement): number {
+  return runSync(executeInsertSteps(manager, currentTablespace, ctx, stmt));
+}
+
+// ---------------------------------------------------------------------------
+// INSERT
+// ---------------------------------------------------------------------------
+/** INSERT를 실행하고 넣은 행 수를 돌려준다. */
+export function* executeInsertSteps(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: InsertStatement): Work<number> {
   const resolved = resolveTarget(manager, currentTablespace, stmt.target);
   const table = resolved.table;
   // 넣을 컬럼을 정한다. 생략하면 테이블의 모든 컬럼이다. 뷰는 대응 열로 바꾼다.
   // 뷰에 목록을 생략하면 뷰 열 순서대로 받는다. (기반 순서와 다를 수 있다)
   const requested = stmt.columns ?? (resolved.columnMap === null
-    ? table.columns.map((column) => column.name)
-    : [...resolved.columnMap.keys()]);
+    ? (yield* mapWork(table.columns, function* (column) {
+      return column.name;
+    })) : [...resolved.columnMap.keys()]);
   if (new Set(requested).size !== requested.length) {
     fail("42701", ERROR_CODES.COLUMN_EXISTS, "Duplicate column in INSERT column list.", stmt.target.position);
   }
-  const insertColumns = requested.map((column) => {
+  const insertColumns = (yield* mapWork(requested, function* (column) {
     const base = mapViewColumn(resolved.columnMap, column, stmt.target.position);
-    const definition = table.columns.find((entry) => entry.name === base);
+    const definition = (yield* findWork(table.columns, function* (entry) {
+      return entry.name === base;
+    }));
     if (definition === undefined) {
       fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, `Column does not exist: "${column}".`, stmt.target.position);
     }
     return definition as StoredTable["columns"][number];
-  });
+  }));
   // 원천 행들을 만든다.
   const sourceRows: SqlValue[][] = [];
   if (stmt.source.kind === "Values") {
     for (const row of stmt.source.rows) {
+      yield;
       if (row.length !== insertColumns.length) {
         fail("42601", ERROR_CODES.INSERT_VALUE_MISMATCH, "INSERT value count does not match column count.", stmt.target.position);
       }
-      sourceRows.push(evaluateInsertRow(row, insertColumns, ctx, stmt.target.position));
+      sourceRows.push((yield* evaluateInsertRowSteps(row, insertColumns, ctx, stmt.target.position)));
     }
-  } else if (stmt.source.kind === "DefaultValues") {
-    sourceRows.push(insertColumns.map((column) => evaluateColumnDefault(column, ctx)));
-  } else {
-    const result = executeQuery(stmt.source.query, ctx);
+  }
+  else if (stmt.source.kind === "DefaultValues") {
+    sourceRows.push((yield* mapWork(insertColumns, function* (column) {
+      return (yield* evaluateColumnDefaultSteps(column, ctx));
+    })));
+  }
+  else {
+    const result = (yield* executeQuerySteps(stmt.source.query, ctx));
     if (result.columns.length !== insertColumns.length) {
       fail("42601", ERROR_CODES.INSERT_VALUE_MISMATCH, "INSERT query column count does not match.", stmt.target.position);
     }
     for (const row of result.rows) {
-      sourceRows.push(
-        row.map((value, index) => {
+      yield;
+      sourceRows.push((yield* mapWork(row, function* (value, index) {
           const column = insertColumns[index] as StoredTable["columns"][number];
           const sourceType = (result.columns[index] as { type: DataType }).type;
           if (value === null) return null;
@@ -184,43 +195,43 @@ export function executeInsert(
             fail("42804", 2011, `Cannot convert ${sourceType.name} to ${column.dataType.name} implicitly; use CAST.`, stmt.target.position);
           }
           return assignValue(value, sourceType, column.dataType, ctx.typeCtx);
-        }),
-      );
+        })));
     }
   }
   // 생략한 컬럼의 DEFAULT도 변경을 적용하기 전에 모두 계산한다.
-  const fullRows = sourceRows.map((source) => table.columns.map((column) => {
-    const position = insertColumns.findIndex((entry) => entry.name === column.name);
-    return position >= 0 ? (source[position] ?? null) as SqlValue : evaluateColumnDefault(column, ctx);
+  const fullRows = (yield* mapWork(sourceRows, function* (source) {
+    return (yield* mapWork(table.columns, function* (column) {
+      const position = insertColumns.findIndex((entry) => entry.name === column.name);
+      return position >= 0 ? (source[position] ?? null) as SqlValue : (yield* evaluateColumnDefaultSteps(column, ctx));
+    }));
   }));
   const changes = new RowChanges(ctx.txn);
-  for (const values of fullRows) changes.insert(resolved, values);
-  finishRowChanges(changes, ctx.locker, stmt.target.position);
+  for (const values of fullRows) {
+    yield;
+    changes.insert(resolved, values);
+  }
+  (yield* finishRowChangesSteps(changes, ctx.locker, stmt.target.position));
   return sourceRows.length;
 }
 
 /** VALUES 한 행을 컬럼 타입에 맞추어 평가한다. */
-function evaluateInsertRow(
-  expressions: Expression[],
-  columns: StoredTable["columns"],
-  ctx: QueryContext,
-  position: SourcePosition,
-): SqlValue[] {
-  return expressions.map((expression, index) => {
+function* evaluateInsertRowSteps(expressions: Expression[], columns: StoredTable["columns"], ctx: QueryContext, position: SourcePosition): Work<SqlValue[]> {
+  return (yield* mapWork(expressions, function* (expression, index) {
     const column = columns[index] as StoredTable["columns"][number];
     if (expression.kind === "Default") {
-      return evaluateColumnDefault(column, ctx);
+      return (yield* evaluateColumnDefaultSteps(column, ctx));
     }
     const evalCtx = {
+      boundParameterTypes: ctx.boundParameterTypes,
       typeCtx: ctx.typeCtx,
       params: ctx.params,
       scopes: [...ctx.outerScopes],
       currentUser: ctx.currentUser,
-      subqueries: dataHandlers([], ctx),
+      subqueries: (yield* dataHandlersSteps([], ctx)),
       typeSubqueries: typeHandlers(ctx),
     };
-    return toColumnValue(evaluateExpression(expression, evalCtx, column.dataType), column, ctx, position);
-  });
+    return toColumnValue((yield* evaluateExpressionSteps(expression, evalCtx, column.dataType)), column, ctx, position);
+  }));
 }
 
 /**
@@ -241,89 +252,96 @@ function toColumnValue(
 }
 
 /** 컬럼의 DEFAULT를 평가한다. 없으면 NULL이다. */
-function evaluateColumnDefault(column: StoredTable["columns"][number], ctx: QueryContext): SqlValue {
+function* evaluateColumnDefaultSteps(column: StoredTable["columns"][number], ctx: QueryContext): Work<SqlValue> {
   if (column.defaultExpr === null) return null;
   const evalCtx = {
+    boundParameterTypes: ctx.boundParameterTypes,
     typeCtx: ctx.typeCtx,
     params: ctx.params,
     scopes: [...ctx.outerScopes],
     currentUser: ctx.currentUser,
-    subqueries: dataHandlers([], ctx),
+    subqueries: (yield* dataHandlersSteps([], ctx)),
     typeSubqueries: typeHandlers(ctx),
   };
-  return toColumnValue(evaluateExpression(column.defaultExpr, evalCtx, column.dataType), column, ctx);
+  return toColumnValue((yield* evaluateExpressionSteps(column.defaultExpr, evalCtx, column.dataType)), column, ctx);
 }
 
 // ---------------------------------------------------------------------------
 // UPDATE, DELETE
 // ---------------------------------------------------------------------------
-
 /** UPDATE를 실행하고 바꾼 행 수를 돌려준다. */
-export function executeUpdate(
-  manager: TablespaceManager,
-  currentTablespace: string,
-  ctx: QueryContext,
-  stmt: UpdateStatement,
-): number {
+export function executeUpdate(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: UpdateStatement): number {
+  return runSync(executeUpdateSteps(manager, currentTablespace, ctx, stmt));
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE, DELETE
+// ---------------------------------------------------------------------------
+/** UPDATE를 실행하고 바꾼 행 수를 돌려준다. */
+export function* executeUpdateSteps(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: UpdateStatement): Work<number> {
   const resolved = resolveTarget(manager, currentTablespace, stmt.target);
   const table = resolved.table;
-  if (new Set(stmt.assignments.map((assignment) => assignment.column)).size !== stmt.assignments.length) {
+  if (new Set((yield* mapWork(stmt.assignments, function* (assignment) {
+    return assignment.column;
+  }))).size !== stmt.assignments.length) {
     fail("42701", ERROR_CODES.COLUMN_EXISTS, "Duplicate column in UPDATE SET list.", stmt.target.position);
   }
   // 대입 열을 기반으로 푼다.
-  const assignments = stmt.assignments.map((assignment) => {
+  const assignments = (yield* mapWork(stmt.assignments, function* (assignment) {
     const base = mapViewColumn(resolved.columnMap, assignment.column, stmt.target.position);
-    const definition = table.columns.find((entry) => entry.name === base);
+    const definition = (yield* findWork(table.columns, function* (entry) {
+      return entry.name === base;
+    }));
     if (definition === undefined) {
       fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, `Column does not exist: "${assignment.column}".`, stmt.target.position);
     }
     return { column: definition as StoredTable["columns"][number], value: assignment.value };
-  });
+  }));
   const alias = stmt.alias ?? resolved.viewName;
   let where = stmt.where;
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const found = scanTableForDml(resolved.catalog, table, resolved.tablespace, alias, where, ctx);
+  const found = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx));
   // 서브쿼리와 DEFAULT는 문장 시작 상태에서 평가한다. 아직 오버레이를 바꾸지 않는다.
-  const updates = found.map((row) => {
+  const updates = (yield* mapWork(found, function* (row) {
     const newValues = [...row.values];
     for (const assignment of assignments) {
+      yield;
       const index = table.columns.findIndex((entry) => entry.name === assignment.column.name);
       if (assignment.value.kind === "Default") {
-        newValues[index] = evaluateColumnDefault(assignment.column, ctx);
+        newValues[index] = (yield* evaluateColumnDefaultSteps(assignment.column, ctx));
         continue;
       }
       const evalCtx = {
+        boundParameterTypes: ctx.boundParameterTypes,
         typeCtx: ctx.typeCtx,
         params: ctx.params,
         scopes: [...ctx.outerScopes, ...atInnerLevel(ctx.outerScopes, row.scopes)],
         currentUser: ctx.currentUser,
-        subqueries: dataHandlers(row.scopes, ctx),
+        subqueries: (yield* dataHandlersSteps(row.scopes, ctx)),
         typeSubqueries: typeHandlers(ctx),
       };
-      newValues[index] = toColumnValue(
-        evaluateExpression(assignment.value, evalCtx, assignment.column.dataType),
-        assignment.column,
-        ctx,
-        stmt.target.position,
-      );
+      newValues[index] = toColumnValue((yield* evaluateExpressionSteps(assignment.value, evalCtx, assignment.column.dataType)), assignment.column, ctx, stmt.target.position);
     }
     return { row, values: newValues };
-  });
+  }));
   const changes = new RowChanges(ctx.txn);
-  for (const update of updates) changes.update(resolved, update.row, update.values);
-  finishRowChanges(changes, ctx.locker, stmt.target.position);
+  for (const update of updates) {
+    yield;
+    changes.update(resolved, update.row, update.values);
+  }
+  (yield* finishRowChangesSteps(changes, ctx.locker, stmt.target.position));
   return found.length;
 }
 
 /** DELETE를 실행하고 지운 행 수를 돌려준다. */
-export function executeDelete(
-  manager: TablespaceManager,
-  currentTablespace: string,
-  ctx: QueryContext,
-  stmt: DeleteStatement,
-): number {
+export function executeDelete(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: DeleteStatement): number {
+  return runSync(executeDeleteSteps(manager, currentTablespace, ctx, stmt));
+}
+
+/** DELETE를 실행하고 지운 행 수를 돌려준다. */
+export function* executeDeleteSteps(manager: TablespaceManager, currentTablespace: string, ctx: QueryContext, stmt: DeleteStatement): Work<number> {
   const resolved = resolveTarget(manager, currentTablespace, stmt.target);
   const table = resolved.table;
   const alias = stmt.alias ?? resolved.viewName;
@@ -331,17 +349,19 @@ export function executeDelete(
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const found = scanTableForDml(resolved.catalog, table, resolved.tablespace, alias, where, ctx);
+  const found = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx));
   const changes = new RowChanges(ctx.txn);
-  for (const row of found) changes.delete(resolved, row);
-  finishRowChanges(changes, ctx.locker, stmt.target.position);
+  for (const row of found) {
+    yield;
+    changes.delete(resolved, row);
+  }
+  (yield* finishRowChangesSteps(changes, ctx.locker, stmt.target.position));
   return found.length;
 }
 
 // ---------------------------------------------------------------------------
 // TRUNCATE
 // ---------------------------------------------------------------------------
-
 /** TRUNCATE를 실행한다. 참조하는 자식 행이 있으면 오류이다. */
 export function executeTruncate(
   manager: TablespaceManager,
@@ -374,7 +394,6 @@ export function executeTruncate(
 // ---------------------------------------------------------------------------
 // 커밋 : 변경 행만 저장 배치에 쓴다.
 // ---------------------------------------------------------------------------
-
 interface CommitTarget extends RowTarget {
   overlay: TableOverlay;
 }

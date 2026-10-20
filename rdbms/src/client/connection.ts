@@ -21,7 +21,7 @@
  * 구현 단계 : 9단계 (9-5)
  */
 
-import { DbError } from "../common/errors.js";
+import { DbError, unsupportedFeature } from "../common/errors.js";
 import {
   authMessage,
   clientFinalWithoutProof,
@@ -255,11 +255,22 @@ export class Connection {
 
   /** 요청을 보내고 같은 `id` 의 응답을 기다린다. 오류 응답은 `DbError` 로 거부된다. */
   request(message: Record<string, unknown> & { type: string }, timeoutMs: number | undefined = this.options.requestTimeoutMs): Promise<Response> {
-    if (this.closed) return Promise.reject(this.closedError ?? connectionFailure("The connection is closed."));
+    return this.startRequest(message, timeoutMs).result;
+  }
+
+  /** 원래 요청의 ID를 확보한 뒤 같은 연결에서 cancel을 보낼 수 있다. 수신은 pending 맵 한 곳에서 처리한다. */
+  startRequest(message: Record<string, unknown> & { type: string }, timeoutMs: number | undefined = this.options.requestTimeoutMs): { id: number; result: Promise<Response> } {
     const id = this.nextId++;
+    const feature = message.type === "cancel" ? "cancel" : ["prepare", "describe", "executePrepared", "closePrepared"].includes(message.type) ? "prepareDescribe" : null;
+    if (feature !== null && !this.helloInfo?.capabilities?.includes(feature)) return { id, result: Promise.reject(unsupportedFeature(`Server does not support ${feature}.`)) };
+    return { id, result: this.requestWithId(id, message, timeoutMs) };
+  }
+
+  private requestWithId(id: number, message: Record<string, unknown> & { type: string }, timeoutMs: number | undefined): Promise<Response> {
+    if (this.closed) return Promise.reject(this.closedError ?? connectionFailure("The connection is closed."));
     let body: Buffer;
     try {
-      body = encodeMessage({ id, ...message });
+      body = encodeMessage({ ...message, id });
     } catch (error) {
       return Promise.reject(error as Error);
     }

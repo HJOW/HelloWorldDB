@@ -89,6 +89,22 @@ test("서버 서명이 틀리면 클라이언트는 서버를 믿지 않고 접�
   assert.equal(connection.session, null, "서버를 확인하지 못했으므로 세션 정보를 받아들이지 않는다");
 });
 
+test("선택 기능을 알리지 않는 구형 서버에는 새 요청을 보내지 않는다", async t => {
+  const { proxyPort } = await setup(t, message => {
+    if (message["type"] !== "helloOk") return message;
+    const { capabilities, ...legacy } = message;
+    return legacy;
+  });
+  const connection = await Connection.open({ kind:"tcp", host:"127.0.0.1", port:proxyPort });
+  t.after(() => connection.abort());
+  await connection.login({ user:"SYSTEM", password:"HelloWorldDB" });
+  for (const type of ["prepare", "describe", "executePrepared", "closePrepared", "cancel"]) {
+    await assert.rejects(connection.request({ type, sql:"SELECT 1", statement:1, targetId:1 }), (error:unknown) => error instanceof DbError && error.sqlState === "0A000");
+    assert.equal(connection.isClosed, false);
+  }
+  await connection.execute("SELECT 1");
+});
+
 test("서버 서명이 없거나 형식이 틀려도 마찬가지이다", async (t) => {
   for (const serverFinal of ["", "v=", "x=abc", "v=!!!not-base64!!!"]) {
     const { proxyPort } = await setup(t, (message) => (message["type"] === "authOk" ? { ...message, serverFinal } : message));

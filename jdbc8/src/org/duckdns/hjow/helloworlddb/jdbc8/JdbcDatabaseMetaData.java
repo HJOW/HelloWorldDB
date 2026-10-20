@@ -220,8 +220,8 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
             Values.Column type = new Values.Column((String) col.get("COLUMN_NAME"), (String) col.get("DATA_TYPE"));
             boolean text = type.type == Types.CHAR || type.type == Types.VARCHAR;
             rows.add(row(null, col.get("TABLESPACE_NAME"), col.get("TABLE_NAME"), col.get("COLUMN_NAME"), type.type, type.typeName, type.precision, null, type.scale, 10,
-                "YES".equals(col.get("IS_NULLABLE")) ? DatabaseMetaData.columnNullable : DatabaseMetaData.columnNoNulls, "", col.get("COLUMN_DEFAULT"), null, null, text ? type.precision * 4 : null,
-                col.get("ORDINAL_POSITION"), col.get("IS_NULLABLE"), null, null, null, null, "NO", "NO"));
+                "YES".equals(col.get("IS_NULLABLE")) ? DatabaseMetaData.columnNullable : "NO".equals(col.get("IS_NULLABLE")) ? DatabaseMetaData.columnNoNulls : DatabaseMetaData.columnNullableUnknown, "", col.get("COLUMN_DEFAULT"), null, null, text ? type.precision * 4 : null,
+                col.get("ORDINAL_POSITION"), "UNKNOWN".equals(col.get("IS_NULLABLE")) ? "" : col.get("IS_NULLABLE"), null, null, null, null, "NO", "NO"));
         }
         if (catalog(a[0])) {
             // SYS_COLUMNS에 없는 뷰의 컬럼은 행을 읽지 않는 SELECT의 결과 메타데이터로 보완한다.
@@ -245,6 +245,8 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
      * @throws Exception 조회 실패 시
      */
     private void viewColumns(List<List<Object>> rows, String schema, String name, Object pattern) throws Exception {
+        // 새 서버가 이미 딕셔너리에 제공한 뷰 컬럼은 보완 조회하지 않는다.
+        for (List<Object> existing : rows) if (schema.equals(existing.get(1)) && name.equals(existing.get(2))) return;
         Map<String, Object> response;
         try { response = c.protocol.execute("SELECT * FROM " + quote(schema) + "." + quote(name) + " WHERE 1 = 0", Collections.emptyList(), 1); }
         catch (SQLException e) { if (e.getSQLState().equals("42501")) return; throw e; }

@@ -54,6 +54,8 @@ export const FETCH_SOFT_LIMIT_BYTES = 1024 * 1024;
 
 /** 접속 하나가 동시에 열어 둘 수 있는 커서의 수이다. */
 export const MAX_OPEN_CURSORS = 16;
+export const MAX_PREPARED_STATEMENTS = 64;
+export const CAPABILITIES = ["prepareDescribe", "cancel"] as const;
 
 /** 접속 하나에서 처리를 기다릴 수 있는 요청의 수이다. 넘으면 접속을 끊는다. */
 export const MAX_PENDING_REQUESTS = 64;
@@ -119,6 +121,12 @@ export interface ExecuteRequest {
   fetchSize?: number;
 }
 
+export interface PrepareRequest { id: number; type: "prepare"; sql: string; parameterTypes?: (string | null)[] }
+export interface DescribeRequest { id: number; type: "describe"; statement: number; parameterTypes?: (string | null)[] }
+export interface ExecutePreparedRequest { id: number; type: "executePrepared"; statement: number; params: ParamValue[]; fetchSize?: number }
+export interface ClosePreparedRequest { id: number; type: "closePrepared"; statement: number }
+export interface CancelRequest { id: number; type: "cancel"; targetId: number }
+
 export interface FetchRequest {
   id: number;
   type: "fetch";
@@ -152,6 +160,7 @@ export interface ControlRequest {
 }
 
 export type Request =
+  | PrepareRequest | DescribeRequest | ExecutePreparedRequest | ClosePreparedRequest | CancelRequest
   | HelloRequest
   | AuthStartRequest
   | AuthFinishRequest
@@ -165,6 +174,7 @@ export type Request =
 export type RequestType = Request["type"];
 
 export const REQUEST_TYPES: readonly RequestType[] = [
+  "prepare", "describe", "executePrepared", "closePrepared", "cancel",
   "hello",
   "authStart",
   "authFinish",
@@ -178,6 +188,7 @@ export const REQUEST_TYPES: readonly RequestType[] = [
 
 /** 컬럼 하나의 메타데이터이다. 해당하지 않는 필드는 생략한다. */
 export interface ColumnMeta {
+  nullable?: "YES" | "NO" | "UNKNOWN";
   name: string;
   /** 정규 타입 이름이다. (예 : `VARCHAR`, `DECIMAL`, `TIMESTAMP WITH TIME ZONE`) */
   typeName: string;
@@ -202,6 +213,7 @@ export interface SessionInfoMessage {
 }
 
 export interface HelloOkResponse {
+  capabilities?: string[];
   id: number;
   type: "helloOk";
   version: number;
@@ -295,6 +307,7 @@ export interface ErrorResponse {
 }
 
 export type Response =
+  | DescriptionResponse | PreparedClosedResponse | CancelAckResponse
   | HelloOkResponse
   | AuthChallengeResponse
   | AuthOkResponse
@@ -308,6 +321,7 @@ export type Response =
   | ErrorResponse;
 
 export const RESPONSE_TYPES: readonly Response["type"][] = [
+  "prepared", "description", "preparedClosed", "cancelAck",
   "helloOk",
   "authChallenge",
   "authOk",
@@ -320,6 +334,13 @@ export const RESPONSE_TYPES: readonly Response["type"][] = [
   "stopping",
   "error",
 ];
+
+export interface DescriptionResponse {
+  id: number; type: "prepared" | "description"; statement: number; parameterCount: number;
+  parameters: (ColumnMeta & { index: number })[]; columns: ColumnMeta[]; resultKind: "rows" | "ok";
+}
+export interface PreparedClosedResponse { id: number; type: "preparedClosed" }
+export interface CancelAckResponse { id: number; type: "cancelAck"; targetId: number; status: "accepted" | "notRunning" | "tooLate" }
 
 // ---------------------------------------------------------------------------
 // 오류 만들기
@@ -468,7 +489,31 @@ function validateParam(value: unknown, index: number): ParamValue {
 }
 
 function validateFields(id: number, type: RequestType, record: Record<string, unknown>): Request {
+  const positive = (name: string): number => {
+    const value = record[name];
+    if (!isPositiveInteger(value)) throw invalidField(`Field "${name}" must be a positive safe integer.`);
+    return value;
+  };
+  const parameterTypes = (): (string | null)[] | undefined => {
+    const hints = record["parameterTypes"];
+    if (hints === undefined) return undefined;
+    if (!Array.isArray(hints) || hints.length > MAX_PARAMETERS || !hints.every(hint => hint === null || (typeof hint === "string" && hint.length <= 256 && !hasLoneSurrogate(hint)))) throw invalidField('Field "parameterTypes" must be an array of type declarations or null.');
+    return hints;
+  };
   switch (type) {
+    case "prepare": {
+      const sql = requireString(record, "sql", MAX_MESSAGE_BYTES);
+      if (hasLoneSurrogate(sql)) throw new DbError("22021", ERROR_CODES.INVALID_CHARACTER_ENCODING, "SQL text is not valid Unicode text.");
+      return { id, type, sql, parameterTypes: parameterTypes() };
+    }
+    case "describe": return { id, type, statement: positive("statement"), parameterTypes: parameterTypes() };
+    case "closePrepared": return { id, type, statement: positive("statement") };
+    case "cancel": return { id, type, targetId: positive("targetId") };
+    case "executePrepared": {
+      const raw = record["params"] === undefined ? [] : record["params"];
+      if (!Array.isArray(raw) || raw.length > MAX_PARAMETERS) throw invalidField('Field "params" must be an array within the parameter limit.');
+      return { id, type, statement: positive("statement"), params: raw.map(validateParam), fetchSize: optionalFetchSize(record) };
+    }
     case "hello": {
       const versions = record["versions"];
       if (!Array.isArray(versions) || versions.length === 0 || versions.length > 32 || !versions.every(isPositiveInteger)) {
@@ -555,6 +600,11 @@ export function decodeResponse(body: Uint8Array): DecodeResponseResult {
     condition ? null : { ok: false, reason: `Response "${type}" has an invalid field: ${what}.` };
   const problem = ((): DecodeResponseResult | null => {
     switch (type as Response["type"]) {
+      case "prepared":
+      case "description":
+        return need(isPositiveInteger(parsed["statement"]) && Number.isSafeInteger(parsed["parameterCount"]) && Number(parsed["parameterCount"]) >= 0 && Array.isArray(parsed["parameters"]) && parsed["parameters"].length === parsed["parameterCount"] && Array.isArray(parsed["columns"]) && ["rows", "ok"].includes(String(parsed["resultKind"])), "statement, parameters, columns, resultKind");
+      case "preparedClosed": return null;
+      case "cancelAck": return need(isPositiveInteger(parsed["targetId"]) && ["accepted", "notRunning", "tooLate"].includes(String(parsed["status"])), "targetId, status");
       case "helloOk":
         return need(typeof parsed["version"] === "number" && typeof parsed["maxMessageBytes"] === "number", "version");
       case "authChallenge":

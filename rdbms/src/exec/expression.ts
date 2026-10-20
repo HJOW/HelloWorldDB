@@ -15,6 +15,8 @@
  * 구현 단계 : 6단계
  */
 
+import { runSync, valueWork, mapWork, someWork, findWork } from "./work.js";
+import type { Work } from "./work.js";
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
 import type {
@@ -74,7 +76,7 @@ import {
 import type { SqlValue, Tri } from "../types/value.js";
 import type { NonNullValue } from "../types/value.js";
 import { decodeUtf8 } from "../types/codec.js";
-import { aggregateGroup, aggregateResultType, evaluateScalarFunction, inferScalarType, likeMatch, substringValue, trimBoth as trimBothLike } from "./functions.js";
+import { aggregateGroup, aggregateResultType, evaluateScalarFunction, inferScalarType, likeMatch, substringValue, trimBoth as trimBothLike, aggregateGroupSteps } from "./functions.js";
 import type { TypedValue } from "./functions.js";
 
 /** 한 테이블 출처의 열 목록이다. */
@@ -100,13 +102,18 @@ export interface ColumnSlot {
 
 /** 서브쿼리 실행을 호출자가 넘긴다. 바깥 범위는 스코프 스택으로 전달된다. */
 export interface SubqueryHandlers {
-  scalar(query: Query): TypedValue;
-  exists(query: Query): boolean;
-  columnValues(query: Query): { values: SqlValue[]; type: DataType };
+  scalar(query: Query): TypedValue | Work<TypedValue>;
+  exists(query: Query): boolean | Work<boolean>;
+  columnValues(query: Query): Work<{ values: SqlValue[]; type: DataType }> | {
+    values: SqlValue[];
+    type: DataType;
+  };
 }
 
 /** 식을 계산할 때의 문맥이다. */
 export interface EvalContext {
+  readonly boundParameterTypes?: readonly (DataType | null)[];
+  readonly parameterType?: (index: number, expected?: DataType) => DataType;
   readonly typeCtx: TypeContext;
   readonly params: readonly SqlValue[];
   /** 바깥쪽이 먼저, 안쪽이 나중에 쌓인다. */
@@ -364,6 +371,11 @@ export function atInnerLevel(outer: RowScope[], inner: RowScope[]): RowScope[] {
 
 /** 식을 평가한다. 기대 타입이 있으면 타입 없는 문자열과 리터럴을 그에 맞춘다. */
 export function evaluateExpression(expression: Expression, ctx: EvalContext, expectedType?: DataType): TypedValue {
+  return runSync(evaluateExpressionSteps(expression, ctx, expectedType));
+}
+
+/** 식을 평가한다. 기대 타입이 있으면 타입 없는 문자열과 리터럴을 그에 맞춘다. */
+export function* evaluateExpressionSteps(expression: Expression, ctx: EvalContext, expectedType?: DataType): Work<TypedValue> {
   switch (expression.kind) {
     case "Literal": {
       if (expression.type === "NULL") {
@@ -410,9 +422,19 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return boundInterval;
     }
     case "Parameter": {
+      if (ctx.typeOnly && ctx.parameterType !== undefined) {
+        return { value: null, type: ctx.parameterType(expression.index, expectedType) };
+      }
       const raw = ctx.params[expression.index - 1] as SqlValue;
       const param = paramTyped(raw);
+      const declared = ctx.boundParameterTypes?.[expression.index - 1];
+      if (declared !== undefined && declared !== null) {
+        const value = typeof raw === "string" ? castLiteral(raw, declared, ctx.typeCtx)
+          : assignValue(raw, param.type ?? NULL_LITERAL_TYPE, declared, ctx.typeCtx);
+        return { value, type: declared };
+      }
       if (param.type === null) {
+        if (param.value === null) return { value: null, type: expectedType ?? NULL_LITERAL_TYPE };
         if (expectedType !== undefined) {
           return { value: coerceUntyped(param.value as string, expectedType, ctx, expression.position), type: expectedType };
         }
@@ -446,11 +468,11 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
     }
     case "Unary": {
       if (expression.operator === "NOT") {
-        const tri = evaluateCondition(expression.operand, ctx);
+        const tri = (yield* evaluateConditionSteps(expression.operand, ctx));
         return { value: triNot(tri), type: BOOLEAN_TYPE };
       }
       if (ctx.typeOnly) {
-        const operandType = inferNullType(expression.operand, ctx);
+        const operandType = (yield* inferNullTypeSteps(expression.operand, ctx));
         if (expression.operator === "+") {
           if (operandType.kind !== "INTEGER" && operandType.kind !== "DECIMAL" && operandType.kind !== "FLOAT" && operandType.kind !== "INTERVAL") {
             throw at(expression.position, typeMismatch(`Operator + is not defined for ${operandType.name}.`));
@@ -460,7 +482,7 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
         const operation = at(expression.position, () => bindNegate(operandType));
         return { value: null, type: operation.resultType };
       }
-      const operand = evaluateExpression(expression.operand, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
       if (operand.value === null) return { value: null, type: (operand.type as DataType) ?? DOUBLE_TYPE };
       if (expression.operator === "+") {
         if (operand.type.kind !== "INTEGER" && operand.type.kind !== "DECIMAL" && operand.type.kind !== "FLOAT" && operand.type.kind !== "INTERVAL") {
@@ -472,12 +494,17 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return { value: operation.evaluate(operand.value), type: operation.resultType };
     }
     case "Binary": {
-      return evaluateBinary(expression, ctx, expectedType);
+      return (yield* evaluateBinarySteps(expression, ctx, expectedType));
     }
     case "Logical": {
+      if (ctx.typeOnly) {
+        for (const operand of expression.operands) { yield; yield* evaluateExpressionSteps(operand, ctx, BOOLEAN_TYPE); }
+        return { value: null, type: BOOLEAN_TYPE };
+      }
       let result: Tri = expression.operator === "AND" ? true : false;
       for (const operand of expression.operands) {
-        const tri = evaluateCondition(operand, ctx);
+        yield;
+        const tri = (yield* evaluateConditionSteps(operand, ctx));
         result = expression.operator === "AND" ? triAnd(result, tri) : triOr(result, tri);
         if (expression.operator === "AND" && result === false) break;
         if (expression.operator === "OR" && result === true) break;
@@ -485,12 +512,12 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return { value: result, type: BOOLEAN_TYPE };
     }
     case "IsNull": {
-      const operand = evaluateExpression(expression.operand, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
       const isNull = operand.value === null;
       return { value: expression.negated ? !isNull : isNull, type: BOOLEAN_TYPE };
     }
     case "IsBoolean": {
-      const operand = evaluateExpression(expression.operand, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
       let actual: boolean | null;
       if (operand.value === null) actual = null;
       else if (typeof operand.value === "boolean") actual = operand.value;
@@ -500,15 +527,16 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return { value: expression.negated ? !matched : matched, type: BOOLEAN_TYPE };
     }
     case "Between": {
-      return evaluateBetween(expression, ctx);
+      return (yield* evaluateBetweenSteps(expression, ctx));
     }
     case "InList": {
-      return evaluateInList(expression, ctx);
+      return (yield* evaluateInListSteps(expression, ctx));
     }
     case "Like": {
-      const operand = evaluateExpression(expression.operand, ctx);
-      const pattern = evaluateExpression(expression.pattern, ctx);
-      const escape = expression.escape === null ? null : evaluateExpression(expression.escape, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
+      const pattern = (yield* evaluateExpressionSteps(expression.pattern, ctx));
+      const escape = expression.escape === null ? null : (yield* evaluateExpressionSteps(expression.escape, ctx));
+      if (ctx.typeOnly) return { value: null, type: BOOLEAN_TYPE };
       if (operand.value === null || pattern.value === null || (escape !== null && escape.value === null)) {
         return { value: null, type: BOOLEAN_TYPE };
       }
@@ -519,23 +547,27 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return { value: expression.negated ? !matched : matched, type: BOOLEAN_TYPE };
     }
     case "Exists": {
-      const found = ctx.subqueries.exists(expression.query);
+      const found = (yield* valueWork(ctx.subqueries.exists(expression.query)));
       return { value: found, type: BOOLEAN_TYPE };
     }
     case "InSubquery": {
-      return evaluateInSubquery(expression.operand, expression.query, expression.negated, ctx, expression.position);
+      return (yield* evaluateInSubquerySteps(expression.operand, expression.query, expression.negated, ctx, expression.position));
     }
     case "Quantified": {
-      return evaluateQuantified(expression, ctx);
+      return (yield* evaluateQuantifiedSteps(expression, ctx));
     }
     case "Subquery": {
-      return ctx.subqueries.scalar(expression.query);
+      return (yield* valueWork(ctx.subqueries.scalar(expression.query)));
     }
     case "Case": {
-      return evaluateCase(expression, ctx, expectedType);
+      return (yield* evaluateCaseSteps(expression, ctx, expectedType));
     }
     case "Cast": {
-      const operand = evaluateExpression(expression.operand, ctx);
+      if (ctx.typeOnly) {
+        yield* evaluateExpressionSteps(expression.operand, ctx, expression.dataType);
+        return { value: null, type: expression.dataType };
+      }
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
       if (operand.value === null) return { value: null, type: expression.dataType };
       // 타입 없는 문자열(리터럴과 문자열 파라미터)은 리터럴 해석을 쓴다.
       const untyped = untypedText(operand);
@@ -545,21 +577,22 @@ export function evaluateExpression(expression: Expression, ctx: EvalContext, exp
       return { value: at(expression.position, () => castValue(operand.value, operand.type, expression.dataType, ctx.typeCtx)), type: expression.dataType };
     }
     case "Function": {
-      return evaluateFunctionNode(expression, ctx, expectedType);
+      return (yield* evaluateFunctionNodeSteps(expression, ctx, expectedType));
     }
     case "Extract": {
       if (ctx.typeOnly) {
-        const operandType = inferNullType(expression.operand, ctx);
+        const operandType = (yield* inferNullTypeSteps(expression.operand, ctx));
         validateExtractField(expression.field, operandType, expression.position);
         return { value: null, type: BIGINT_TYPE };
       }
-      const operand = evaluateExpression(expression.operand, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
       if (operand.value === null) return { value: null, type: BIGINT_TYPE };
       return { value: at(expression.position, () => extractField(expression.field, operand.value as NonNullValue, operand.type)), type: BIGINT_TYPE };
     }
     case "Trim": {
-      const operand = evaluateExpression(expression.operand, ctx);
-      const chars = expression.characters === null ? null : evaluateExpression(expression.characters, ctx);
+      const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
+      const chars = expression.characters === null ? null : (yield* evaluateExpressionSteps(expression.characters, ctx));
+      if (ctx.typeOnly) return { value: null, type: operand.type };
       if (operand.value === null || (chars !== null && chars.value === null)) {
         return { value: null, type: operand.type.kind === "CHAR" || operand.type.kind === "VARCHAR" ? operand.type : varcharType(1) };
       }
@@ -590,18 +623,19 @@ function untypedText(bound: TypedValue): string | null {
   return null;
 }
 
-function evaluateBinary(
-  expression: { operator: string; left: Expression; right: Expression; position: SourcePosition },
-  ctx: EvalContext,
-  expectedType?: DataType,
-): TypedValue {
+function* evaluateBinarySteps(expression: {
+  operator: string;
+  left: Expression;
+  right: Expression;
+  position: SourcePosition;
+}, ctx: EvalContext, expectedType?: DataType): Work<TypedValue> {
   const operator = expression.operator;
   if (ctx.typeOnly) {
-    return evaluateBinaryTypeOnly(expression, ctx);
+    return (yield* evaluateBinaryTypeOnlySteps(expression, ctx));
   }
   if (operator === "||") {
-    const left = evaluateExpression(expression.left, ctx);
-    const right = evaluateExpression(expression.right, ctx);
+    const left = (yield* evaluateExpressionSteps(expression.left, ctx));
+    const right = (yield* evaluateExpressionSteps(expression.right, ctx));
     if (left.value === null || right.value === null) {
       const bound = at(expression.position, () => bindConcatForNull(left.type, right.type));
       return { value: null, type: bound };
@@ -614,11 +648,16 @@ function evaluateBinary(
     return { value: operation.evaluate(leftTyped.value, rightTyped.value, ctx.typeCtx), type: operation.resultType };
   }
   if (operator === "=" || operator === "<>" || operator === "<" || operator === "<=" || operator === ">" || operator === ">=") {
-    return evaluateComparison(expression as { operator: ComparisonOperator; left: Expression; right: Expression; position: SourcePosition }, ctx);
+    return (yield* evaluateComparisonSteps(expression as {
+      operator: ComparisonOperator;
+      left: Expression;
+      right: Expression;
+      position: SourcePosition;
+    }, ctx));
   }
   // 사칙연산
-  let left = evaluateExpression(expression.left, ctx);
-  let right = evaluateExpression(expression.right, ctx);
+  let left = (yield* evaluateExpressionSteps(expression.left, ctx));
+  let right = (yield* evaluateExpressionSteps(expression.right, ctx));
   const leftText = untypedText(left);
   const rightText = untypedText(right);
   if (leftText !== null && rightText !== null) {
@@ -640,13 +679,26 @@ function evaluateBinary(
 }
 
 /** 행 없이 이항 연산의 결과 타입만 정한다. */
-function evaluateBinaryTypeOnly(
-  expression: { operator: string; left: Expression; right: Expression; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
+function* evaluateBinaryTypeOnlySteps(expression: {
+  operator: string;
+  left: Expression;
+  right: Expression;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
   const operator = expression.operator;
-  const leftType = inferNullType(expression.left, ctx);
-  const rightType = inferNullType(expression.right, ctx);
+  let leftType = (yield* inferNullTypeSteps(expression.left, ctx));
+  let rightType = (yield* inferNullTypeSteps(expression.right, ctx));
+  const contextual = (value: Expression): boolean => (value.kind === "Literal" && value.type === "STRING") ||
+    (value.kind === "Parameter" && typeof ctx.params[value.index - 1] === "string" && ctx.boundParameterTypes?.[value.index - 1] == null);
+  if (operator !== "||") {
+    if (contextual(expression.left) && rightType !== NULL_LITERAL_TYPE) leftType = rightType;
+    if (contextual(expression.right) && leftType !== NULL_LITERAL_TYPE) rightType = leftType;
+  }
+  if (ctx.parameterType !== undefined) {
+    if (expression.left.kind === "Parameter" && rightType !== NULL_LITERAL_TYPE) leftType = ctx.parameterType(expression.left.index, rightType);
+    if (expression.right.kind === "Parameter" && leftType !== NULL_LITERAL_TYPE) rightType = ctx.parameterType(expression.right.index, leftType);
+    if (leftType === NULL_LITERAL_TYPE && rightType === NULL_LITERAL_TYPE && !["=", "<>", "!=", "<", "<=", ">", ">="].includes(operator)) return { value: null, type: NULL_LITERAL_TYPE };
+  }
   if (operator === "||") {
     const left = leftType.kind === "CHAR" || leftType.kind === "VARCHAR" ? leftType : varcharType(1);
     const right = rightType.kind === "CHAR" || rightType.kind === "VARCHAR" ? rightType : varcharType(1);
@@ -693,12 +745,14 @@ function coerceBothUntyped(leftText: string, rightText: string, position: Source
   return { left: coerceOne(leftText), right: coerceOne(rightText) };
 }
 
-function evaluateComparison(
-  expression: { operator: ComparisonOperator; left: Expression; right: Expression; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
-  const left = evaluateExpression(expression.left, ctx);
-  const right = evaluateExpression(expression.right, ctx);
+function* evaluateComparisonSteps(expression: {
+  operator: ComparisonOperator;
+  left: Expression;
+  right: Expression;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
+  const left = (yield* evaluateExpressionSteps(expression.left, ctx));
+  const right = (yield* evaluateExpressionSteps(expression.right, ctx));
   // NULL이 섞이면 UNKNOWN이다. 타입이 달라도 오류가 아니다.
   if (left.value === null || right.value === null) return { value: null, type: BOOLEAN_TYPE };
   const leftText = untypedText(left);
@@ -744,7 +798,12 @@ function evaluateComparison(
 
 /** 조건을 3값 논리로 계산한다. BOOLEAN 이 아니면 오류이다. */
 export function evaluateCondition(expression: Expression, ctx: EvalContext): Tri {
-  const bound = evaluateExpression(expression, ctx);
+  return runSync(evaluateConditionSteps(expression, ctx));
+}
+
+/** 조건을 3값 논리로 계산한다. BOOLEAN 이 아니면 오류이다. */
+export function* evaluateConditionSteps(expression: Expression, ctx: EvalContext): Work<Tri> {
+  const bound = (yield* evaluateExpressionSteps(expression, ctx));
   if (bound.value === null) return null;
   if (typeof bound.value !== "boolean") {
     throw withPosition(typeMismatch(`Condition needs a boolean value, but got ${bound.type.name}.`), (expression as { position: SourcePosition }).position);
@@ -752,13 +811,17 @@ export function evaluateCondition(expression: Expression, ctx: EvalContext): Tri
   return bound.value;
 }
 
-function evaluateBetween(
-  expression: { operand: Expression; low: Expression; high: Expression; negated: boolean; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
-  const operand = evaluateExpression(expression.operand, ctx);
-  const low = evaluateExpression(expression.low, ctx);
-  const high = evaluateExpression(expression.high, ctx);
+function* evaluateBetweenSteps(expression: {
+  operand: Expression;
+  low: Expression;
+  high: Expression;
+  negated: boolean;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
+  const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
+  const low = (yield* evaluateExpressionSteps(expression.low, ctx));
+  const high = (yield* evaluateExpressionSteps(expression.high, ctx));
+  if (ctx.typeOnly) return { value: null, type: BOOLEAN_TYPE };
   // NULL이 섞이면 UNKNOWN이다.
   if (operand.value === null || low.value === null || high.value === null) {
     return { value: null, type: BOOLEAN_TYPE };
@@ -782,6 +845,7 @@ function evaluateBetween(
   // 타입 있는 것끼리 공통 타입을 먼저 정한다.
   let common: DataType | null = null;
   for (let i = 0; i < 3; i++) {
+    yield;
     if (texts[i] !== null) continue;
     const type = typed[i]?.type as DataType;
     common = common === null ? type : commonType(common, type);
@@ -791,12 +855,12 @@ function evaluateBetween(
     // 셋 다 타입 없으면 문자열로 본다.
     common = varcharType(1);
   }
-  const coerced = [0, 1, 2].map((i) => {
+  const coerced = (yield* mapWork([0, 1, 2], function* (i) {
     const text = texts[i] ?? null;
     if (text !== null) return at(expression.position, () => castLiteral(text, common as DataType, ctx.typeCtx));
     const entry = typed[i] as TypedValue;
     return entry.value === null ? null : at(expression.position, () => castValue(entry.value, entry.type, common as DataType, ctx.typeCtx));
-  });
+  }));
   const [value, lo, hi] = coerced as SqlValue[];
   if (value === null || lo === null || hi === null) return { value: null, type: BOOLEAN_TYPE };
   const bothChar = (common as DataType).kind === "CHAR";
@@ -806,14 +870,18 @@ function evaluateBetween(
   return { value: expression.negated ? !matched : matched, type: BOOLEAN_TYPE };
 }
 
-function evaluateInList(
-  expression: { operand: Expression; items: Expression[]; negated: boolean; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
-  const operand = evaluateExpression(expression.operand, ctx);
+function* evaluateInListSteps(expression: {
+  operand: Expression;
+  items: Expression[];
+  negated: boolean;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
+  const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
   // NULL은 어떤 목록과 비교해도 UNKNOWN이다.
   if (operand.value === null) return { value: null, type: BOOLEAN_TYPE };
-  const items = expression.items.map((item) => evaluateExpression(item, ctx));
+  const items = (yield* mapWork(expression.items, function* (item) {
+    return (yield* evaluateExpressionSteps(item, ctx));
+  }));
   let common: DataType | null = operand.type;
   const consider = (bound: TypedValue, text: string | null): void => {
     if (text !== null || bound.value === null) return;
@@ -821,7 +889,10 @@ function evaluateInList(
     if (common === null) throw at(expression.position, typeMismatch("IN got incompatible types."));
   };
   consider(operand, untypedText(operand));
-  for (const item of items) consider(item, untypedText(item));
+  for (const item of items) {
+    yield;
+    consider(item, untypedText(item));
+  }
   if (common === null) common = varcharType(1);
   const finalCommon = common;
   const coerce = (bound: TypedValue): SqlValue => {
@@ -832,6 +903,7 @@ function evaluateInList(
   const target = coerce(operand);
   let unknown = false;
   for (const item of items) {
+    yield;
     const candidate = coerce(item);
     if (target === null || candidate === null) {
       unknown = true;
@@ -844,15 +916,9 @@ function evaluateInList(
   return { value: expression.negated ? true : false, type: BOOLEAN_TYPE };
 }
 
-function evaluateInSubquery(
-  operand: Expression,
-  query: Query,
-  negated: boolean,
-  ctx: EvalContext,
-  position: SourcePosition,
-): TypedValue {
-  const left = evaluateExpression(operand, ctx);
-  const { values, type } = ctx.subqueries.columnValues(query);
+function* evaluateInSubquerySteps(operand: Expression, query: Query, negated: boolean, ctx: EvalContext, position: SourcePosition): Work<TypedValue> {
+  const left = (yield* evaluateExpressionSteps(operand, ctx));
+  const { values, type } = (yield* valueWork(ctx.subqueries.columnValues(query)));
   const leftText = untypedText(left);
   const common = leftText !== null ? type : commonType(left.type, type);
   if (common === null) throw at(position, typeMismatch("IN got incompatible types."));
@@ -864,6 +930,7 @@ function evaluateInSubquery(
   const coercedType = leftText !== null ? type : (common as DataType);
   let unknown = false;
   for (const candidate of values) {
+    yield;
     if (target === null || candidate === null) {
       unknown = true;
       continue;
@@ -875,12 +942,15 @@ function evaluateInSubquery(
   return { value: negated ? true : false, type: BOOLEAN_TYPE };
 }
 
-function evaluateQuantified(
-  expression: { operator: ComparisonOperator; quantifier: "ANY" | "ALL"; operand: Expression; query: Query; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
-  const left = evaluateExpression(expression.operand, ctx);
-  const { values, type } = ctx.subqueries.columnValues(expression.query);
+function* evaluateQuantifiedSteps(expression: {
+  operator: ComparisonOperator;
+  quantifier: "ANY" | "ALL";
+  operand: Expression;
+  query: Query;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
+  const left = (yield* evaluateExpressionSteps(expression.operand, ctx));
+  const { values, type } = (yield* valueWork(ctx.subqueries.columnValues(expression.query)));
   const leftText = untypedText(left);
   const common = leftText !== null ? type : commonType(left.type, type);
   if (common === null) throw at(expression.position, typeMismatch("Quantified comparison got incompatible types."));
@@ -911,6 +981,7 @@ function evaluateQuantified(
   if (expression.quantifier === "ANY") {
     let unknown = false;
     for (const candidate of values) {
+      yield;
       const result = compareOne(candidate);
       if (result === true) return { value: true, type: BOOLEAN_TYPE };
       if (result === null) unknown = true;
@@ -919,6 +990,7 @@ function evaluateQuantified(
   }
   let unknown = false;
   for (const candidate of values) {
+    yield;
     const result = compareOne(candidate);
     if (result === false) return { value: false, type: BOOLEAN_TYPE };
     if (result === null) unknown = true;
@@ -926,34 +998,45 @@ function evaluateQuantified(
   return { value: unknown ? null : true, type: BOOLEAN_TYPE };
 }
 
-function evaluateCase(
-  expression: { operand: Expression | null; branches: { when: Expression; then: Expression }[]; otherwise: Expression | null; position: SourcePosition },
-  ctx: EvalContext,
-  expectedType?: DataType,
-): TypedValue {
+function* evaluateCaseSteps(expression: {
+  operand: Expression | null;
+  branches: {
+    when: Expression;
+    then: Expression;
+  }[];
+  otherwise: Expression | null;
+  position: SourcePosition;
+}, ctx: EvalContext, expectedType?: DataType): Work<TypedValue> {
   let common: DataType | null = expectedType ?? null;
   // THEN과 ELSE의 공통 타입을 먼저 정한다. 값은 계산하지 않고 타입만 본다.
   for (const branch of expression.branches) {
-    const branchType = inferNullType(branch.then, ctx);
+    yield;
+    const branchType = (yield* inferNullTypeSteps(branch.then, ctx));
     common = common === null ? branchType : commonType(common, branchType);
     if (common === null) throw at(expression.position, typeMismatch("CASE got incompatible types."));
   }
   if (expression.otherwise !== null) {
-    const otherwiseType = inferNullType(expression.otherwise, ctx);
+    const otherwiseType = (yield* inferNullTypeSteps(expression.otherwise, ctx));
     common = common === null ? otherwiseType : commonType(common, otherwiseType);
     if (common === null) throw at(expression.position, typeMismatch("CASE got incompatible types."));
   }
   if (common === null) common = expectedType ?? varcharType(1);
+  if (ctx.typeOnly) {
+    if (expression.operand !== null) yield* evaluateExpressionSteps(expression.operand, ctx);
+    for (const branch of expression.branches) { yield; yield* evaluateExpressionSteps(branch.when, ctx); }
+    return { value: null, type: common };
+  }
   const finalCommon = common;
   const coerce = (bound: TypedValue, text: string | null): SqlValue => {
     if (text !== null) return at(expression.position, () => castLiteral(text, finalCommon, ctx.typeCtx));
     return bound.value === null ? null : at(expression.position, () => castValue(bound.value, bound.type, finalCommon, ctx.typeCtx));
   };
   if (expression.operand !== null) {
-    const operand = evaluateExpression(expression.operand, ctx);
+    const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
     const operandText = untypedText(operand);
     for (const branch of expression.branches) {
-      const when = evaluateExpression(branch.when, ctx);
+      yield;
+      const when = (yield* evaluateExpressionSteps(branch.when, ctx));
       const whenText = untypedText(when);
       // 단순형은 = 비교와 같다.
       const pairCommon = operandText !== null && whenText !== null
@@ -973,37 +1056,46 @@ function evaluateCase(
       if (left === null || right === null) continue;
       const order = compareValues(left as NonNullValue, right as NonNullValue, { ignoreTrailingSpaces: pairCommon.kind === "CHAR" });
       if (order === 0) {
-        const then = evaluateExpression(branch.then, ctx);
+        const then = (yield* evaluateExpressionSteps(branch.then, ctx));
         return { value: coerce(then, untypedText(then)), type: finalCommon };
       }
     }
-  } else {
+  }
+  else {
     for (const branch of expression.branches) {
-      const condition = evaluateCondition(branch.when, ctx);
+      yield;
+      const condition = (yield* evaluateConditionSteps(branch.when, ctx));
       if (condition === true) {
-        const then = evaluateExpression(branch.then, ctx);
+        const then = (yield* evaluateExpressionSteps(branch.then, ctx));
         return { value: coerce(then, untypedText(then)), type: finalCommon };
       }
     }
   }
   if (expression.otherwise === null) return { value: null, type: finalCommon };
-  const otherwise = evaluateExpression(expression.otherwise, ctx);
+  const otherwise = (yield* evaluateExpressionSteps(expression.otherwise, ctx));
   return { value: coerce(otherwise, untypedText(otherwise)), type: finalCommon };
 }
 
-function evaluateFunctionNode(
-  expression: { name: string; arguments: Expression[]; distinct: boolean; star: boolean; position: SourcePosition },
-  ctx: EvalContext,
-  expectedType?: DataType,
-): TypedValue {
+function* evaluateFunctionNodeSteps(expression: {
+  name: string;
+  arguments: Expression[];
+  distinct: boolean;
+  star: boolean;
+  position: SourcePosition;
+}, ctx: EvalContext, expectedType?: DataType): Work<TypedValue> {
   if (isAggregateName(expression.name)) {
-    return evaluateAggregate(expression, ctx);
+    return (yield* evaluateAggregateSteps(expression, ctx));
   }
-  const args = expression.arguments.map((arg) => evaluateExpression(arg, ctx));
+  const args = (yield* mapWork(expression.arguments, function* (arg) {
+    return (yield* evaluateExpressionSteps(arg, ctx));
+  }));
   if (ctx.typeOnly) {
     try {
-      return { value: null, type: inferScalarType(expression.name, args.map((arg) => arg.type)) };
-    } catch (error) {
+      return { value: null, type: inferScalarType(expression.name, (yield* mapWork(args, function* (arg) {
+          return arg.type;
+        }))) };
+    }
+    catch (error) {
       if (error instanceof DbError && error.position === undefined) throw withPosition(error, expression.position);
       throw error;
     }
@@ -1023,10 +1115,13 @@ function evaluateFunctionNode(
 }
 
 /** 집계 함수를 그룹 행들로 계산한다. 타입만 볼 때는 행 없이 결과 타입을 정한다. */
-function evaluateAggregate(
-  expression: { name: string; arguments: Expression[]; distinct: boolean; star: boolean; position: SourcePosition },
-  ctx: EvalContext,
-): TypedValue {
+function* evaluateAggregateSteps(expression: {
+  name: string;
+  arguments: Expression[];
+  distinct: boolean;
+  star: boolean;
+  position: SourcePosition;
+}, ctx: EvalContext): Work<TypedValue> {
   const upper = expression.name.toUpperCase();
   if (upper === "COUNT" && expression.star) {
     if (ctx.typeOnly) return { value: null, type: BIGINT_TYPE };
@@ -1041,7 +1136,7 @@ function evaluateAggregate(
   const argExpr = expression.arguments[0] as Expression;
   // 타입만 볼 때는 행 없이 인자 타입으로 결과 타입을 정한다.
   if (ctx.typeOnly) {
-    const argType = inferNullType(argExpr, ctx);
+    const argType = (yield* inferNullTypeSteps(argExpr, ctx));
     return { value: null, type: aggregateResultTypeFor(upper, argType, expression.position) };
   }
   if (ctx.groupRows === undefined) {
@@ -1052,38 +1147,51 @@ function evaluateAggregate(
   const outer = ctx.scopes.slice(0, Math.max(0, ctx.scopes.length - width));
   // 빈 그룹이면 NULL(COUNT 제외)이다. 결과 타입은 행 없이 추론한다.
   if (groupRows.length === 0) {
-    const argType = inferNullType(argExpr, { ...ctx, groupRows: undefined, groupWidth: undefined });
+    const argType = (yield* inferNullTypeSteps(argExpr, { ...ctx, groupRows: undefined, groupWidth: undefined }));
     return { value: upper === "COUNT" ? 0n : null, type: aggregateResultTypeFor(upper, argType, expression.position) };
   }
   const collected: TypedValue[] = [];
   for (const member of groupRows) {
+    yield;
     const leveled = atInnerLevel(outer, member);
     const memberCtx: EvalContext = { ...ctx, scopes: [...outer, ...leveled], groupRows: undefined, groupWidth: undefined };
-    const evaluated = evaluateExpression(argExpr, memberCtx);
+    const evaluated = (yield* evaluateExpressionSteps(argExpr, memberCtx));
     // 타입 없는 문자열은 VARCHAR로 본다.
     collected.push(evaluated.type === null || evaluated.type === undefined
       ? { value: evaluated.value, type: varcharType(Math.max(1, typeof evaluated.value === "string" ? [...evaluated.value].length : 1)) }
       : evaluated);
   }
-  const firstType = (collected.find((entry) => entry.value !== null)?.type ?? collected[0]?.type ?? varcharType(1)) as DataType;
-  let values = collected.map((entry) => entry.value);
+  const firstType = ((yield* findWork(collected, function* (entry) {
+    return entry.value !== null;
+  }))?.type ?? collected[0]?.type ?? varcharType(1)) as DataType;
+  let values = (yield* mapWork(collected, function* (entry) {
+    return entry.value;
+  }));
   let argType = firstType;
   // DISTINCT는 NULL을 빼고 중복을 없앤다.
   if (expression.distinct) {
     const seen: TypedValue[] = [];
     for (const entry of collected) {
+      yield;
       if (entry.value === null) continue;
-      if (!seen.some((other) => isNotDistinct(entry.value, other.value, charOption(entry.type)))) {
+      if (!(yield* someWork(seen, function* (other) {
+        return isNotDistinct(entry.value, other.value, charOption(entry.type));
+      }))) {
         seen.push(entry);
       }
     }
-    values = seen.map((entry) => entry.value);
+    values = (yield* mapWork(seen, function* (entry) {
+      return entry.value;
+    }));
     if (seen.length > 0) argType = (seen[0] as TypedValue).type;
-  } else {
-    values = collected.map((entry) => entry.value);
+  }
+  else {
+    values = (yield* mapWork(collected, function* (entry) {
+      return entry.value;
+    }));
   }
   const resultType = aggregateResultTypeFor(upper, argType, expression.position);
-  const computed = aggregateGroupCompute(upper, values, argType, expression.position);
+  const computed = (yield* aggregateGroupComputeSteps(upper, values, argType, expression.position));
   return { value: computed, type: resultType };
 }
 
@@ -1092,7 +1200,7 @@ function charOption(type: DataType): { ignoreTrailingSpaces?: boolean } {
 }
 
 /** 행 없이 식의 타입만 알아본다. NULL 값 범위로 평가한다. */
-function inferNullType(expression: Expression, ctx: EvalContext): DataType {
+function* inferNullTypeSteps(expression: Expression, ctx: EvalContext): Work<DataType> {
   const typeCtx: EvalContext = {
     ...ctx,
     typeOnly: true,
@@ -1100,7 +1208,7 @@ function inferNullType(expression: Expression, ctx: EvalContext): DataType {
     groupRows: undefined,
     groupWidth: undefined,
   };
-  return evaluateExpression(expression, typeCtx).type;
+  return (yield* evaluateExpressionSteps(expression, typeCtx)).type;
 }
 
 function aggregateResultTypeFor(name: string, argType: DataType, position: SourcePosition): DataType {
@@ -1112,10 +1220,11 @@ function aggregateResultTypeFor(name: string, argType: DataType, position: Sourc
   }
 }
 
-function aggregateGroupCompute(name: string, values: SqlValue[], argType: DataType, position: SourcePosition): SqlValue {
+function* aggregateGroupComputeSteps(name: string, values: SqlValue[], argType: DataType, position: SourcePosition): Work<SqlValue> {
   try {
-    return aggregateGroup(name, values, argType, false, values.length);
-  } catch (error) {
+    return (yield* aggregateGroupSteps(name, values, argType, false, values.length));
+  }
+  catch (error) {
     if (error instanceof DbError && error.position === undefined) throw withPosition(error, position);
     throw error;
   }
@@ -1280,6 +1389,5 @@ function asTrimSet(value: NonNullValue): string {
   }
   return value;
 }
-
 void decodeUtf8;
 void invalidCastValue;

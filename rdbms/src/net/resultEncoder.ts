@@ -18,7 +18,7 @@
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
 import type { DataType } from "../types/dataType.js";
-import { formatDataType } from "../types/dataType.js";
+import { formatDataType, NULL_LITERAL_TYPE } from "../types/dataType.js";
 import { numericOutOfRange } from "../types/errors.js";
 import { formatValue, parseHex } from "../types/value.js";
 import type { SqlValue } from "../types/value.js";
@@ -81,6 +81,13 @@ export function columnMeta(name: string, type: DataType): ColumnMeta {
       break;
   }
   return meta;
+}
+
+/** 준비 문장의 미정 타입은 길이·정밀도를 만들지 않고 UNKNOWN으로 보낸다. */
+export function descriptionColumnMeta(name: string, type: DataType | null): ColumnMeta {
+  return type === null || type === NULL_LITERAL_TYPE
+    ? { name, typeName: "UNKNOWN", declared: "UNKNOWN", nullable: "UNKNOWN" }
+    : { ...columnMeta(name, type), nullable: "UNKNOWN" };
 }
 
 /** 행 하나를 JSON 배열 본문으로 바꾼다. */

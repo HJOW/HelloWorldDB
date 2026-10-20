@@ -1733,7 +1733,7 @@ export function executeCreateIndex(
   if (stmt.name === null) {
     indexName = catalog.nextIndexName(target.name);
   } else {
-    const resolved = resolveTablespace(manager, stmt.name, currentTablespace);
+    const resolved = resolveTablespace(manager, stmt.name, tableRef.tablespace);
     // 인덱스는 테이블과 같은 테이블스페이스에 둔다.
     if (resolved.tablespace !== tableRef.tablespace) {
       fail(

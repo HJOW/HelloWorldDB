@@ -387,3 +387,32 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
   bun 의 TLS 클라이언트는 `minVersion`, `maxVersion` 옵션을 적용하지 않는다.
 - Windows 는 TCP 와 UDP 에 서로 다른 "제외된 포트 범위"(`netsh int ipv4 show excludedportrange protocol=udp`)를 가지며 동적 포트 범위 안에 생기기도 한다. 그 범위의 포트를 `port` 로 쓰면 바인드가 `EACCES` 로 실패해 구동에 실패한다. 기본 포트 7410 은 해당하지 않는다.
 - 리눅스, macOS 의 유닉스 소켓 처리(0600 권한, 남은 소켓 파일 정리, 소유자 확인)는 코드로만 작성되었고 Windows 개발 환경에서는 실행해 보지 못했다.
+
+## 17. 준비 문장과 취소 (2026-10-20 확장 규약)
+
+프로토콜 버전은 1을 유지한다. `helloOk.capabilities`는 `["prepareDescribe", "cancel"]`이며 없는 경우 빈 목록이다. 구형 클라이언트는 이 선택 필드를 무시하고 기존 execute를 쓴다. 신형 클라이언트는 기능 없는 서버에 새 요청을 보내지 않는다. 아래 요청은 READY에서만 허용한다.
+
+| 요청 | 필드 | 응답 |
+|---|---|---|
+| prepare | sql, parameterTypes? | prepared: statement, parameterCount, parameters, columns, resultKind |
+| describe | statement, parameterTypes? | description: statement, parameterCount, parameters, columns, resultKind |
+| executePrepared | statement, params(생략 시 []), fetchSize? | 기존 rows/ok/error |
+| closePrepared | statement | preparedClosed (없는 ID도 성공) |
+| cancel | targetId | cancelAck: targetId, status(accepted/notRunning/tooLate) |
+
+모든 요청에는 별도의 양의 안전 정수 id가 필요하다. statement는 세션에 속한 양의 안전 정수이다. 다른 세션 ID·해제한 ID는 26000/8008이다. 준비 문장은 세션당 64개이며 커서 16개 제한과 독립이다. 해제는 이미 반환한 결과 커서를 닫지 않는다. USE 또는 서버 내 객체 정의 변경 후에는 0A000/8009로 다시 준비하게 한다. 설명·실행 때 권한을 재검사한다.
+
+parameterTypes는 파라미터 수와 같은 길이의 SQL 타입 선언 문자열/null 배열이다. null은 힌트 없음이다. parameters는 순서대로 `{index, ...컬럼 메타데이터}`이며 index는 1부터이다. columns는 결과 컬럼 메타데이터이다. 타입 미정은 `typeName: "UNKNOWN", declared: "UNKNOWN"`이며 길이·정밀도를 꾸며 넣지 않는다. nullable은 YES/NO/UNKNOWN이다. resultKind는 rows 또는 ok이다. prepare와 describe는 행·DEFAULT·현재 시각을 평가하지 않으며 트랜잭션·자동 커밋·현재 테이블스페이스·저장 파일에 영향을 주지 않는다.
+
+```json
+{"id":10,"type":"prepare","sql":"SELECT CAST(? AS DECIMAL(12,0)) AS N"}
+{"id":11,"type":"describe","statement":123,"parameterTypes":["DECIMAL(12,0)"]}
+{"id":12,"type":"executePrepared","statement":123,"params":["42"]}
+{"id":13,"type":"cancel","targetId":12}
+{"id":13,"type":"cancelAck","targetId":12,"status":"accepted"}
+{"id":12,"type":"error","sqlState":"57014","code":8010,"message":"Statement was cancelled."}
+```
+
+cancel만 일반 요청 대기열을 우회한다(close의 기존 예외는 유지). 현재 실행 중인 execute/executePrepared에만 적용하며, 대기 중이거나 이미 끝난 요청은 notRunning이다. 변경 확정 단계에서는 tooLate이다. 원래 요청에는 정상 결과 또는 취소 오류 중 하나만 반환한다. accepted 뒤 정상 완료가 경합할 수 있으므로 반드시 원래 요청의 최종 응답을 기다린다. 늦은 취소는 다음 요청에 적용하지 않는다. 클라이언트는 단일 수신 경로로 ID별 응답을 전달하고, 통신 단절로 결과를 모르면 DML을 자동 재실행하지 않는다. TCP/TLS/로컬/UDP의 의미는 같으며 UDP 중복 제거는 기존 신뢰성 계층을 따른다.
+
+취소 오류는 57014/8010이다. 취소는 문장 단위 복구를 사용하고 앞선 트랜잭션 변경을 보존한다. 연결 종료는 전체 미커밋 트랜잭션을 롤백한다. DDL의 자동 커밋 이후와 COMMIT/권한 변경 등 확정 단계는 취소 불가이다. 준비/설명/해제·fetch 취소는 이번 범위에 포함하지 않는다.

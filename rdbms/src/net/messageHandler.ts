@@ -43,8 +43,10 @@ import type { ScramVerifier } from "../auth/scram.js";
 import type { Database, ExecuteResult, Session, SessionCloseReason } from "../session/session.js";
 import type { ConnectionLimits } from "./connectionLimits.js";
 import { CursorStore } from "./cursors.js";
+import type { Description } from "../session/session.js";
 import {
   AUTH_MECHANISM,
+  CAPABILITIES,
   DEFAULT_FETCH_SIZE,
   FETCH_SOFT_LIMIT_BYTES,
   MAX_FETCH_SIZE,
@@ -66,6 +68,7 @@ import type {
   Channel,
   ControlRequest,
   ExecuteRequest,
+  ExecutePreparedRequest,
   FetchRequest,
   HelloRequest,
   Request,
@@ -73,7 +76,7 @@ import type {
   SessionInfoMessage,
   StatusResponse,
 } from "./protocol.js";
-import { columnMeta, decodeParams, encodeBatch } from "./resultEncoder.js";
+import { columnMeta, descriptionColumnMeta, decodeParams, encodeBatch } from "./resultEncoder.js";
 
 /** 접속 경로 모듈이 처리기에 제공하는 것이다. 처리기는 소켓, 프레임, 패킷을 모른다. */
 export interface ConnectionEndpoint {
@@ -144,6 +147,7 @@ function clampFetchSize(requested: number | undefined): number {
 }
 
 export class MessageHandler {
+  private active: { id: number; execution: ReturnType<Session["createExecution"]> } | null = null;
   private state: State = "new";
   private session: Session | null = null;
   private auth: AuthState | null = null;
@@ -203,6 +207,13 @@ export class MessageHandler {
   receive(body: Buffer): void {
     if (this.state === "closed") return;
     const decoded = decodeRequest(body);
+    if (decoded.ok && decoded.request.type === "cancel" && this.state === "ready") {
+      const request = decoded.request;
+      const status = this.active?.id === request.targetId
+        ? this.session!.cancelExecution(this.active.execution) : "notRunning";
+      this.send({ id: request.id, type: "cancelAck", targetId: request.targetId, status });
+      return;
+    }
     if (decoded.ok && decoded.request.type === "close" && this.state !== "new") {
       // 대기열을 건너뛰어 바로 처리한다. 앞 요청이 잠금을 기다리고 있어도 접속을 끝낼 수 있어야 한다.
       this.handleClose(decoded.request.id);
@@ -344,6 +355,26 @@ export class MessageHandler {
     }
     const request = item.request;
     switch (request.type) {
+      case "prepare":
+      case "describe":
+      case "closePrepared":
+        if (this.state === "ready") {
+          try {
+            const session = this.session!;
+            if (request.type === "closePrepared") {
+              session.closePrepared(request.statement);
+              this.send({ id: request.id, type: "preparedClosed" });
+            } else {
+              const description = request.type === "prepare" ? session.prepare(request.sql, request.parameterTypes) : session.describe(request.statement, request.parameterTypes);
+              this.sendDescription(request.id, request.type === "prepare" ? "prepared" : "description", description);
+            }
+          } catch (error) { if (error instanceof DbError) this.sendError(request.id, error); else throw error; }
+          return;
+        }
+        break;
+      case "executePrepared":
+        if (this.state === "ready") return await this.onExecute(request);
+        break;
       case "hello":
         if (this.state === "new") return this.onHello(request);
         break;
@@ -409,6 +440,7 @@ export class MessageHandler {
       server: `${PRODUCT_NAME} ${RDBMS_VERSION}`,
       mechanism: AUTH_MECHANISM,
       maxMessageBytes: MAX_MESSAGE_BYTES,
+      capabilities: [...CAPABILITIES],
       defaultFetchSize: DEFAULT_FETCH_SIZE,
       ...(this.endpoint.channel === "udp" && this.env.udp !== undefined ? { udp: this.env.udp } : {}),
     });
@@ -580,13 +612,16 @@ export class MessageHandler {
   // 문장 실행과 커서
   // -------------------------------------------------------------------------
 
-  private async onExecute(request: ExecuteRequest): Promise<void> {
+  private async onExecute(request: ExecuteRequest | ExecutePreparedRequest): Promise<void> {
     const session = this.session as Session;
+    const execution = session.createExecution();
+    this.active = { id: request.id, execution };
     let result: ExecuteResult;
     try {
       const params = decodeParams(request.params);
-      this.env.logger.debug(`Session ${session.id} execute: ${request.sql}`);
-      result = await session.executeAsync(request.sql, params);
+      this.env.logger.debug(`Session ${session.id} execute request ${request.id}`);
+      result = request.type === "execute" ? await session.executeAsync(request.sql, params, execution)
+        : await session.executePreparedAsync(request.statement, params, execution);
     } catch (error) {
       // 세션이 실행 중에 닫혔으면(연결 끊김, 유휴, 종료) 응답할 곳이 없다.
       if (this.state === "closed") return;
@@ -595,6 +630,9 @@ export class MessageHandler {
         return;
       }
       throw error;
+    } finally {
+      execution.phase = "done";
+      this.active = null;
     }
     if (this.state === "closed") return;
     if (result.kind === "ok") {
@@ -613,14 +651,28 @@ export class MessageHandler {
   }
 
   /** 조회 결과의 첫 묶음을 보낸다. 남은 행이 있으면 커서를 열어 둔다. */
-  private sendFirstBatch(request: ExecuteRequest, result: Extract<ExecuteResult, { kind: "select" }>): void {
+  private sendFirstBatch(request: ExecuteRequest | ExecutePreparedRequest, result: Extract<ExecuteResult, { kind: "select" }>): void {
+    let adopted: number | undefined;
+    try {
     const types = result.columns.map((column) => column.dataType);
     const columnsJson = JSON.stringify(result.columns.map((column) => columnMeta(column.name, column.dataType)));
     const reserve = MESSAGE_ENVELOPE_RESERVE + Buffer.byteLength(columnsJson, "utf8");
     const batch = encodeBatch(result.rows, types, 0, clampFetchSize(request.fetchSize), FETCH_SOFT_LIMIT_BYTES, reserve);
     const hasMore = batch.next < result.rows.length;
-    const cursor = hasMore ? this.cursors.open(types, result.rows, batch.next) : undefined;
+    const cursor = hasMore ? this.cursors.open(types, result.rows, batch.next, result.dispose) : undefined;
+    adopted = cursor;
     this.sendRows(request.id, columnsJson, batch.encodedRows, cursor, hasMore);
+    } catch (error) {
+      if (adopted !== undefined) this.cursors.close(adopted);
+      adopted = undefined;
+      throw error;
+    } finally { if (adopted === undefined) result.dispose?.(); }
+  }
+
+  private sendDescription(id: number, type: "prepared" | "description", description: Description & { statement: number }): void {
+    this.send({ id, type, statement: description.statement, parameterCount: description.parameters.length,
+      parameters: description.parameters.map((dataType, index) => ({ ...descriptionColumnMeta(`PARAM${index + 1}`, dataType), index: index + 1 })),
+      columns: description.columns.map(column => ({ ...descriptionColumnMeta(column.name, column.type), nullable: column.nullable })), resultKind: description.resultKind });
   }
 
   private onFetch(request: FetchRequest): void {

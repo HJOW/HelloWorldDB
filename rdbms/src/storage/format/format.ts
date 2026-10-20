@@ -51,6 +51,7 @@ export interface Heap extends HeapReader {
 export interface IndexReader {
   find(key: Buffer): RowId[];
   range(options?: IndexRange): IndexEntry[];
+  iterate(options?: IndexRange): IterableIterator<IndexEntry>;
 }
 export interface StorageIndex extends IndexReader {
   insert(key: Buffer, rowId: RowId): void;

@@ -6,6 +6,7 @@
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
+- **2026-10-20 : rdbms 후속 구현 반영, 사용자 지시에 따라 오류 수정에서 종료.** prepare/describe·cancel, 협력 실행·조회 파일 커서, 뷰 컬럼·인덱스 이름 생략 규칙을 반영했다. NULL 파라미터/타입 힌트 오류와 jdbc6·jdbc8의 뷰 컬럼 중복을 수정했다. **최종 전체·Bun·JDBC 재빌드/회귀는 다음 작업이며 완료로 판정하지 않는다.** 구현·기존 실패·일부 통과 결과·재개 명령은 [rdbms/HANDOFF.md](rdbms/HANDOFF.md)에 있다. 기존 드라이버의 새 요청 API 연동은 별도 후속 작업이다.
 - **2026-10-20 : 네 드라이버에 서버 prepare/describe·cancel 연동 계획 등록.** [nodejsDriver](nodejsDriver/PROGRESS.md)·[pythonDriver](pythonDriver/PROGRESS.md)·[jdbc6](jdbc6/PROGRESS.md)·[jdbc8](jdbc8/PROGRESS.md)의 다음 작업에 준비 문장·실행 전 메타데이터·요청별 취소·제한 시간·호환성 시험을 추가했다. [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-5와 규약 확정 후 착수하고 PD-6에서 함께 검증한다. 기존 PY-4 ~ PY-6·13-5·14-5는 유지하며 이번 변경은 문서만 해당한다.
 - **2026-10-20 : Windows ODBC 개발 계획 작성.** [winodbc/PROGRESS.md](winodbc/PROGRESS.md)에 WO-0 ~ WO-13의 구현 순서·필수 시험·완료 기준과 ODBC 3.8/Unicode/descriptor·배열·취소·x86/x64 설치 계획을 적었다. 사용자 추가 요청으로 서버의 prepare/describe·cancel은 [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-6과 rdbms 진행 문서의 다음 작업에 등록했다. 드라이버·서버 구현, 빌드·실행 시험, ODBC 등록은 아직 하지 않았다.
 - **2026-10-20 : `jdbc8` 13-1 ~ 13-4, `jdbc6` 14-1 ~ 14-4 완료.** 사용자 추가 지시에 따라 두 드라이버를 구현했다. Java 6 범위의 JSON·TCP·TLS·UDP·SCRAM 프로토콜을 공유하고 JDBC 4.0/4.2 계층·타입·트랜잭션·메타데이터를 각각 제공한다. jdbc8은 실제 JDK 8로 빌드한 같은 JAR의 Java 8·21 시험 **130개**, jdbc6는 실제 JDK 6 JAR의 Java 6·7·8·21 실제 서버 시험 **200개**와 빌드 회귀 **14개**가 통과했다(실패·건너뜀 0). TLS 인증서 검증과 Java 6 TLSv1, 나머지 기본 TLSv1.2 접속, 유실·중복·지연 UDP, 권한·타입·커서·오류를 확인했다. 시험 서버는 정상 종료·정리했고 서버 소스는 바꾸지 않았다. 다음은 13-5·14-5 최종 검증이다. 상세는 [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md), [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md), 사용법은 각 README에 있다. GUI 보류는 유지한다.
@@ -103,6 +104,8 @@
 JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-4와 jdbc8 13-4까지 구현했다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
 
 ## 작업 이력
+
+- 2026-10-20 : rdbms 남은 구현 작업을 진행한 뒤 사용자의 추가 지시로 마지막 오류 수정에서 종료했다. 서버 NULL/타입 힌트 오류와 JDBC 뷰 컬럼 중복을 수정했고, 추가 테스트·최종 검증·문서 정리를 rdbms/HANDOFF.md 및 각 진행 문서의 다음 작업에 명시했다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-20 : 사용자 요청에 따라 nodejsDriver·pythonDriver·jdbc6·jdbc8 진행 문서에 서버 prepare/describe·cancel 구현 후 연동 작업을 추가했다. 각 드라이버의 API·런타임·메타데이터·취소 처리·회귀 시험과 서버 선행 조건을 명시했다. 코드 변경과 실행 시험은 하지 않았다.
 

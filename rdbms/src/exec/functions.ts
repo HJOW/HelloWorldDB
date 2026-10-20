@@ -15,6 +15,8 @@
  * 구현 단계 : 6단계
  */
 
+import { runSync, filterWork } from "./work.js";
+import type { Work } from "./work.js";
 import { DbError, ERROR_CODES } from "../common/errors.js";
 import type {
   DataType,
@@ -84,7 +86,6 @@ import {
   trimTrailingSpaces,
 } from "../types/value.js";
 import type { NonNullValue, SqlValue } from "../types/value.js";
-
 /** 집계 함수의 이름이다. 파서가 이름을 대문자로 정규화하므로 대문자로 비교한다. */
 export const AGGREGATE_NAMES: ReadonlySet<string> = new Set(["COUNT", "SUM", "AVG", "MIN", "MAX"]);
 
@@ -156,7 +157,6 @@ function numericKind(type: DataType): "INTEGER" | "DECIMAL" | "FLOAT" | null {
 // ---------------------------------------------------------------------------
 // 문자열 자르기
 // ---------------------------------------------------------------------------
-
 /** TRIM/LTRIM/RTRIM 에서 자를 문자 집합을 구한다. 생략하면 공백 하나이다. */
 function trimSet(chars: TypedValue | null, typeCtx: TypeContext): string {
   if (chars === null || chars.value === null) return " ";
@@ -239,7 +239,6 @@ export function substringValue(text: string, start: bigint, length: bigint | nul
 // ---------------------------------------------------------------------------
 // LIKE
 // ---------------------------------------------------------------------------
-
 /** LIKE 패턴을 코드 포인트 단위로 견준다. */
 export function likeMatch(value: string, pattern: string, escape: string | null): boolean {
   const text = Array.from(value);
@@ -298,7 +297,6 @@ export function likeMatch(value: string, pattern: string, escape: string | null)
 // ---------------------------------------------------------------------------
 // 날짜/숫자 형식 (TO_CHAR, TO_DATE)
 // ---------------------------------------------------------------------------
-
 type DateToken =
   | { kind: "YEAR4" }
   | { kind: "YEAR2" }
@@ -664,7 +662,6 @@ function parseDatetimeWithFormat(text: string, format: string): WallFields {
 // ---------------------------------------------------------------------------
 // 집계
 // ---------------------------------------------------------------------------
-
 /** 집계의 결과 타입을 정한다. */
 export function aggregateResultType(name: string, argType: DataType | null, star: boolean): DataType {
   const upper = name.toUpperCase();
@@ -697,25 +694,29 @@ export function aggregateResultType(name: string, argType: DataType | null, star
 }
 
 /** 집계 한 그룹을 계산한다. NULL은 세지 않는다. COUNT(*)는 호출자가 행 수를 넘긴다. */
-export function aggregateGroup(
-  name: string,
-  values: SqlValue[],
-  argType: DataType | null,
-  star: boolean,
-  rowCount: number,
-): SqlValue {
+export function aggregateGroup(name: string, values: SqlValue[], argType: DataType | null, star: boolean, rowCount: number): SqlValue {
+  return runSync(aggregateGroupSteps(name, values, argType, star, rowCount));
+}
+
+/** 집계 한 그룹을 계산한다. NULL은 세지 않는다. COUNT(*)는 호출자가 행 수를 넘긴다. */
+export function* aggregateGroupSteps(name: string, values: SqlValue[], argType: DataType | null, star: boolean, rowCount: number): Work<SqlValue> {
   const upper = name.toUpperCase();
   if (upper === "COUNT") {
     if (star) return BigInt(rowCount);
-    return BigInt(values.filter((value) => value !== null).length);
+    return BigInt((yield* filterWork(values, function* (value) {
+      return value !== null;
+    })).length);
   }
-  const present = values.filter((value) => value !== null);
+  const present = (yield* filterWork(values, function* (value) {
+    return value !== null;
+  }));
   if (present.length === 0) return null;
   switch (upper) {
     case "SUM": {
       if (argType?.kind === "FLOAT") {
         let total = 0;
         for (const value of present) {
+          yield;
           if (typeof value !== "number") throw typeMismatch("SUM got an unexpected value.");
           total += value;
         }
@@ -724,6 +725,7 @@ export function aggregateGroup(
       if (argType?.kind === "DECIMAL") {
         let total = Decimal.ZERO;
         for (const value of present) {
+          yield;
           if (!(value instanceof Decimal)) throw typeMismatch("SUM got an unexpected value.");
           total = total.add(value);
         }
@@ -731,6 +733,7 @@ export function aggregateGroup(
       }
       let total = 0n;
       for (const value of present) {
+        yield;
         if (typeof value !== "bigint") throw typeMismatch("SUM got an unexpected value.");
         total += value;
       }
@@ -740,6 +743,7 @@ export function aggregateGroup(
       if (argType?.kind === "FLOAT") {
         let total = 0;
         for (const value of present) {
+          yield;
           if (typeof value !== "number") throw typeMismatch("AVG got an unexpected value.");
           total += value;
         }
@@ -747,6 +751,7 @@ export function aggregateGroup(
       }
       let total = Decimal.ZERO;
       for (const value of present) {
+        yield;
         if (typeof value === "bigint") total = total.add(Decimal.fromBigInt(value));
         else if (value instanceof Decimal) total = total.add(value);
         else throw typeMismatch("AVG got an unexpected value.");
@@ -760,6 +765,7 @@ export function aggregateGroup(
       const bothChar = argType.kind === "CHAR";
       let best = present[0] as NonNullValue;
       for (const value of present.slice(1)) {
+        yield;
         const order = compareValues(best, value as NonNullValue, { ignoreTrailingSpaces: bothChar });
         if (upper === "MIN" ? order > 0 : order < 0) best = value as NonNullValue;
       }
@@ -773,7 +779,6 @@ export function aggregateGroup(
 // ---------------------------------------------------------------------------
 // 스칼라 함수
 // ---------------------------------------------------------------------------
-
 /** 스칼라 함수를 계산한다. 집계는 호출자가 따로 처리한다. */
 export function evaluateScalarFunction(
   name: string,
@@ -1251,7 +1256,6 @@ function currentTimestamp(typeCtx: TypeContext): TimestampValue {
   const offset = typeCtx.timeZone.offsetAtUtc(typeCtx.currentUtcMicros);
   return new TimestampValue(typeCtx.currentUtcMicros, offset);
 }
-
 void SMALLINT_TYPE;
 void INTEGER_TYPE;
 void REAL_TYPE;

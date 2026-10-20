@@ -19,6 +19,7 @@ import type { SqlValue } from "../types/value.js";
 import { MAX_OPEN_CURSORS } from "./protocol.js";
 
 export interface OpenCursor {
+  dispose?: () => void;
   readonly id: number;
   readonly types: readonly DataType[];
   readonly rows: readonly (readonly SqlValue[])[];
@@ -36,7 +37,7 @@ export class CursorStore {
   }
 
   /** 새 커서를 연다. 이미 16개가 열려 있으면 53400 이다. */
-  open(types: readonly DataType[], rows: readonly (readonly SqlValue[])[], next: number): number {
+  open(types: readonly DataType[], rows: readonly (readonly SqlValue[])[], next: number, dispose?: () => void): number {
     if (this.cursors.size >= MAX_OPEN_CURSORS) {
       throw new DbError(
         "53400",
@@ -45,7 +46,7 @@ export class CursorStore {
       );
     }
     this.seq++;
-    this.cursors.set(this.seq, { id: this.seq, types, rows, next });
+    this.cursors.set(this.seq, { id: this.seq, types, rows, next, dispose });
     return this.seq;
   }
 
@@ -55,11 +56,13 @@ export class CursorStore {
 
   /** 커서를 닫는다. 이미 없는 커서를 닫는 것은 오류가 아니다. */
   close(id: number): void {
+    this.cursors.get(id)?.dispose?.();
     this.cursors.delete(id);
   }
 
   /** 모든 커서를 버린다. */
   clear(): void {
+    for (const cursor of this.cursors.values()) cursor.dispose?.();
     this.cursors.clear();
   }
 }

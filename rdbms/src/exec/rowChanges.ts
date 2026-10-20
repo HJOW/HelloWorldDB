@@ -4,6 +4,9 @@
  * 참조동작은 작업 목록으로 전파하며 문장 실패의 되돌리기는 Session이 담당한다.
  * 관련 사양 : AGENTS.md 상세 10, 11. 구현 단계 : DML 행 단위 접근 2부.
  */
+
+import { runSync, mapWork, everyWork, forEachWork } from "./work.js";
+import type { Work } from "./work.js";
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
 import type { SourcePosition } from "../common/errors.js";
 import type { CatalogStore, StoredConstraint, StoredTable } from "../catalog/catalog.js";
@@ -120,14 +123,19 @@ function parentTarget(target: RowTarget, constraint: StoredConstraint): RowTarge
 }
 
 /** REFERENCES의 컬럼 순서가 PK와 다르면 PK 순서로 재배열한다. */
-function parentExists(parent: RowTarget, constraint: StoredConstraint, txn: Transaction, values: SqlValue[]): boolean {
+function* parentExistsSteps(parent: RowTarget, constraint: StoredConstraint, txn: Transaction, values: SqlValue[]): Work<boolean> {
   const columns = constraint.refColumns!;
-  if (columns.length === parent.table.pkColumns.length && parent.table.pkColumns.every((name) => columns.includes(name))) {
-    const pk = parent.table.pkColumns.map((name) => values[columns.indexOf(name)]!);
+  if (columns.length === parent.table.pkColumns.length && (yield* everyWork(parent.table.pkColumns, function* (name) {
+    return columns.includes(name);
+  }))) {
+    const pk = (yield* mapWork(parent.table.pkColumns, function* (name) {
+      return values[columns.indexOf(name)]!;
+    }));
     return findVisibleByPk(parent.catalog, parent.tablespace, parent.table, txn, pk).length > 0;
   }
   const key = pkKeyHex(values, columnTypes(parent.table, columns));
   for (const row of visibleRows(parent.catalog, parent.tablespace, parent.table, txn)) {
+    yield;
     if (keyOf(parent.table, columns, row.values) === key) return true;
   }
   return false;
@@ -154,18 +162,21 @@ interface ParentWork {
 }
 
 /** 같은 FK의 사라진 부모 키를 묶어 자식 힙을 부모 행마다 다시 읽지 않는다. */
-function parentWork(changes: readonly RowChange[], txn: Transaction): ParentWork[] {
+function* parentWorkSteps(changes: readonly RowChange[], txn: Transaction): Work<ParentWork[]> {
   const work = new Map<StoredConstraint, ParentWork>();
   for (const change of changes) {
+    yield;
     if (change.before === null) continue;
     const { target } = change;
     for (const constraint of Object.values(target.catalog.data.constraints)) {
+      yield;
       if (constraint.kind !== "FOREIGN KEY" || constraint.refTable !== target.table.name) continue;
       const columns = constraint.refColumns!;
       const key = keyOf(target.table, columns, change.before);
       if (change.after !== null && keyOf(target.table, columns, change.after) === key) continue;
       const values = valuesOf(target.table, columns, change.before);
-      if (parentExists(target, constraint, txn, values)) continue;
+      if ((yield* parentExistsSteps(target, constraint, txn, values)))
+        continue;
       let item = work.get(constraint);
       if (item === undefined) {
         item = { parent: target, child: { ...target, table: target.catalog.data.tables[constraint.table]! }, constraint, removed: new Map() };
@@ -187,6 +198,10 @@ class ChildLookup {
   constructor(private readonly changes: RowChanges) {}
 
   find(work: ParentWork): OverlayRow[] {
+    return runSync(this.findSteps(work));
+  }
+
+  *findSteps(work: ParentWork): Work<OverlayRow[]> {
     const { child, constraint, removed } = work;
     let cache = this.cache.get(constraint);
     if (cache === undefined) {
@@ -204,11 +219,13 @@ class ChildLookup {
     if (missing.size > 0) {
       if (index === undefined) {
         for (const row of visibleRows(child.catalog, child.tablespace, child.table, this.changes.txn)) {
+          yield;
           const key = rowKey(row);
           if (key !== null && missing.has(key)) cache.get(key)!.push({ id: row.id, tempId: row.tempId });
         }
       } else {
         for (const key of missing) {
+          yield;
           const change = removed.get(key)!;
           const parentValues = valuesOf(work.parent.table, constraint.refColumns!, change.before!);
           const values = index.columns.slice(0, constraint.columns.length).map((column) => parentValues[constraint.columns.indexOf(column.name)]!);
@@ -219,12 +236,14 @@ class ChildLookup {
     }
     const refs = new Map<string, RowRef>();
     for (const key of removed.keys()) {
+      yield;
       for (const ref of cache.get(key)!) refs.set(rowRefKey(ref), ref);
     }
     // 앞선 탐색 이후 연쇄로 FK가 바뀐 행도 포함한다.
     for (const change of this.changes.forTable(child.table)) refs.set(rowRefKey(change.ref), change.ref);
     const rows: OverlayRow[] = [];
     for (const ref of refs.values()) {
+      yield;
       const row = currentRow(child, this.changes.txn, ref);
       if (row === null) continue;
       const key = rowKey(row);
@@ -234,11 +253,13 @@ class ChildLookup {
   }
 }
 
-function checkRows(changes: RowChanges, position?: SourcePosition): void {
+function* checkRowsSteps(changes: RowChanges, position?: SourcePosition): Work<void> {
   for (const change of changes.all()) {
+    yield;
     if (change.after === null) continue;
     const { target, before, after } = change;
     for (let index = 0; index < target.table.columns.length; index++) {
+      yield;
       const column = target.table.columns[index]!;
       if (column.notNull && after[index] === null) {
         fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `NULL violates NOT NULL of column "${column.name}".`, position);
@@ -253,28 +274,39 @@ function checkRows(changes: RowChanges, position?: SourcePosition): void {
   }
 }
 
-function checkChildReferences(changes: RowChanges, allUpdated: boolean, position?: SourcePosition): void {
+function* checkChildReferencesSteps(changes: RowChanges, allUpdated: boolean, position?: SourcePosition): Work<void> {
   for (const { target, before, after } of changes.all()) {
+    yield;
     if (after === null) continue;
     for (const constraint of Object.values(target.catalog.data.constraints)) {
+      yield;
       if (constraint.kind !== "FOREIGN KEY" || constraint.table !== target.table.name) continue;
       if (!allUpdated && before !== null && keyOf(target.table, constraint.columns, before) === keyOf(target.table, constraint.columns, after)) continue;
       const values = valuesOf(target.table, constraint.columns, after);
       if (values.includes(null)) continue;
-      if (!parentExists(parentTarget(target, constraint), constraint, changes.txn, values)) violation(constraint, position);
+      if (!(yield* parentExistsSteps(parentTarget(target, constraint), constraint, changes.txn, values)))
+        violation(constraint, position);
     }
   }
 }
 
 /** 참조동작이 끝난 뒤 NO ACTION도 검사하므로 FK 등록 순서에 결과가 좌우되지 않는다. */
 export function finishRowChanges(changes: RowChanges, locker: LockSink, position?: SourcePosition): void {
-  checkRows(changes, position);
+  return runSync(finishRowChangesSteps(changes, locker, position));
+}
+
+/** 참조동작이 끝난 뒤 NO ACTION도 검사하므로 FK 등록 순서에 결과가 좌우되지 않는다. */
+export function* finishRowChangesSteps(changes: RowChanges, locker: LockSink, position?: SourcePosition): Work<void> {
+  (yield* checkRowsSteps(changes, position));
   const lookup = new ChildLookup(changes);
   for (;;) {
+    yield;
     const pending = changes.takePending();
     if (pending.length === 0) break;
-    for (const work of parentWork(pending, changes.txn)) {
-      for (const row of lookup.find(work)) {
+    for (const work of (yield* parentWorkSteps(pending, changes.txn))) {
+      yield;
+      for (const row of (yield* lookup.findSteps(work))) {
+        yield;
         // 같은 차례의 다른 참조동작에서 이미 바뀌거나 지워진 행은 현재 값으로 판정한다.
         const current = currentRow(work.child, changes.txn, row);
         if (current === null) continue;
@@ -282,32 +314,36 @@ export function finishRowChanges(changes: RowChanges, locker: LockSink, position
         if (values.includes(null)) continue;
         const key = pkKeyHex(values, columnTypes(work.parent.table, work.constraint.refColumns!));
         const parent = work.removed.get(key);
-        if (parent === undefined || parentExists(work.parent, work.constraint, changes.txn, values)) continue;
+        if (parent === undefined || (yield* parentExistsSteps(work.parent, work.constraint, changes.txn, values)))
+          continue;
         const action = parent.after === null ? work.constraint.onDelete : work.constraint.onUpdate;
         if (action === "CASCADE" && parent.after === null) {
           changes.delete(work.child, current);
-        } else if (action === "CASCADE" || action === "SET NULL") {
+        }
+        else if (action === "CASCADE" || action === "SET NULL") {
           const next = [...current.values];
           const replacement = parent.after === null ? [] : valuesOf(work.parent.table, work.constraint.refColumns!, parent.after);
-          work.constraint.columns.forEach((name, index) => {
+          (yield* forEachWork(work.constraint.columns, function* (name, index) {
             const column = work.child.table.columns.findIndex((entry) => entry.name === name);
             if (action === "SET NULL" && work.child.table.columns[column]!.notNull) {
               fail("23502", ERROR_CODES.NOT_NULL_VIOLATION, `SET NULL violates NOT NULL of column "${name}".`, position);
             }
             next[column] = action === "SET NULL" ? null : replacement[index]!;
-          });
+          }));
           changes.update(work.child, current, next);
         }
       }
     }
   }
-  checkRows(changes, position);
-  checkChildReferences(changes, false, position);
-  for (const work of parentWork(changes.all(), changes.txn)) {
-    if (lookup.find(work).length > 0) violation(work.constraint, position);
+  (yield* checkRowsSteps(changes, position));
+  (yield* checkChildReferencesSteps(changes, false, position));
+  for (const work of (yield* parentWorkSteps(changes.all(), changes.txn))) {
+    yield;
+    if ((yield* lookup.findSteps(work)).length > 0) violation(work.constraint, position);
   }
   const keys: string[] = [];
   for (const { target, ref, before, after } of changes.all()) {
+    yield;
     if (ref.id !== null) keys.push(rowLockKey(target.tablespace, target.table.name, ref.id));
     if (after !== null && target.table.pkName !== null && (before === null ||
       keyOf(target.table, target.table.pkColumns, before) !== keyOf(target.table, target.table.pkColumns, after))) {
@@ -323,9 +359,9 @@ export function revalidateRowReferences(txn: Transaction, entries: RowChange[]):
   const changes = new RowChanges(txn);
   // 기록만 넣는다. 커밋 직전에 오버레이나 되돌리기 항목을 바꾸지 않는다.
   for (const entry of entries) changes.addForValidation(entry);
-  checkChildReferences(changes, true);
+  runSync(checkChildReferencesSteps(changes, true));
   const lookup = new ChildLookup(changes);
-  for (const work of parentWork(entries, txn)) {
+  for (const work of runSync(parentWorkSteps(entries, txn))) {
     if (lookup.find(work).length > 0) violation(work.constraint);
   }
 }
