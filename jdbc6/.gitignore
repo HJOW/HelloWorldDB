@@ -1,0 +1,7 @@
+# 빌드와 Eclipse 출력
+/build/
+/dist/
+/bin/
+
+# 이 장비에서만 사용하는 시험용 JDK
+/.tools/
