@@ -7,7 +7,7 @@ export const ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const BUILD = path.join(ROOT, 'build');
 export const DIST = path.join(ROOT, 'dist');
 export const JAR = path.join(DIST, 'org.duckdns.hjow.helloworlddb.jdbc8-0.1.0.jar');
-export const JAVA8 = process.env.HWDB_JAVA8_HOME || 'C:/Program Files/Java/jdk8u432-b06';
+export const JAVA8 = process.env.HWDB_JAVA8_HOME || 'C:/Program Files/Java/jdk1.8.0_202';
 export const JAVA21 = process.env.HWDB_JAVA21_HOME || 'C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot';
 const ext = process.platform === 'win32' ? '.exe' : '';
 export const tool = (home, name) => path.join(home, 'bin', name + ext);

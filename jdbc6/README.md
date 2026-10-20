@@ -42,7 +42,7 @@ npm.cmd run test:consumer
 |---|---|
 | `HWDB_JAVA6_HOME` | 빌드와 자바 6 시험에 사용하는 JDK. Windows 기본 후보는 `C:\Program Files\Java\jdk1.6.0_45` |
 | `HWDB_JAVA7_HOME` | 자바 7 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Java\jdk1.7.0_80` |
-| `HWDB_JAVA8_HOME` | 자바 8 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Java\jdk8u432-b06` |
+| `HWDB_JAVA8_HOME` | 자바 8 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Java\jdk1.8.0_202` |
 | `HWDB_JAVA21_HOME` | 자바 21 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` |
 | `HWDB_TEST_JAVA_HOMES` | 추가 시험용 JDK/JRE 목록. Windows에서는 `;`, 그 외에는 `:`로 구분 |
 

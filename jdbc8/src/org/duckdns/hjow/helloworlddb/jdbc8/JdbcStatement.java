@@ -4,11 +4,12 @@ import java.io.*;
 import java.lang.reflect.Method;
 import java.math.*;
 import java.sql.*;
+import java.time.*;
 import java.util.*;
 import org.duckdns.hjow.helloworlddb.jdbc8.protocol.Protocol;
 
 /**
- * 서버가 준비 문장을 저장하지 않으므로 SQL과 바인딩 값을 실행 시 함께 보내는 문장이다.
+ * 서버의 선택 기능에 따라 준비 문장·실행 전 분석·요청별 취소를 제공하는 문장이다.
  * <p>{@link Statement}와 {@link PreparedStatement}를 모두 구현하며,
  * {@code ?} 자리 표시자의 개수를 생성 시점에 세어 바인딩 여부를 추적한다.
  * 실행할 때마다 이전 결과는 닫고, 서버 응답이 행 묶음이면 결과 집합을,
@@ -25,12 +26,22 @@ final class JdbcStatement extends JdbcProxy {
     private final Object[] params;
     /** 자리 표시자별 바인딩 여부이다. */
     private final boolean[] bound;
+    /** 서버 준비 문장과 미정 파라미터의 바인딩 힌트이다. */
+    private final Long prepared;
+    /** 서버가 추론하지 못한 자리의 선택적 타입 힌트이다. */
+    private final Object[] hints;
+    /** 컬럼·CAST 문맥으로 이미 타입이 정해진 자리인지 나타낸다. */
+    private final boolean[] inferred;
+    /** 마지막으로 서버 분석에 성공한 힌트 목록이다. */
+    private List<Object> appliedHints;
+    /** 취소 스레드와 공유하는 현재 실행 요청이다. */
+    private volatile Active active;
     /** 배치 실행을 위해 쌓아 둔 문장 목록이다. */
     private final List<Batch> batches = new ArrayList<>();
     /** 현재 열린 결과 집합이다. 없으면 {@code null}이다. */
     private JdbcResultSet result;
     /** 닫힌 뒤에는 요청을 거부하기 위한 표시이다. */
-    private boolean closed;
+    private volatile boolean closed, closing;
     /** 결과 집합이 닫히면 문장도 닫을지 여부이다. */
     private boolean closeOnCompletion;
     /** 풀에서 재사용할 수 있다는 힌트이다. */
@@ -58,7 +69,7 @@ final class JdbcStatement extends JdbcProxy {
     }
     /**
      * 문장 객체를 생성한다.
-     * <p>준비 문장의 {@code ?} 개수를 세고 바인딩 배열을 준비한 뒤 연결의 추적 집합에 등록한다.</p>
+     * <p>자리 표시자와 바인딩 배열을 준비하고, 지원 서버에서는 실행 없이 문장을 준비한다.</p>
      *
      * @param c 소속 연결
      * @param sql 준비 문장의 SQL. 일반 문장이면 {@code null}이다
@@ -68,14 +79,26 @@ final class JdbcStatement extends JdbcProxy {
     private JdbcStatement(JdbcConnection c, String sql, int hold) throws SQLException {
         connection = c; this.sql = sql; holdability = hold; fetchSize = c.options.fetchSize;
         int count = 0; if (sql != null) for (String token : tokens(sql)) if (token.equals("?")) count++;
-        if (count > 65535) throw invalid("Too many parameters."); params = new Object[count]; bound = new boolean[count]; c.statements.add(this);
+        if (count > 65535) throw invalid("Too many parameters.");
+        Map<String, Object> description = sql != null && c.protocol.supports("prepareDescribe") ? c.protocol.prepare(sql) : null;
+        try {
+            prepared = description == null ? null : Long.valueOf(Protocol.number(description, "statement"));
+            if (description != null && Protocol.number(description, "parameterCount") != count) throw new IOException("Parameter count mismatch.");
+            params = new Object[count]; bound = new boolean[count]; hints = new Object[count]; inferred = new boolean[count];
+            if (description != null) {
+                List<Object> parameters = Protocol.list(description.get("parameters"));
+                if (parameters.size() != count) throw new IOException("Invalid parameter description.");
+                for (int i = 0; i < count; i++) inferred[i] = !"UNKNOWN".equals(Protocol.map(parameters.get(i)).get("typeName"));
+            }
+        } catch (IOException e) { throw new SQLException(e.getMessage(), "08006", 8006, e); }
+        c.statements.add(this);
     }
     /**
      * 문장이 사용 가능한 상태인지 확인한다.
      *
      * @throws SQLException 연결이 닫혔거나 문장이 닫혔을 때
      */
-    private void check() throws SQLException { connection.check(); if (closed) throw new SQLException("Statement is closed.", "HY010"); }
+    private void check() throws SQLException { connection.check(); if (closed || closing) throw new SQLException("Statement is closed.", "HY010"); }
     /**
      * {@link Statement}·{@link PreparedStatement} 메서드 호출을 처리한다.
      * <p>실행·배치·파라미터 바인딩·fetch 크기·최대 행 수·결과 조회 등을 구현하며,
@@ -87,7 +110,13 @@ final class JdbcStatement extends JdbcProxy {
      * @return 메서드 반환 값
      * @throws Exception 잘못된 인자, 상태 위반, 서버 오류 시
      */
-    @Override synchronized Object call(String n, Object[] a, Method method) throws Exception {
+    @Override Object call(String n, Object[] a, Method method) throws Exception {
+        if (n.equals("cancel")) { check(); Active running = active; connection.protocol.cancel(running == null ? null : running.request); return null; }
+        if (n.equals("close")) { close(); return null; }
+        synchronized (this) { return callLocked(n, a, method); }
+    }
+    /** 일반 호출을 직렬화하며 취소와 close는 실행 응답 대기를 우회한다. */
+    private Object callLocked(String n, Object[] a, Method method) throws Exception {
         if (n.equals("close")) { close(); return null; }
         if (n.equals("isClosed")) return closed || connection.protocol.isClosed();
         check();
@@ -135,17 +164,22 @@ final class JdbcStatement extends JdbcProxy {
         case "getMaxFieldSize": return 0;
         case "setMaxFieldSize": if ((Integer) a[0] != 0) throw unsupported("Field truncation"); return null;
         case "setEscapeProcessing": if ((Boolean) a[0]) throw unsupported("JDBC escape processing"); return null;
-        case "clearParameters": requirePrepared(); Arrays.fill(params, null); Arrays.fill(bound, false); return null;
+        case "clearParameters": requirePrepared(); Arrays.fill(params, null); Arrays.fill(bound, false); Arrays.fill(hints, null); return null;
         case "getParameterMetaData": requirePrepared(); return parameterMetaData();
-        case "getMetaData": requirePrepared(); return result == null ? null : result.metadata();
+        case "getMetaData": {
+            requirePrepared();
+            if (prepared == null) return result == null ? null : result.metadata();
+            Map<String, Object> description = description(Arrays.asList(hints.clone()));
+            return "rows".equals(description.get("resultKind")) ? JdbcResultSet.metadata(columns(description, "columns")) : null;
+        }
         case "addBatch":
-            if (sql != null) { if (a.length != 0) throw new SQLException("SQL must not be supplied to a PreparedStatement.", "HY010"); batches.add(new Batch(sql, parameters())); }
-            else { if (a.length != 1 || !(a[0] instanceof String)) throw invalid("SQL is required."); batches.add(new Batch((String) a[0], Collections.emptyList())); }
+            if (sql != null) { if (a.length != 0) throw new SQLException("SQL must not be supplied to a PreparedStatement.", "HY010"); batches.add(new Batch(sql, parameters(), Arrays.asList(hints.clone()))); }
+            else { if (a.length != 1 || !(a[0] instanceof String)) throw invalid("SQL is required."); batches.add(new Batch((String) a[0], Collections.emptyList(), null)); }
             return null;
         case "clearBatch": batches.clear(); return null;
         case "executeBatch": case "executeLargeBatch": {
             long[] counts = new long[batches.size()]; int completed = 0;
-            try { for (Batch b : batches) { execute(b.sql, b.params); if (result != null) { closeResult(); throw new SQLException("Batch statement returned rows.", "HY000"); } counts[completed++] = updateCount; } }
+            try { for (Batch b : batches) { execute(b.sql, b.params, b.hints); if (result != null) { closeResult(); throw new SQLException("Batch statement returned rows.", "HY000"); } counts[completed++] = updateCount; } }
             catch (SQLException e) {
                 if (n.equals("executeLargeBatch")) throw new BatchUpdateException(e.getMessage(), e.getSQLState(), e.getErrorCode(), Arrays.copyOf(counts, completed), e);
                 int[] c = new int[completed]; for (int i = 0; i < completed; i++) c[i] = count(counts[i]); throw new BatchUpdateException(e.getMessage(), e.getSQLState(), e.getErrorCode(), c, e);
@@ -171,22 +205,38 @@ final class JdbcStatement extends JdbcProxy {
     private static int count(long count) { return count > Integer.MAX_VALUE ? Statement.SUCCESS_NO_INFO : (int) count; }
     /**
      * 문장을 실행하고 결과 집합이나 영향 행 수를 보관한다.
-     * <p>문장 제한 시간이 있으면 그 동안만 프로토콜 제한 시간을 바꾸고,
-     * 실행 전에는 이전 결과를 닫는다.</p>
+     * <p>서버 실행 요청별로 취소·질의 제한 시간을 관리하며 실행 전에 이전 결과를 닫는다.</p>
      *
      * @param text 실행할 SQL 문장
      * @param values 바인딩된 파라미터 값 목록
      * @throws SQLException 서버 오류 시
      */
     private void execute(String text, List<Object> values) throws SQLException {
+        execute(text, values, Arrays.asList(hints.clone()));
+    }
+    /** 실행 요청별 상태를 보관하고 제한 시간은 연결 종료 대신 서버 취소로 처리한다. */
+    private void execute(String text, List<Object> values, List<Object> typeHints) throws SQLException {
         closeResult(); updateCount = -1;
         Map<String, Object> r;
         synchronized (connection.protocol) {
-            int old = connection.protocol.getTimeout();
+            if (timeout > 0 && !connection.protocol.supports("cancel")) throw unsupported("Server query timeout");
+            if (prepared != null && !typeHints.equals(appliedHints)) description(typeHints);
+            if (closing) throw new SQLException("Statement is closed.", "HY010");
+            final Active running = new Active(connection.protocol.startExecute(text, prepared, values, fetchSize));
+            active = running;
+            Timer timer = timeout > 0 ? new Timer("hwdb-query-timeout", true) : null;
+            if (timer != null) timer.schedule(new TimerTask() { public void run() {
+                if (active != running || running.request.isDone()) return;
+                running.timedOut = true;
+                try { connection.protocol.cancel(running.request); } catch (SQLException ignored) { }
+            } }, timeout * 1000L);
             try {
-                if (timeout > 0) connection.protocol.setTimeout((int) Math.min(Integer.MAX_VALUE, timeout * 1000L));
-                r = connection.execute(text, values, fetchSize);
-            } finally { connection.protocol.setTimeout(old); }
+                if (closing && connection.protocol.supports("cancel")) connection.protocol.cancel(running.request);
+                r = connection.protocol.finishExecute(running.request); connection.executed(text);
+            } catch (SQLException e) {
+                if (running.timedOut && "57014".equals(e.getSQLState())) throw new SQLTimeoutException(e.getMessage(), e.getSQLState(), e.getErrorCode(), e);
+                throw e;
+            } finally { if (timer != null) timer.cancel(); active = null; }
         }
         if (r.get("type").equals("rows")) result = JdbcResultSet.from(this, r, fetchSize, maxRows);
         else updateCount = r.get("rowCount") instanceof Number ? ((Number) r.get("rowCount")).longValue() : 0;
@@ -244,35 +294,90 @@ final class JdbcStatement extends JdbcProxy {
                 }
             }
         }
-        params[index] = Values.encode(value); bound[index] = true;
+        Object encoded = Values.encode(value);
+        Object typeHint = inferred[index] ? null : hint(n, a, value);
+        params[index] = encoded; bound[index] = true; hints[index] = typeHint;
     }
-    /**
-     * 준비 문장의 파라미터 메타데이터를 생성한다.
-     * <p>서버가 자리 표시자의 타입 정보를 제공하지 않으므로 개수만 정확하고,
-     * 나머지는 알 수 없음으로 보고한다.</p>
-     *
-     * @return 파라미터 메타데이터 프록시
-     */
-    private ParameterMetaData parameterMetaData() {
+    /** 타입을 모르는 자리만 JDBC 바인딩 문맥으로 보완한다. 알려진 컬럼 문맥은 바꾸지 않는다. */
+    private static String hint(String setter, Object[] args, Object value) throws SQLException {
+        if (value instanceof BigDecimal && ((BigDecimal) value).scale() > 38) throw new SQLDataException("Decimal scale exceeds the server limit.", "22003");
+        int type = Types.OTHER;
+        if (setter.equals("setNull")) type = ((Integer) args[1]).intValue();
+        else if (setter.equals("setObject") && args.length >= 3) {
+            Object supplied = args[2];
+            Integer number = supplied instanceof SQLType ? ((SQLType) supplied).getVendorTypeNumber() : (Integer) supplied;
+            if (number == null) throw unsupported("Unknown SQLType");
+            type = number.intValue();
+        }
+        else if (value instanceof Byte || value instanceof Short) type = Types.SMALLINT;
+        else if (value instanceof Integer) type = Types.INTEGER;
+        else if (value instanceof Long || value instanceof BigInteger) type = Types.BIGINT;
+        else if (value instanceof BigDecimal) {
+            BigDecimal number = (BigDecimal) value; int scale = Math.max(0, Math.min(38, number.scale()));
+            return "DECIMAL(38," + scale + ")";
+        }
+        else if (value instanceof Float) type = Types.REAL;
+        else if (value instanceof Double) type = Types.DOUBLE;
+        else if (value instanceof Boolean) type = Types.BOOLEAN;
+        else if (value instanceof String) type = Types.VARCHAR;
+        else if (value instanceof byte[]) type = Types.VARBINARY;
+        else if (value instanceof Timestamp) type = Types.TIMESTAMP;
+        else if (value instanceof Time) type = Types.TIME;
+        else if (value instanceof java.sql.Date) type = Types.DATE;
+        else if (value instanceof LocalDate) type = Types.DATE;
+        else if (value instanceof LocalTime) type = Types.TIME;
+        else if (value instanceof LocalDateTime) type = Types.TIMESTAMP;
+        else if (value instanceof OffsetTime) type = Types.TIME_WITH_TIMEZONE;
+        else if (value instanceof OffsetDateTime) type = Types.TIMESTAMP_WITH_TIMEZONE;
+        switch (type) {
+        case Types.TINYINT: case Types.SMALLINT: return "SMALLINT"; case Types.INTEGER: return "INTEGER"; case Types.BIGINT: return "BIGINT";
+        case Types.NUMERIC: case Types.DECIMAL: return "DECIMAL(38," + (value instanceof BigDecimal ? Math.max(0, Math.min(38, ((BigDecimal) value).scale())) : 0) + ")";
+        case Types.FLOAT: case Types.DOUBLE: return "DOUBLE PRECISION"; case Types.REAL: return "REAL";
+        case Types.BIT: case Types.BOOLEAN: return "BOOLEAN";
+        case Types.CHAR: case Types.NCHAR: case Types.VARCHAR: case Types.NVARCHAR: case Types.LONGVARCHAR: case Types.LONGNVARCHAR: return "VARCHAR";
+        case Types.BINARY: case Types.VARBINARY: case Types.LONGVARBINARY: return "VARBINARY";
+        case Types.TIME_WITH_TIMEZONE: return "TIME(6) WITH TIME ZONE";
+        case Types.TIMESTAMP_WITH_TIMEZONE: return "TIMESTAMP(6) WITH TIME ZONE";
+        case Types.DATE: return "DATE"; case Types.TIME: return "TIME(6)"; case Types.TIMESTAMP: return "TIMESTAMP(6)"; default: return null;
+        }
+    }
+    /** 분석에 성공한 힌트만 다음 반복 실행에 재사용한다. */
+    private Map<String, Object> description(List<Object> typeHints) throws SQLException {
+        Map<String, Object> description = connection.protocol.describe(prepared.longValue(), typeHints);
+        appliedHints = new ArrayList<Object>(typeHints); return description;
+    }
+    /** 검증된 서버 분석 응답을 JDBC 컬럼 설명으로 바꾼다. */
+    private static List<Values.Column> columns(Map<String, Object> description, String key) throws SQLException {
+        try {
+            List<Values.Column> columns = new ArrayList<Values.Column>();
+            for (Object value : Protocol.list(description.get(key))) columns.add(new Values.Column(Protocol.map(value)));
+            return columns;
+        } catch (IOException e) { throw new SQLException(e.getMessage(), "08006", 8006, e); }
+    }
+    /** 실행 전 파라미터 분석을 제공하며 문맥이 없는 타입만 UNKNOWN으로 보존한다. */
+    private ParameterMetaData parameterMetaData() throws SQLException {
+        final List<Values.Column> types = prepared == null ? null : columns(description(Arrays.asList(hints.clone())), "parameters");
         return new JdbcProxy() {
-            /**
-             * 파라미터 메타데이터 메서드 호출을 처리한다.
+            /** 바인딩 자리 메타데이터 호출을 처리한다.
              *
              * @param n 호출된 메서드 이름
              * @param a 호출 인자
-             * @param m 호출된 메서드 리플렉션 정보
-             * @return 메서드 반환 값
-             * @throws SQLException 잘못된 자리 번호나 미지원 항목 조회 시
-             */
+             * @param m 호출된 메서드 객체
+             * @return 호출 결과
+             * @throws SQLException 문장이 닫혔거나 인덱스가 잘못된 경우 */
             @Override Object call(String n, Object[] a, Method m) throws SQLException {
                 check(); if (n.equals("getParameterCount")) return params.length;
                 int index = (Integer) a[0]; if (index < 1 || index > params.length) throw new SQLException("Invalid parameter index.", "07009");
-                switch (n) {
-                case "getParameterType": return Types.OTHER; case "getParameterTypeName": return "UNKNOWN";
-                case "getParameterClassName": return Object.class.getName(); case "getParameterMode": return ParameterMetaData.parameterModeIn;
-                case "isNullable": return ParameterMetaData.parameterNullableUnknown; case "getPrecision": case "getScale": return 0; case "isSigned": return false;
-                default: throw unsupported(n);
-                }
+                Values.Column type = types == null ? new Values.Column("PARAM" + index, "UNKNOWN") : types.get(index - 1);
+                if (n.equals("getParameterType")) { return type.type; }
+        else if (n.equals("getParameterTypeName")) { return type.typeName; }
+        else if (n.equals("getParameterClassName")) { return "UNKNOWN".equals(type.typeName) ? Object.class.getName() : Values.javaType(type.type).getName(); }
+        else if (n.equals("getParameterMode")) { return ParameterMetaData.parameterModeIn; }
+        else if (n.equals("isNullable")) { return type.nullable; }
+        else if (n.equals("getPrecision")) { return type.precision; }
+        else if (n.equals("getScale")) { return type.scale; }
+        else if (n.equals("isSigned")) { return Arrays.asList(Types.SMALLINT, Types.INTEGER, Types.BIGINT, Types.NUMERIC, Types.DECIMAL, Types.REAL, Types.DOUBLE).contains(type.type); }
+        else {  throw unsupported(n); }
             }
         }.create(ParameterMetaData.class);
     }
@@ -295,7 +400,33 @@ final class JdbcStatement extends JdbcProxy {
      *
      * @throws SQLException 현재 결과를 닫는 중 오류가 났을 때
      */
-    void close() throws SQLException { if (closed) return; closed = true; try { closeResult(); } finally { batches.clear(); connection.statements.remove(this); } }
+    void close() throws SQLException {
+        if (closed) return;
+        closing = true;
+        Active running = active;
+        SQLException cancellation = null;
+        if (running != null && !running.request.isDone() && connection.protocol.supports("cancel")) {
+            try { connection.protocol.cancel(running.request); } catch (SQLException e) { cancellation = e; }
+        }
+        synchronized (this) {
+            if (!closed) {
+                closed = true;
+                try { closeResult(); }
+                finally { try { if (prepared != null && !connection.protocol.isClosed()) connection.protocol.closePrepared(prepared.longValue()); }
+                    finally { batches.clear(); connection.statements.remove(this); } }
+            }
+        }
+        if (cancellation != null) throw cancellation;
+    }
+    /** 늦은 취소와 타이머는 해당 실행 요청에만 적용한다. */
+    private static final class Active {
+        /** 원래 실행의 최종 응답과 취소 대상 ID를 공유하는 요청이다. */
+        final Protocol.Request request;
+        /** 이 요청의 질의 제한 시간이 지나 취소를 보냈는지 나타낸다. */
+        volatile boolean timedOut;
+        /** 실행 요청별로 새 상태를 만들어 늦은 타이머의 영향을 제한한다. */
+        Active(Protocol.Request request) { this.request = request; }
+    }
     /**
      * 배치 실행을 위해 쌓아 두는 문장 한 개이다.
      */
@@ -304,13 +435,16 @@ final class JdbcStatement extends JdbcProxy {
         final String sql;
         /** 바인딩된 파라미터 값 목록이다. */
         final List<Object> params;
+        /** 배치를 추가할 때의 타입 힌트이다. */
+        final List<Object> hints;
         /**
          * 배치 항목을 생성한다.
          *
          * @param sql 실행할 SQL 문장
          * @param params 바인딩된 파라미터 값 목록
+         * @param hints 배치를 추가할 때의 타입 힌트
          */
-        Batch(String sql, List<Object> params) { this.sql = sql; this.params = params; }
+        Batch(String sql, List<Object> params, List<Object> hints) { this.sql = sql; this.params = params; this.hints = hints; }
     }
     /**
      * SQL을 토큰 목록으로 나눈다.

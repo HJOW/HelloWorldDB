@@ -115,3 +115,4 @@ bun test --timeout 360000 dist/test/integration/overviewTxn.test.js   # bun 으�
 - Node.js 드라이버: 시험 러너와 실제 서버를 Node.js 22.23.3으로 실행해 기존 116개 통과.
 - Python 드라이버: Python 3.2와 3.13.1 각각 기존 124개 통과. 서버는 Node.js 22.23.3이다.
 - JDBC6의 준비·설명·힌트·CPU/잠금 취소·제한 시간·실행 중 close·구형 서버 호환 확장 85개가 Oracle 6u45·7u80, Java 8u504·21.0.12.1·25에서 통과했다. 공통 수신 경로의 정상 종료 응답 후 추가 read를 단위 시험으로 재현하여 제거했다. 최신 전체 회귀는 [jdbc6 진행 기록](../../jdbc6/PROGRESS.md)과 [jdbc8 진행 기록](../../jdbc8/PROGRESS.md)을 따른다.
+- JDBC8 후속 연동: 사용자 지정 Oracle JDK 8u202로 빌드한 같은 JAR의 Java 8·21 기존 130개·새 API 50개·독립 소비자 6개가 통과했다. 실행 전 분석·SQLType/java.time 힌트·정밀도·오프셋·배치·취소·시간 제한·구형 서버 호환과 뷰 권한 경계를 확인했다. 이 후속 작업에서는 서버·공유 프로토콜 소스를 바꾸지 않아 서버 전체 시험을 반복하지 않았다.

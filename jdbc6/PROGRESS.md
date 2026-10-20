@@ -7,6 +7,7 @@ HelloWorldDB용 JDBC 4.0 드라이버를 개발하는 프로젝트이다. 자바
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
+- **Java 8 기본 후보 갱신** : 사용자 추가 지정에 따라 `C:\Program Files\Java\jdk1.8.0_202`를 사용한다. HWDB_JAVA8_HOME을 생략해도 이 경로를 찾도록 바꾸고 Java 6·7·8u202·21·25의 빌드·API 행렬 15개가 통과했다. 아래 기존 전체 서버 시험의 Java 8u504 기록은 앞선 검증이다.
 - **서버 prepare/describe·cancel 연동 완료**: 실행 전 결과·파라미터 메타데이터, UNKNOWN·바인딩 힌트, 서버 준비 문장 수명, 요청별 취소·질의 제한 시간·실행 중 close를 구현했다. 단일 수신 경로·ID별 응답 분배·UDP 송신 큐와 정상 종료 후 추가 read 제거를 jdbc8 공통 프로토콜에 동기화했다. 서버 NULL 바인딩 결함도 수정했다.
 - **사용자 지정 JDK**: Java 6 빌드·시험은 `C:\Program Files\Java\jdk1.6.0_45`, Java 7 시험은 `C:\Program Files\Java\jdk1.7.0_80`을 사용했다. 실제 버전은 1.6.0_45·1.7.0_80이다. Java 8u504·21.0.12.1은 임시 Zulu 배포본, Java 25는 기본 설치 런타임으로 시험했다.
 - 진행 단계 : **14-1 ~ 14-5 완료**. 사용자 추가 작업 요청으로 서버 확장 연동과 최종 통합 검증까지 진행했다. 실제 JDK 6으로 빌드한 같은 JAR을 자바 6·7·8·21·25에서 검증했다.
@@ -58,11 +59,10 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 
 ### 같은 장비의 자바 8 환경
 
-- JDK 설치 경로 : `C:\Program Files\Java\jdk8u432-b06`
-- 실행 파일 : `C:\Program Files\Java\jdk8u432-b06\bin\java.exe`
-- 컴파일러 : `C:\Program Files\Java\jdk8u432-b06\bin\javac.exe`
-- 2026-10-20 확인 : Temurin OpenJDK `1.8.0_432-b06`(64비트), 컴파일러 `javac 1.8.0_432`이다.
-- `jdbc6`의 자바 8 실행 호환성 시험과 향후 `jdbc8` 개발에 사용한다. 시험 실행기에 `HWDB_JAVA8_HOME`으로 지정할 수 있으며 이 PC에서는 위 경로를 기본 후보로 찾는다. `jdbc6` 소스의 컴파일은 계속 JDK 6으로 한다.
+- 사용자 최신 지정: C:/Program Files/Java/jdk1.8.0_202.
+- java·javac의 실제 버전은 1.8.0_202이고 Oracle HotSpot 64비트이다.
+- jdbc6 실행기의 기본 후보와 jdbc8 빌드 기본값에 적용했다. HWDB_JAVA8_HOME으로 변경할 수 있다.
+- jdbc6 소스 컴파일은 계속 지정 JDK 6을 사용한다. 이번 8u202는 Java 6 JAR의 실행 호환성과 jdbc8 컴파일·실행을 검증했다.
 
 초기 시험용으로 내려받은 Azul 배포본은 더 이상 사용하지 않는다. 삭제 대상은 `H:\Workspace\git\HelloWorldDB\jdbc6\.tools\java7\zulu7.56.0.11-ca-jdk7.0.352-win_x64`이다. 해당 디렉토리의 삭제 명령이 자동 승인 검토에서 `blocked by policy`로 차단되어 사용자가 직접 삭제하기로 했다. ZIP 파일은 앞선 압축 해제 작업에서 이미 삭제했다.
 자바 21은 사용자 지정 `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot`을 기본 후보로 사용한다. `HWDB_JAVA21_HOME`으로 바꿀 수 있다. 같은 JAR의 TCP·TLS·UDP 서버 시험도 완료했다.
@@ -150,6 +150,8 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 - DECIMAL/DEC/NUMERIC의 선언 인자를 모두 생략하면 (10,3), VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이다. `jdbc8`과 같이 실제 컬럼 길이/정밀도/소수 자릿수는 서버 메타데이터를 따른다. [rdbms 타입 정책](../rdbms/docs/data-types.md)을 참고한다.
 
 ## 작업 이력
+
+- 2026-10-20 : jdbc8 추가 작업에서 사용자 지정 Java 8u202를 기본 실행 후보로 반영하고 README·환경 기록을 갱신했다. Java 8 환경 변수 없이 실제 지정 경로를 찾는 빌드 행렬 15개가 모두 통과했다. JDBC6 Java 소스·공통 프로토콜은 바꾸지 않았으며 전체 네트워크 회귀는 이 경로 변경만으로 반복하지 않았다.
 
 - 2026-10-20 : 사용자 지정 Oracle JDK 6u45·7u80을 사용해 서버 준비·설명·실행·해제와 JDBC4.0 메타데이터·취소·질의 제한 시간·실행 중 close를 구현했다. 새 확장 85개·기존 255개·빌드 행렬 15개·독립 배포 소비자 15개가 Java 6·7·8·21·25에서 통과했다. 정상 bye 뒤 추가 read를 재현·제거했고, 서버 선언 타입 NULL 결함을 찾아 고쳤다. 14-5의 명시된 완료 기준을 충족했다. 공유 프로토콜·README·각 진행 문서를 갱신했으며 커밋·푸시는 하지 않았다.
 

@@ -61,12 +61,16 @@ final class JdbcConnection extends JdbcProxy {
      */
     Map<String, Object> execute(String sql, List<Object> params, int fetch) throws SQLException {
         check(); Map<String, Object> result = protocol.execute(sql, params, fetch);
+        executed(sql);
+        return result;
+    }
+    /** 일반 실행과 준비 문장 실행에 같은 트랜잭션 경계 기록을 적용한다. */
+    void executed(String sql) throws SQLException {
         List<String> tokens = JdbcStatement.tokens(sql);
         if (!tokens.isEmpty() && Arrays.asList("COMMIT", "ROLLBACK", "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE").contains(tokens.get(0))) {
             if (!(tokens.get(0).equals("ROLLBACK") && tokens.size() > 1 && tokens.get(1).equals("TO"))) points.clear();
         }
         if (tokens.size() >= 2 && tokens.get(0).equals("SET") && tokens.get(1).equals("AUTOCOMMIT")) points.clear();
-        return result;
     }
     /**
      * 결과가 필요 없는 관리 문장을 실행한다.

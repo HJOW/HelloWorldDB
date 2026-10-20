@@ -241,6 +241,8 @@ final class Values {
         final int precision;
         /** 소수 자릿수이다. */
         final int scale;
+        /** 서버 분석의 NULL 허용 여부를 그대로 보존한다. */
+        final int nullable;
         /**
          * 서버 응답 맵에서 컬럼 정보를 읽는다.
          *
@@ -250,6 +252,7 @@ final class Values {
             name = String.valueOf(m.get("name")); declared = String.valueOf(m.get("declared")); typeName = String.valueOf(m.get("typeName")); type = sqlType(typeName);
             precision = number(m, "length", number(m, "precision", defaultPrecision(type, number(m, "fractionalPrecision", 0))));
             scale = number(m, "scale", number(m, "fractionalPrecision", 0));
+            nullable = "YES".equals(m.get("nullable")) ? ResultSetMetaData.columnNullable : "NO".equals(m.get("nullable")) ? ResultSetMetaData.columnNoNulls : ResultSetMetaData.columnNullableUnknown;
         }
         /**
          * 이름과 선언 문자열에서 컬럼 정보를 만든다.

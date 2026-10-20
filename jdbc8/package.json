@@ -9,6 +9,8 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/test.mjs",
     "test:matrix": "node scripts/test.mjs",
+    "test:extensions": "node scripts/extensions.mjs",
+    "test:consumer": "node scripts/consumer.mjs",
     "sync:protocol": "node scripts/sync-protocol.mjs"
   }
 }

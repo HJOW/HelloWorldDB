@@ -24,6 +24,7 @@ public final class DriverTest {
     static Properties credentials() { Properties p = new Properties(); p.setProperty("user", "SYSTEM"); p.setProperty("password", "HelloWorldDB"); return p; }
     public static void main(String[] args) throws Exception {
         if (args[0].equals("unit")) unit(args[1]);
+        else if (args[0].equals("extensions") || args[0].equals("legacy")) passed += PrepareCancelTest.run(args[1], args[2], args.length > 3 ? args[3] : "", args[0].equals("legacy"));
         else if (args[0].equals("tls-reject")) tlsReject(args[1], args[2]);
         else integration(args[1], args[2], args.length > 3 ? args[3] : "");
         System.out.println("PASSED " + passed);
@@ -99,7 +100,9 @@ public final class DriverTest {
             test("DDL·PreparedStatement·JDBC 4.2 SQLType·파라미터 메타데이터", () -> {
                 try (Statement s = c.createStatement()) { equal(0, s.executeUpdate("CREATE TABLE Q (ID INTEGER PRIMARY KEY, V VARCHAR, N DECIMAL, TS TIMESTAMP(6))")); }
                 try (PreparedStatement p = c.prepareStatement("INSERT INTO Q VALUES (?, ?, ?, ?)")) {
-                    equal(4, p.getParameterMetaData().getParameterCount()); equal(Types.OTHER, p.getParameterMetaData().getParameterType(1));
+                    equal(4, p.getParameterMetaData().getParameterCount()); equal(Types.INTEGER, p.getParameterMetaData().getParameterType(1));
+                    equal(Types.DECIMAL, p.getParameterMetaData().getParameterType(3)); equal(10, p.getParameterMetaData().getPrecision(3)); equal(3, p.getParameterMetaData().getScale(3));
+                    equal(Types.TIMESTAMP, p.getParameterMetaData().getParameterType(4)); equal(6, p.getParameterMetaData().getScale(4)); equal(null, p.getMetaData());
                     state("07001", p::executeUpdate); state("07009", () -> p.setInt(5, 1));
                     p.setObject(1, 1, JDBCType.INTEGER); p.setNString(2, "안녕😀"); p.setBigDecimal(3, new BigDecimal("1.2345")); p.setObject(4, LocalDateTime.of(2026, 10, 20, 12, 34, 56, 123456000)); equal(1, p.executeUpdate());
                     p.clearParameters(); state("07001", p::executeUpdate);
@@ -193,6 +196,10 @@ public final class DriverTest {
                     try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "%")) { ok(r.next()); equal("ID", r.getString("COLUMN_NAME")); equal(DatabaseMetaData.columnNullableUnknown, r.getInt("NULLABLE")); equal("", r.getString("IS_NULLABLE")); ok(r.next()); equal("V", r.getString("COLUMN_NAME")); ok(!r.next()); }
                     try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "V")) { ok(r.next()); equal("V", r.getString("COLUMN_NAME")); equal(2, r.getInt("ORDINAL_POSITION")); ok(!r.next()); }
                     try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "MISSING")) { ok(!r.next()); }
+                    try (PreparedStatement p = other.prepareStatement("SELECT * FROM " + space + ".VW")) {
+                        equal(2, p.getMetaData().getColumnCount()); equal("ID", p.getMetaData().getColumnName(1));
+                    }
+                    state("42501", () -> other.prepareStatement("SELECT * FROM " + space + ".Q"));
                 }
                 try (Statement s = c.createStatement()) { s.execute("DROP USER " + user); }
             });

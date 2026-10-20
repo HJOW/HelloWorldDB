@@ -205,11 +205,15 @@ final class JdbcResultSet extends JdbcProxy {
     void close() throws SQLException { if (closed) return; closed = true; try { releaseCursor(); } finally { rows = Collections.emptyList(); if (statement != null) statement.resultClosed(this); } }
     /**
      * 이 결과 집합의 컬럼 메타데이터를 생성한다.
-     * <p>서버가 주지 않는 스키마·테이블 이름은 빈 문자열로, 널 허용은 알 수 없음으로 보고한다.</p>
+     * <p>서버의 타입·NULL 허용 여부를 보존하며 서버가 주지 않는 기반 객체 이름은 추정하지 않는다.</p>
      *
      * @return 결과 집합 메타데이터 프록시
      */
     ResultSetMetaData metadata() {
+        return metadata(columns);
+    }
+    /** 실행 전 분석과 실제 결과에 같은 컬럼 메타데이터를 제공한다. */
+    static ResultSetMetaData metadata(final List<Values.Column> columns) {
         return new JdbcProxy() {
             /**
              * 결과 집합 메타데이터 메서드 호출을 처리한다.
@@ -222,14 +226,16 @@ final class JdbcResultSet extends JdbcProxy {
              */
             @Override Object call(String n, Object[] a, Method m) throws SQLException {
                 if (n.equals("getColumnCount")) return columns.size();
-                Values.Column c = columns.get(index(a[0]));
+                int index = (Integer) a[0] - 1;
+                if (index < 0 || index >= columns.size()) throw new SQLException("Invalid column index.", "07009");
+                Values.Column c = columns.get(index);
                 switch (n) {
                 case "getColumnLabel": case "getColumnName": return c.name;
                 case "getColumnType": return c.type; case "getColumnTypeName": return c.typeName;
-                case "getColumnClassName": return Values.javaType(c.type).getName();
+                case "getColumnClassName": return "UNKNOWN".equals(c.typeName) ? Object.class.getName() : Values.javaType(c.type).getName();
                 case "getPrecision": return c.precision; case "getScale": return c.scale;
                 case "getColumnDisplaySize": return c.precision + (c.scale > 0 ? 2 : 1);
-                case "isNullable": return ResultSetMetaData.columnNullableUnknown;
+                case "isNullable": return c.nullable;
                 case "isAutoIncrement": case "isCurrency": case "isWritable": case "isDefinitelyWritable": return false;
                 case "isReadOnly": case "isSearchable": return true;
                 case "isCaseSensitive": return c.type == Types.CHAR || c.type == Types.VARCHAR;

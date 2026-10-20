@@ -17,7 +17,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
   완료 기준을 채웠다 : 데몬을 띄우면 바로 돌아오고 부모와 콘솔이 끝나도 남으며, 설치 직후 SYSTEM 으로 로그인해 초기 암호를 바꿀 수 있고, TCP·UDP 를 껐거나 `maxConnections` 가 차도 로컬 접속이 된다(Windows 에서 확인).
   명령의 동작은 [docs/cli.md](docs/cli.md), 9단계(통신)의 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)이다.
 - 착수 조건 : 없음
-- 다음 작업 : jdbc6의 prepare/describe·cancel 공개 API를 연동했다. 나머지 드라이버의 공개 API와 ODBC 통합은 각 프로젝트의 후속 작업이다. 서버의 [PREPARE.md](PREPARE.md) PD-1 ~ PD-5를 완료했으며 PD-6의 ODBC 시험은 별도로 남긴다. 리눅스·macOS와 범용 DB툴 검증, 복합 질의의 외부 정렬은 아래 미결 사항의 범위로 유지한다.
+- 다음 작업 : jdbc6·jdbc8의 prepare/describe·cancel 공개 API를 연동했다. Node.js·Python의 새 공개 API와 ODBC 통합은 각 프로젝트의 후속 작업이다. 서버의 [PREPARE.md](PREPARE.md) PD-1 ~ PD-5를 완료했으며 PD-6의 ODBC 시험은 별도로 남긴다. 리눅스·macOS와 범용 DB툴 검증, 복합 질의의 외부 정렬은 아래 미결 사항의 범위로 유지한다.
 - 10단계에서 서버·프로토콜에 더한 것(2026-10-16) : `bye` 응답의 `rolledBack`(세션을 닫으며 커밋하지 않은 변경을 롤백했는지. `Session.hasUncommittedChanges`, `Connection.close()` 가 `{ rolledBack }` 을 돌려줌),
   정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(`daemon/main.ts`. 클라이언트가 소켓을 읽지 않아 Windows 네임드 파이프가 닫히지 않을 때 데몬이 영원히 남아 `hwdb stop` 이 끝나지 않던 것을 고쳤다), 강제 종료로 남은 잠금 생성 가드 정리(`lockFile.ts`).
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
@@ -772,6 +772,8 @@ SQL 접속 (상세 14-2)
 - 포트 번호는 인스턴스의 식별자이지만 데이터와는 무관하다. 데이터 디렉토리나 데이터 파일의 이름, 내용에 포트 번호를 넣지 않는다 (상세 15).
 
 ## 작업 이력
+
+- 2026-10-20 : JDBC8 후속 연동의 결과를 반영했다. 지정 JDK 8u202의 Java 8·21 기존 130개·새 API 50개·독립 소비자 6개가 Node.js 22 서버에서 통과했다. 서버·공유 프로토콜 소스와 저장 포맷은 변경하지 않았다. JDBC6·JDBC8 연동은 완료했으며 PD-6 ODBC와 Node.js·Python의 새 API는 후속이다.
 
 - 2026-10-20 : 사용자 재개 요청에 따라 prepare/describe·cancel·조회 파일 커서·뷰 컬럼·인덱스 이름 생략의 남은 검토·수정·검증을 완료했다. IN·BETWEEN·CASE·서브쿼리 분석과 선언 타입 NULL, 결과 파일 생성 실패·부분 쓰기를 보완했다. Node.js 22 전체 949개 중 948개 통과·SIGTERM 1개 건너뜀, Bun 주요 167개와 최종 핵심 42개 통과. Node.js 116개·Python 3.2/3.13.1 각 124개·jdbc6 기존 255개/확장 85개/행렬 15개/독립 소비자 15개·jdbc8 기존 130개도 통과했다. PREPARE의 서버·호환 회귀를 완료하고 ODBC 한 항목을 남겼다. 규약·매뉴얼·각 진행 문서와 HANDOFF를 갱신했으며 커밋·푸시는 하지 않았다.
 
