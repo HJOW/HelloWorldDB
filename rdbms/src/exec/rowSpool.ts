@@ -7,21 +7,35 @@ import type { DataType } from "../types/dataType.js";
 import type { SqlValue } from "../types/value.js";
 
 export class RowSpool {
-  readonly directory = fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-result-"));
-  private readonly file = path.join(this.directory, "rows.bin");
-  private fd = fs.openSync(this.file, "wx+", 0o600);
+  readonly directory: string;
+  private readonly file: string;
+  private fd: number;
   private types: readonly DataType[] = [];
   private count = 0;
   private position = 0;
   private nextIndex = 0;
   private cached: { index: number; row: SqlValue[] } | undefined;
-  constructor(private readonly onClose: () => void) {}
+  constructor(private readonly onClose: () => void) {
+    this.directory = fs.mkdtempSync(path.join(os.tmpdir(), "hwdb-result-"));
+    this.file = path.join(this.directory, "rows.bin");
+    try { this.fd = fs.openSync(this.file, "wx+", 0o600); }
+    catch (error) { fs.rmdirSync(this.directory); throw error; }
+  }
+
+  private write(bytes: Buffer): void {
+    let offset = 0;
+    while (offset < bytes.length) {
+      const amount = fs.writeSync(this.fd, bytes, offset, bytes.length - offset);
+      if (amount <= 0) throw new Error("Unable to write result spool.");
+      offset += amount;
+    }
+  }
 
   append(row: readonly SqlValue[], types: readonly DataType[]): void {
     if (this.count === 0) this.types = types;
     const bytes = encodeRow(row, this.types);
     const header = Buffer.allocUnsafe(4); header.writeUInt32BE(bytes.length);
-    fs.writeSync(this.fd, header); fs.writeSync(this.fd, bytes);
+    this.write(header); this.write(bytes);
     this.count++;
   }
 

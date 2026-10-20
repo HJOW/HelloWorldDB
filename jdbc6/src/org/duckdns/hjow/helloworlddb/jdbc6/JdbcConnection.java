@@ -50,12 +50,16 @@ final class JdbcConnection extends JdbcProxy {
      * @throws SQLException 연결이 닫혔거나 실행에 실패한 경우 */
     Map<String, Object> execute(String sql, List<Object> params, int fetch) throws SQLException {
         check(); Map<String, Object> result = protocol.execute(sql, params, fetch);
+        executed(sql);
+        return result;
+    }
+    /** 준비 문장 경로에서도 트랜잭션 제어 뒤 저장점 수명을 같은 규칙으로 갱신한다. */
+    void executed(String sql) throws SQLException {
         List<String> tokens = JdbcStatement.tokens(sql);
         if (!tokens.isEmpty() && Arrays.asList("COMMIT", "ROLLBACK", "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE").contains(tokens.get(0))) {
             if (!(tokens.get(0).equals("ROLLBACK") && tokens.size() > 1 && tokens.get(1).equals("TO"))) points.clear();
         }
         if (tokens.size() >= 2 && tokens.get(0).equals("SET") && tokens.get(1).equals("AUTOCOMMIT")) points.clear();
-        return result;
     }
     /** 바인딩 값 없이 SQL 명령 한 개를 실행하고 결과를 버린다.
      *
@@ -79,8 +83,8 @@ final class JdbcConnection extends JdbcProxy {
      *
      * <p>닫기, 유효성 검사, 문장 만들기, 자동 커밋·격리 수준·저장점 같은
      * 트랜잭션 제어, 스키마(현재 테이블스페이스) 변경, 메타데이터 조회를 처리한다.
-     * 서버가 준비 문장을 저장하지 않으므로 {@code prepareStatement}는 SQL을 담은
-     * 클라이언트 쪽 문장을 만든다.</p>
+     * {@code prepareStatement}는 기능 협상에 따라 서버 준비 문장을 만들거나
+     * 기존 SQL 실행을 유지한다.</p>
      *
      * @param n 호출된 메서드 이름
      * @param a 호출 인자

@@ -429,7 +429,7 @@ export function* evaluateExpressionSteps(expression: Expression, ctx: EvalContex
       const param = paramTyped(raw);
       const declared = ctx.boundParameterTypes?.[expression.index - 1];
       if (declared !== undefined && declared !== null) {
-        const value = typeof raw === "string" ? castLiteral(raw, declared, ctx.typeCtx)
+        const value = raw === null ? null : typeof raw === "string" ? castLiteral(raw, declared, ctx.typeCtx)
           : assignValue(raw, param.type ?? NULL_LITERAL_TYPE, declared, ctx.typeCtx);
         return { value, type: declared };
       }
@@ -818,10 +818,15 @@ function* evaluateBetweenSteps(expression: {
   negated: boolean;
   position: SourcePosition;
 }, ctx: EvalContext): Work<TypedValue> {
+  if (ctx.typeOnly) {
+    for (const right of [expression.low, expression.high]) {
+      yield* evaluateBinaryTypeOnlySteps({ operator: ">=", left: expression.operand, right, position: expression.position }, ctx);
+    }
+    return { value: null, type: BOOLEAN_TYPE };
+  }
   const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
   const low = (yield* evaluateExpressionSteps(expression.low, ctx));
   const high = (yield* evaluateExpressionSteps(expression.high, ctx));
-  if (ctx.typeOnly) return { value: null, type: BOOLEAN_TYPE };
   // NULL이 섞이면 UNKNOWN이다.
   if (operand.value === null || low.value === null || high.value === null) {
     return { value: null, type: BOOLEAN_TYPE };
@@ -876,6 +881,15 @@ function* evaluateInListSteps(expression: {
   negated: boolean;
   position: SourcePosition;
 }, ctx: EvalContext): Work<TypedValue> {
+  if (ctx.typeOnly) {
+    // 타입 범위의 값은 모두 NULL이므로 값의 단축 평가를 적용하지 않는다.
+    yield* evaluateExpressionSteps(expression.operand, ctx);
+    for (const right of expression.items) {
+      yield;
+      yield* evaluateBinaryTypeOnlySteps({ operator: "=", left: expression.operand, right, position: expression.position }, ctx);
+    }
+    return { value: null, type: BOOLEAN_TYPE };
+  }
   const operand = (yield* evaluateExpressionSteps(expression.operand, ctx));
   // NULL은 어떤 목록과 비교해도 UNKNOWN이다.
   if (operand.value === null) return { value: null, type: BOOLEAN_TYPE };
@@ -917,11 +931,13 @@ function* evaluateInListSteps(expression: {
 }
 
 function* evaluateInSubquerySteps(operand: Expression, query: Query, negated: boolean, ctx: EvalContext, position: SourcePosition): Work<TypedValue> {
-  const left = (yield* evaluateExpressionSteps(operand, ctx));
+  let left = (yield* evaluateExpressionSteps(operand, ctx));
   const { values, type } = (yield* valueWork(ctx.subqueries.columnValues(query)));
+  if (ctx.typeOnly) left = yield* evaluateExpressionSteps(operand, ctx, type);
   const leftText = untypedText(left);
   const common = leftText !== null ? type : commonType(left.type, type);
   if (common === null) throw at(position, typeMismatch("IN got incompatible types."));
+  if (ctx.typeOnly) return { value: null, type: BOOLEAN_TYPE };
   const target = leftText !== null
     ? at(position, () => castLiteral(leftText, type, ctx.typeCtx))
     : left.value === null
@@ -949,11 +965,13 @@ function* evaluateQuantifiedSteps(expression: {
   query: Query;
   position: SourcePosition;
 }, ctx: EvalContext): Work<TypedValue> {
-  const left = (yield* evaluateExpressionSteps(expression.operand, ctx));
+  let left = (yield* evaluateExpressionSteps(expression.operand, ctx));
   const { values, type } = (yield* valueWork(ctx.subqueries.columnValues(expression.query)));
+  if (ctx.typeOnly) left = yield* evaluateExpressionSteps(expression.operand, ctx, type);
   const leftText = untypedText(left);
   const common = leftText !== null ? type : commonType(left.type, type);
   if (common === null) throw at(expression.position, typeMismatch("Quantified comparison got incompatible types."));
+  if (ctx.typeOnly) return { value: null, type: BOOLEAN_TYPE };
   const target = leftText !== null
     ? at(expression.position, () => castLiteral(leftText, type, ctx.typeCtx))
     : left.value === null
@@ -1023,7 +1041,16 @@ function* evaluateCaseSteps(expression: {
   if (common === null) common = expectedType ?? varcharType(1);
   if (ctx.typeOnly) {
     if (expression.operand !== null) yield* evaluateExpressionSteps(expression.operand, ctx);
-    for (const branch of expression.branches) { yield; yield* evaluateExpressionSteps(branch.when, ctx); }
+    for (const branch of expression.branches) {
+      yield;
+      if (expression.operand !== null) {
+        yield* evaluateBinaryTypeOnlySteps({ operator: "=", left: expression.operand, right: branch.when, position: expression.position }, ctx);
+      } else {
+        yield* evaluateExpressionSteps(branch.when, ctx, BOOLEAN_TYPE);
+      }
+      yield* evaluateExpressionSteps(branch.then, ctx, common);
+    }
+    if (expression.otherwise !== null) yield* evaluateExpressionSteps(expression.otherwise, ctx, common);
     return { value: null, type: common };
   }
   const finalCommon = common;

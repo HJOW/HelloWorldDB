@@ -21,7 +21,7 @@ public final class TcpTransport implements Transport {
     /** 길이·본문을 쓰는 출력 스트림이다. */
     private final DataOutputStream out;
     /** 수신·송신 한 메시지당 최대 바이트 수이다. */
-    private int limit = 65536;
+    private volatile int limit = 65536;
     /**
      * 연결된 소켓으로 전송 객체를 만든다.
      *

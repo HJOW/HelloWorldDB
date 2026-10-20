@@ -8,12 +8,12 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
-- 서버 후속 구현 인수인계 : rdbms 변경 중간 스냅샷의 Python 3.2·3.12.4 회귀가 각각 124개 통과했다(`.codex-compat.log`). 이후 마지막 서버 오류 수정 뒤의 재검증은 다음 작업이다. 사용자 지시에 따라 추가 테스트를 시작하지 않고 종료했으며 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)에 재개 순서를 적었다. 기존 PY-4 ~ PY-6과 새 요청 API 연동 체크리스트는 계속 미완료이다.
+- 서버 후속 구현 회귀 완료(2026-10-20): 최종 rdbms를 Node.js 22.23.3으로 실행하고 현재 장비의 Python **3.2·3.13.1 각각 124개 전부 통과·실패/건너뜀 0**이다. 실행 파일은 `C:\Program Files\Python\302\python.exe`, `C:\Program Files\Python\313\python.exe`이며 3.12는 이번 장비에 없어 이번에는 실행하지 않았다. 기존 PY-4 ~ PY-6과 새 요청 API 연동 체크리스트는 별도 후속 작업으로 유지한다. 서버 검증은 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)를 따른다.
 - 진행 단계 : **PY-3 완료** (DB-API 2.0 계층). `types.py`(값 변환·타입 객체·생성자), `cursor.py`(`Cursor`), `connection.py`(`Connection`, `connect()`), 모듈 수준(`apilevel`, `threadsafety`, `paramstyle`, 예외·생성자·타입 객체)을 구현했다. TLS와 UDP는 `NotSupportedError` 이며 PY-4·PY-5에서 둔다.
-- 이 PC (`DESKTOP-HJOW`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\P312\python.exe`이다. 2026-10-20 실제 실행으로 재확인했다. 이전 기록의 `C:\Python\python.exe`(3.13.1)는 현재 없어 이번에 시험하지 않았다.
-- 이 PC (`VM-W11-Codex`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\312\python.exe`이다. 2026-10-20 실제 실행으로 확인했다 (OpenSSL 1.0.0a, `unicodedata` 6.0.0. `DESKTOP-HJOW` 의 3.2와 같다).
+- 이전 `DESKTOP-HJOW` 검증 환경 : 하한 **3.2**는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\P312\python.exe`이다. 2026-10-20 실제 실행으로 재확인했다. 이전 기록의 `C:\Python\python.exe`(3.13.1)는 현재 없어 이번에 시험하지 않았다.
+- 이전 `VM-W11-Codex` 검증 환경 : 하한 **3.2**는 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\312\python.exe`이다. 2026-10-20 실제 실행으로 확인했다 (OpenSSL 1.0.0a, `unicodedata` 6.0.0. `DESKTOP-HJOW` 의 3.2와 같다).
 - 착수 조건 : `rdbms` 11단계와 `nodejsDriver` 12단계 완료로 충족. 사용자의 작업 진행 지시에 따라 기존 설계 기본안의 배포 이름과 import 이름을 적용하고 AGENTS.md D절에 계획을 반영했다.
-- 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 124개 통과**, 실패·건너뜀 0. 기존 77개에 PY-3 신규 47개(`test_types` 23개, `test_dbapi` 24개. 모듈 규약·접속 검증·Hello World·자동 커밋·트랜잭션·fetch·description·타입 왕복·스레드 공유)를 더했다.
+- 최초 PY-3 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 124개 통과**, 실패·건너뜀 0. 기존 77개에 PY-3 신규 47개(`test_types` 23개, `test_dbapi` 24개. 모듈 규약·접속 검증·Hello World·자동 커밋·트랜잭션·fetch·description·타입 왕복·스레드 공유)를 더했다.
 - 배포 구성 : Python 3.12.4에서 소스 배포본과 `py3-none-any` 휠을 생성했다. 휠의 `Requires-Python: >=3.2`와 실행 의존 없음도 확인하고, 깨끗한 임시 가상 환경에 `pip --no-index --no-deps`로 설치해 소스 트리 밖 import와 PBKDF2 실행을 검증했다. 빌드 도구는 setuptools를 사용한다.
 - 다음 작업 : **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
 - 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)를 선행 조건으로 하며, 기존 PY-4 ~ PY-6과 별도로 아래 미완료 작업을 추적한다.
@@ -287,6 +287,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - `gui` 는 보류 중이며 `nodejsDriver` 를 쓴다. 이 드라이버를 쓰는 프로젝트는 아직 없다.
 
 ## 작업 이력
+
+- 2026-10-20: rdbms 후속 구현 검증의 일부로 Node.js 22.23.3 서버에 대해 Python 3.2·3.13.1 기존 전체 회귀 각각 124개를 실행해 모두 통과했다. 이번 장비에는 3.12가 없으며 PY-4 이후와 새 요청 API는 별도 후속 작업이다. 드라이버 소스는 바꾸지 않았다.
 
 - 2026-10-20 : rdbms 후속 구현의 중간 스냅샷으로 Python 3.2·3.12.4 회귀 각각 124개를 통과했다. 마지막 서버 오류 수정 뒤의 재시험은 사용자 지시에 따라 다음 작업으로 남겼다. 드라이버 소스 변경은 없으며 상세는 rdbms/HANDOFF.md에 있다.
 

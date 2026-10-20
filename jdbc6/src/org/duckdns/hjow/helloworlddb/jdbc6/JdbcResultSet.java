@@ -179,6 +179,10 @@ final class JdbcResultSet extends JdbcProxy {
      *
      * @return 컬럼 개수, 타입, 정밀도, 표시 길이를 담은 메타데이터 프록시 */
     ResultSetMetaData metadata() {
+        return metadata(columns);
+    }
+    /** 실행 전 분석에도 실제 결과와 같은 컬럼 메타데이터 구현을 사용한다. */
+    static ResultSetMetaData metadata(final List<Values.Column> columns) {
         return new JdbcProxy() {
             /** 컬럼 메타데이터 조회 호출을 처리한다.
              *
@@ -189,15 +193,17 @@ final class JdbcResultSet extends JdbcProxy {
              * @throws SQLException 컬럼 위치가 잘못되었거나 지원하지 않는 호출인 경우 */
             @Override Object call(String n, Object[] a, Method m) throws SQLException {
                 if (n.equals("getColumnCount")) return columns.size();
-                Values.Column c = columns.get(index(a[0]));
+                int index = ((Integer) a[0]).intValue() - 1;
+                if (index < 0 || index >= columns.size()) throw new SQLException("Invalid column index.", "07009");
+                Values.Column c = columns.get(index);
                 if (n.equals("getColumnLabel") || n.equals("getColumnName")) { return c.name; }
         else if (n.equals("getColumnType")) { return c.type; }
         else if (n.equals("getColumnTypeName")) { return c.typeName; }
-        else if (n.equals("getColumnClassName")) { return Values.javaType(c.type).getName(); }
+        else if (n.equals("getColumnClassName")) { return "UNKNOWN".equals(c.typeName) ? Object.class.getName() : Values.javaType(c.type).getName(); }
         else if (n.equals("getPrecision")) { return c.precision; }
         else if (n.equals("getScale")) { return c.scale; }
         else if (n.equals("getColumnDisplaySize")) { return c.precision + (c.scale > 0 ? 2 : 1); }
-        else if (n.equals("isNullable")) { return ResultSetMetaData.columnNullableUnknown; }
+        else if (n.equals("isNullable")) { return c.nullable; }
         else if (n.equals("isAutoIncrement") || n.equals("isCurrency") || n.equals("isWritable") || n.equals("isDefinitelyWritable")) { return false; }
         else if (n.equals("isReadOnly") || n.equals("isSearchable")) { return true; }
         else if (n.equals("isCaseSensitive")) { return c.type == Types.CHAR || c.type == Types.VARCHAR; }

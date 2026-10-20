@@ -55,6 +55,28 @@ test("미정 파라미터·CAST·컬럼 문맥·타입 힌트와 잘못된 문�
   assert.throws(() => session.prepare("SELECT CASE WHEN TRUE THEN 1 WHEN BAD = 1 THEN 2 END FROM T"), state("42703"));
 });
 
+test("IN·BETWEEN·CASE 분석은 모든 피연산자를 검사하고 컬럼 타입을 전달한다", t => {
+  const { db, session } = setupApp(t); t.after(() => db.close());
+  session.execute("CREATE TABLE T (N INTEGER, V DECIMAL(12,2))");
+  for (const sql of [
+    "SELECT N FROM T WHERE N IN (BAD)",
+    "SELECT N FROM T WHERE NULL IN (BAD)",
+    "SELECT N FROM T WHERE N IN (1, (SELECT BAD FROM T))",
+  ]) assert.throws(() => session.prepare(sql), state("42703"));
+  for (const sql of [
+    "SELECT N FROM T WHERE N IN (?, ?)",
+    "SELECT N FROM T WHERE N BETWEEN ? AND ?",
+    "SELECT CASE N WHEN ? THEN V WHEN ? THEN V END FROM T",
+  ]) assert.deepEqual(session.prepare(sql).parameters.map(type => type?.name), ["INTEGER", "INTEGER"]);
+  for (const sql of [
+    "SELECT ? IN (SELECT N FROM T)",
+    "SELECT ? = ANY (SELECT N FROM T)",
+    "SELECT ? >= ALL (SELECT N FROM T)",
+  ]) assert.equal(session.prepare(sql).parameters[0]?.name, "INTEGER");
+  assert.equal(session.prepare("SELECT 1 IN (1 / 0)").columns[0]?.type.name, "BOOLEAN");
+  assert.equal(session.inTransaction, false);
+});
+
 test("준비 문장 반복 실행·한도·해제·세션 경계·무효화", async t => {
   const { db, session } = setupApp(t); t.after(() => db.close());
   session.execute("CREATE TABLE T (N INTEGER)");
@@ -71,6 +93,23 @@ test("준비 문장 반복 실행·한도·해제·세션 경계·무효화", as
   for (let i = 0; i < 63; i++) session.prepare("SELECT 1");
   assert.throws(() => session.prepare("SELECT 1"), state("53400"));
   session.close(); assert.throws(() => session.describe(prepared.statement), state("08003"));
+});
+
+test("타입이 정해진 준비 문장도 NULL을 모든 타입의 NULL로 바인딩한다", async t => {
+  const { db, session } = setupApp(t); t.after(() => db.close());
+  session.execute("CREATE TABLE T (N INTEGER, V DECIMAL(38,9), TS TIMESTAMP(6), B VARBINARY, FLAG BOOLEAN)");
+  const insert = session.prepare("INSERT INTO T VALUES (?, ?, ?, ?, ?)");
+  await session.executePreparedAsync(insert.statement, [null, null, null, null, null]);
+  const stored = session.execute("SELECT * FROM T");
+  assert.equal(stored.kind, "select");
+  if (stored.kind === "select") assert.deepEqual(stored.rows, [[null, null, null, null, null]]);
+  const select = session.prepare("SELECT CAST(? AS DECIMAL(12,0)), CAST(? AS DATE)");
+  const selected = await session.executePreparedAsync(select.statement, [null, null]);
+  assert.equal(selected.kind, "select");
+  if (selected.kind === "select") assert.deepEqual(selected.rows, [[null, null]]);
+  session.execute("CREATE TABLE REQUIRED (N INTEGER NOT NULL)");
+  const required = session.prepare("INSERT INTO REQUIRED VALUES (?)");
+  await assert.rejects(session.executePreparedAsync(required.statement, [null]), state("23502"));
 });
 
 test("USE 왕복·같은 이름 재생성도 준비 문장을 무효화하고 잘못된 타입 힌트는 거절한다", t => {

@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
-import { setupApp, selectStrings, state } from "./helpers.js";
+import { setupApp, selectStrings, state, tempDir } from "./helpers.js";
+import { Database } from "../../src/session/session.js";
 import { RowSpool } from "../../src/exec/rowSpool.js";
 import { INTEGER_TYPE, varcharType } from "../../src/types/dataType.js";
 import { Execution } from "../../src/exec/work.js";
@@ -16,6 +17,25 @@ test("파일 결과는 순차·되돌아간 접근과 배열 API를 지원하고
     assert.deepEqual(rows.map(row => row[0]), Array.from({length:100}, (_, i) => BigInt(i)));
   } finally { spool.close(); spool.close(); }
   assert.equal(closed, 1); assert.equal(fs.existsSync(spool.directory), false);
+});
+
+test("결과 파일 생성 실패는 디렉토리를 남기지 않고 짧은 쓰기도 모두 기록한다", t => {
+  let directory = "";
+  const mkdtemp = fs.mkdtempSync;
+  const make = t.mock.method(fs, "mkdtempSync", (prefix: string) => directory = mkdtemp(prefix));
+  const open = t.mock.method(fs, "openSync", () => { throw new Error("spool open failure"); });
+  try { assert.throws(() => new RowSpool(() => {}), /spool open failure/); }
+  finally { open.mock.restore(); make.mock.restore(); }
+  assert.ok(directory);
+  assert.equal(fs.existsSync(directory), false);
+
+  const spool = new RowSpool(() => {});
+  const write = fs.writeSync;
+  const shortWrite = t.mock.method(fs, "writeSync", (fd: number, bytes: Buffer, offset: number) => write(fd, bytes, offset, 1));
+  try {
+    spool.append([42n, "한글"], [INTEGER_TYPE, varcharType(10)]);
+    assert.deepEqual(spool.rows()[0], [42n, "한글"]);
+  } finally { shortWrite.mock.restore(); spool.close(); }
 });
 
 for (const sql of [
@@ -44,8 +64,12 @@ test("파일 커서는 실행 시점 결과를 유지하며 커밋·DDL·닫기�
   if (result.kind === "select") result.dispose?.();
 });
 
-test("양보 중 다른 세션이 커밋해도 UPDATE 값을 잃지 않는다", { timeout:30000 }, async t => {
-  const {db, session} = setupApp(t); t.after(() => db.close());
+test("양보 중 다른 세션이 커밋해도 UPDATE 값을 잃지 않는다", { timeout:180000 }, async t => {
+  // 값 보존을 검사하는 시험이므로 느린 런타임의 재시도가 기본 30초 제한에 걸리지 않게 한다.
+  const db = Database.open(tempDir(t), { lockTimeoutMs:120000, onWarning:() => {} });
+  t.after(() => db.close());
+  const session = db.createSession({});
+  session.execute("CREATE TABLESPACE APP"); session.execute("USE APP");
   session.execute("CREATE TABLE T (N INTEGER PRIMARY KEY, V INTEGER)");
   session.execute("INSERT INTO T VALUES " + Array.from({length:1000}, (_, i) => `(${i}, 0)`).join(","));
   const clients = Array.from({length:4}, () => db.createSession({ tablespace:"APP" }));

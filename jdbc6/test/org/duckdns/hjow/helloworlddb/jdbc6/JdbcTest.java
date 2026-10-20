@@ -24,6 +24,7 @@ public final class JdbcTest {
     }
     public static void main(String[] args) throws Exception {
         if (args[0].equals("unit")) unit();
+        else if (args[0].equals("extensions") || args[0].equals("legacy")) passed += PrepareCancelTest.run(args[1], args[2], args.length > 3 ? args[3] : "", args[0].equals("legacy"));
         else if (args[0].equals("tls-reject")) reject(args[1], args[2]);
         else integration(args[1], args[2], args.length > 3 ? args[3] : "");
         System.out.println("PASSED " + passed);
@@ -55,6 +56,30 @@ public final class JdbcTest {
         }, 100);
         try { protocol.ping(); throw new AssertionError(); } catch (SQLException e) { eq("57P01", e.getSQLState()); eq(Integer.valueOf(6003), Integer.valueOf(e.getErrorCode())); }
         ok(closed[0]); pass("서버 발신 오류 보존·연결 종료");
+        // bye 뒤 다시 read하면 TLS 종료와 경합한다. close가 수신 스레드에 실행 기회를 주어 재현한다.
+        final java.util.concurrent.BlockingQueue<byte[]> responses = new java.util.concurrent.LinkedBlockingQueue<byte[]>();
+        final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.CountDownLatch extraRead = new java.util.concurrent.CountDownLatch(1), finished = new java.util.concurrent.CountDownLatch(1);
+        Protocol closing = new Protocol(new Transport() {
+            public void send(byte[] bytes) throws IOException {
+                Map<String, Object> request = Protocol.map(Json.decode(bytes));
+                responses.add(Json.encode(Json.object("id", request.get("id"), "type", "bye")));
+            }
+            public byte[] receive(int timeout) throws IOException {
+                try {
+                    if (reads.incrementAndGet() == 1) return responses.take();
+                    extraRead.countDown(); finished.await(); throw new EOFException("Connection closed.");
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException(e); }
+            }
+            public void setLimit(int limit) { }
+            public void close() {
+                try { extraRead.await(200, java.util.concurrent.TimeUnit.MILLISECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                finally { finished.countDown(); }
+            }
+        }, 1000);
+        closing.close(); eq(Integer.valueOf(1), Integer.valueOf(reads.get()));
+        pass("정상 종료 응답 뒤 추가 수신 없이 소켓 정리");
     }
     private static void reject(String url, String ca) throws Exception {
         try { DriverManager.getConnection(url, options("tls", "")); throw new AssertionError(); } catch (SQLException e) { eq("08001", e.getSQLState()); eq(Integer.valueOf(8007), Integer.valueOf(e.getErrorCode())); } pass("기본 TLS 신뢰 검증 실패");
@@ -151,7 +176,12 @@ public final class JdbcTest {
                 r = query.executeQuery("SELECT * FROM " + space + ".VW"); try { ok(r.next()); } finally { r.close(); }
             } finally { query.close(); }
             ResultSet r = other.getMetaData().getTables(null, space, "%", null); try { ok(r.next()); eq("VW", r.getString("TABLE_NAME")); ok(!r.next()); } finally { r.close(); }
-            r = other.getMetaData().getColumns(null, space, "VW", "%"); try { ok(r.next()); eq("ID", r.getString("COLUMN_NAME")); ok(r.next()); eq("V", r.getString("COLUMN_NAME")); ok(!r.next()); } finally { r.close(); }
+            r = other.getMetaData().getColumns(null, space, "VW", "%"); try { ok(r.next()); eq("ID", r.getString("COLUMN_NAME")); eq(Integer.valueOf(DatabaseMetaData.columnNullableUnknown), Integer.valueOf(r.getInt("NULLABLE"))); eq("", r.getString("IS_NULLABLE")); ok(r.next()); eq("V", r.getString("COLUMN_NAME")); ok(!r.next()); } finally { r.close(); }
+            r = other.getMetaData().getColumns(null, space, "VW", "V"); try { ok(r.next()); eq("V", r.getString("COLUMN_NAME")); eq(Integer.valueOf(2), Integer.valueOf(r.getInt("ORDINAL_POSITION"))); ok(!r.next()); } finally { r.close(); }
+            r = other.getMetaData().getColumns(null, space, "VW", "MISSING"); try { ok(!r.next()); } finally { r.close(); }
+            PreparedStatement prepared = other.prepareStatement("SELECT * FROM " + space + ".VW");
+            try { eq(Integer.valueOf(2), Integer.valueOf(prepared.getMetaData().getColumnCount())); eq("ID", prepared.getMetaData().getColumnName(1)); } finally { prepared.close(); }
+            try { other.prepareStatement("SELECT * FROM " + space + ".Q"); throw new AssertionError(); } catch (SQLException e) { eq("42501", e.getSQLState()); }
         } finally { other.close(); }
         s = c.createStatement(); try { s.execute("DROP USER " + user); } finally { s.close(); }
     }

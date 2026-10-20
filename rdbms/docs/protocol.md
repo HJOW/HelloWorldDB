@@ -23,7 +23,7 @@ JDBC 클라이언트는 `jdbc6`(자바 6~7용 JDBC 4.0, 자바 8 이상 실행 �
 - 메시지는 UTF-8 JSON 객체 하나이다. 최대 크기는 16 MiB(16,777,216바이트)이다. 올바르지 않은 UTF-8 은 위반이다.
 - 인스턴스는 포트 번호 하나로 식별한다. TCP 와 UDP 가 같은 번호를 쓰고, 로컬 전용 채널의 주소도 그 번호로 정해진다. 접속 정보에 SID 나 데이터베이스 이름은 없다.
 - 요청 하나에 응답 하나가 짝지어지며 `id` 로 연결한다. 서버가 먼저 보내는 메시지는 `id: 0` 이다.
-- 한 접속의 요청은 도착 순서대로 하나씩 처리한다. 클라이언트가 응답을 기다리지 않고 요청을 이어 보내도(파이프라이닝) 응답은 요청 순서대로 온다.
+- 한 접속의 일반 요청은 도착 순서대로 하나씩 처리한다. `cancel`과 `close`는 대기열을 우회한다. 따라서 실행 중인 요청보다 `cancelAck`가 먼저 올 수 있으며, 클라이언트는 수신 경로 하나에서 `id`별 응답을 전달한다.
 
 ## 2. 전송 계층
 
@@ -90,7 +90,7 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 
 #### 송신자 (방향마다 하나)
 
-- **한 번에 메시지 하나만** 전송 중으로 둔다. 다음 메시지는 대기열에서 기다린다. (요청과 응답이 한 번에 하나씩이라 처리량 손실이 없고 수신 쪽 순서 보장이 단순하다)
+- **한 번에 메시지 하나만** 전송 중으로 둔다. 다음 메시지는 전송 대기열에서 기다린다. 실행 응답을 기다리는 동안에도 반대 방향으로 `cancel`을 전송할 수 있다.
 - 한 메시지 안에서 동시에 미확인으로 둘 수 있는 조각은 최대 **32개**이다. 조각마다 ACK 가 오면 창이 움직인다.
 - 재전송 : 조각마다 보낸 시각을 기록하고 RTO 안에 ACK 가 없으면 그 조각을 다시 보낸다. RTO 는 RFC 6298 방식이다. 재전송하지 않은 조각의 왕복 시간만 표본으로 쓰고(Karn), 초기값 300 ms, 하한 50 ms, 상한 3 s, 같은 조각을 재전송할 때마다 2배(상한까지)이다.
   한 조각이 **10번 재전송**되고도 ACK 가 없으면 상대가 사라진 것으로 보고 접속을 실패시킨다(클라이언트는 `08006`). 서버는 처음 보내는 응답(`helloOk`)이 한 번도 확인되지 않은 동안은 한도를 **4번**으로 낮춘다(위조된 출발지 주소의 `SYN` 으로 응답이 계속 나가는 증폭을 줄이기 위함).
@@ -137,6 +137,7 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 
 - 이 문서의 프로토콜은 **버전 1** 이다.
 - 클라이언트는 `hello.versions` 에 지원하는 버전을 싣는다. 서버는 공통 버전 중 가장 큰 것을 `helloOk.version` 으로 돌려준다. 공통 버전이 없으면 `0A000`(내부 번호 1)로 알리고 접속을 닫는다.
+- 선택 기능은 `helloOk.capabilities`로 알린다. 현재 `prepareDescribe`, `cancel`을 제공한다. 필드가 없으면 빈 목록이며, 클라이언트는 광고하지 않은 기능의 요청을 보내지 않는다. 호환 조합과 메시지는 17절을 따른다.
 
 ## 4. 접속 상태
 
@@ -154,13 +155,13 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 | `NEW` | `hello` |
 | `GREETED` | `authStart`, `control`(로컬 전용 채널만), `close` |
 | `CHALLENGED` | `authFinish`, `close` |
-| `READY` | `execute`, `fetch`, `closeCursor`, `ping`, `close` |
+| `READY` | `execute`, `fetch`, `closeCursor`, `prepare`, `describe`, `executePrepared`, `closePrepared`, `cancel`, `ping`, `close` |
 
 - 상태에 맞지 않는 메시지는 `08P01` 오류를 보내고 접속을 끊는다. (`control` 은 예외로 13절)
 - `NEW` 가 시작되면 **인증 시간 제한 10초**가 돌고 `READY` 가 되면 풀린다. 넘으면 **오류 없이** 접속을 닫는다.
 - 인증이 실패하면 오류를 보내고 **접속을 끊는다.** 같은 접속으로 다시 시도할 수 없다.
 - 인증 전 접속 수는 TCP, UDP 합쳐 동시에 `max(16, 2 × maxConnections)` 개까지이다. 넘는 새 접속은 응답 없이 바로 닫는다. 로컬 전용 채널은 이 제한을 받지 않는다.
-- 한 접속에서 처리를 기다릴 수 있는 요청은 64개이다. 넘으면 `53400`(`id: 0`)으로 접속을 끊는다. `close` 는 대기열을 건너뛰어 바로 처리한다.
+- 한 접속에서 처리를 기다릴 수 있는 일반 요청은 64개이다. 넘으면 `53400`(`id: 0`)으로 접속을 끊는다. `close`와 READY 상태의 `cancel`은 대기열을 건너뛰어 바로 처리한다.
 
 ## 5. 요청 메시지
 
@@ -170,6 +171,11 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 | `authStart` | `mechanism: "SCRAM-SHA-256"`, `clientFirst: string`, `tablespace?: string`, `timeZone?: string` | SCRAM client-first-message. `tablespace` 는 접속 직후의 현재 테이블스페이스(CLI 의 `-t`), `timeZone` 은 세션 타임존 |
 | `authFinish` | `clientFinal: string` | SCRAM client-final-message |
 | `execute` | `sql: string`, `params?: Param[]`, `fetchSize?: number` | 문장 **하나** 실행. `params` 는 최대 65,535개 |
+| `prepare` | `sql: string`, `parameterTypes?: (string \| null)[]` | 실행 없이 준비·분석. `prepareDescribe` 기능 필요 |
+| `describe` | `statement: number`, `parameterTypes?: (string \| null)[]` | 준비 문장의 메타데이터. `prepareDescribe` 기능 필요 |
+| `executePrepared` | `statement: number`, `params?: Param[]`, `fetchSize?: number` | 준비 문장 실행. `prepareDescribe` 기능 필요 |
+| `closePrepared` | `statement: number` | 준비 문장 해제. `prepareDescribe` 기능 필요 |
+| `cancel` | `targetId: number` | 같은 연결의 실행 요청 취소. `cancel` 기능 필요. 17절 |
 | `fetch` | `cursor: number`, `fetchSize?: number` | 커서의 다음 행 묶음 |
 | `closeCursor` | `cursor: number` | 커서 닫기 |
 | `ping` | (없음) | 세션 유지 확인. 유휴 시간을 되돌리지 않는다 |
@@ -182,11 +188,14 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 
 | `type` | 필드 | 응답하는 요청 |
 |---|---|---|
-| `helloOk` | `version`, `server: string`, `mechanism: "SCRAM-SHA-256"`, `maxMessageBytes`, `defaultFetchSize`, `udp?: { sessionTimeoutMs, maxPacketSize }` | `hello`. `udp` 는 UDP 접속에만 있다 |
+| `helloOk` | `version`, `server: string`, `mechanism: "SCRAM-SHA-256"`, `maxMessageBytes`, `defaultFetchSize`, `capabilities?: string[]`, `udp?: { sessionTimeoutMs, maxPacketSize }` | `hello`. `udp` 는 UDP 접속에만 있다 |
 | `authChallenge` | `serverFirst: string` | `authStart` |
 | `authOk` | `serverFinal: string`, `session: SessionInfo` | `authFinish` |
-| `rows` | `columns?: ColumnMeta[]`, `rows: Value[][]`, `cursor?: number`, `hasMore: boolean` | `execute`, `fetch` (조회 결과) |
-| `ok` | `message: string`, `rowCount?: number` | `execute` (조회가 아닌 문장) |
+| `rows` | `columns?: ColumnMeta[]`, `rows: Value[][]`, `cursor?: number`, `hasMore: boolean` | `execute`, `executePrepared`, `fetch` (조회 결과) |
+| `ok` | `message: string`, `rowCount?: number` | `execute`, `executePrepared` (조회가 아닌 문장) |
+| `prepared`, `description` | `statement`, `parameterCount`, `parameters`, `columns`, `resultKind` | `prepare`, `describe`. 상세는 17절 |
+| `preparedClosed` | (없음) | `closePrepared` |
+| `cancelAck` | `targetId`, `status: "accepted" \| "notRunning" \| "tooLate"` | `cancel`. 원래 요청의 최종 응답과 별개 |
 | `cursorClosed` | (없음) | `closeCursor` |
 | `pong` | (없음) | `ping` |
 | `bye` | `rolledBack?: true` | `close`. 세션을 닫으면서 커밋하지 않은 변경을 롤백했을 때만 `rolledBack` 이 있다. 클라이언트(`hwdb`)가 종료 때 이를 알린다 |
@@ -195,7 +204,7 @@ UDP 는 유실, 중복, 순서 뒤바뀜이 있고 패킷 크기에 제한이 �
 | `error` | 11절 | 어느 요청에든 |
 
 - `SessionInfo` : `{ id: number, user: string, tablespace: string | null, timeZone: string, autocommit: boolean }`. **현재 테이블스페이스가 없는 사용자의 `tablespace` 는 `null`** 이다. 드라이버와 DB툴은 이를 처리해야 한다.
-- `rows` 의 `columns` 는 `execute` 의 응답에만 있고 `fetch` 의 응답에는 없다. `cursor` 는 남은 행이 있을 때(`hasMore: true`)만 있다.
+- `rows`의 `columns`는 `execute`·`executePrepared`의 응답에만 있고 `fetch`의 응답에는 없다. `cursor`는 남은 행이 있을 때(`hasMore: true`)만 있다.
 - DML 의 `ok` 에는 영향받은 행 수 `rowCount` 가 있다.
 
 ## 7. 인증 (SCRAM-SHA-256)
@@ -281,16 +290,16 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 
 ## 10. 결과 전달과 커서
 
-실행기는 결과 행을 모두 만들어 돌려준다. 서버는 그 행을 메모리에 쥔 채 **조금씩 나누어 보낸다.**
+네트워크 조회는 실행 시점의 결과를 임시 파일에 보관한 뒤 **조금씩 나누어 보낸다.** 단순 스캔·필터·투영·행 제한과 CROSS JOIN은 지연 순회한다. 정렬·집계·DISTINCT·집합 연산 등 복합 경로는 중간 결과를 메모리에 구체화한 뒤 파일에 보관할 수 있다.
 
 - 조회 결과가 한 묶음에 다 들어가면 `rows`(`hasMore: false`)로 끝난다. 아니면 첫 묶음과 함께 `cursor` 번호(접속 안에서 1부터 늘어나는 정수)와 `hasMore: true` 를 보낸다.
 - `fetch` 는 다음 묶음을 보낸다. 마지막 묶음이면 `hasMore: false` 이고 `cursor` 가 없으며 서버가 커서를 지운다. 그 뒤의 `fetch` 는 `34000`(내부 번호 8004)이다.
 - `closeCursor` 는 남은 행을 버린다. 이미 없는 커서를 닫는 것은 오류가 아니다.
-- 커서는 접속이 끝나면 모두 버린다. **커밋과 롤백은 커서를 무효로 만들지 않는다.** 결과는 문장이 실행된 시점의 행을 복사해 둔 것이다("홀더블"). 새 `execute` 도 열려 있는 커서를 닫지 않는다.
+- 마지막 fetch·커서 닫기·접속 종료 때 결과 파일과 핸들을 정리한다. 실패·취소·재시도 때의 임시 결과도 버린다. **커밋과 롤백은 커서를 무효로 만들지 않는다.** 결과는 문장이 실행된 시점의 행을 복사해 둔 것이다("홀더블"). 새 실행과 준비 문장 해제도 열려 있는 커서를 닫지 않는다.
 - 접속 하나가 동시에 열어 둘 수 있는 커서는 **16개**이다. 넘으면 그 `execute` 를 `53400` 으로 거부한다.
 - 묶음 크기 : 행 수는 `fetchSize`(없으면 `defaultFetchSize` 500, 상한 100,000), 바이트는 **1 MiB** 를 넘기기 직전에 멈춘다. 묶음에는 항상 행이 하나 이상 들어간다.
   행 하나만으로 한 메시지에 들어가지 않으면(16 MiB 에서 여유 4 KiB 와 컬럼 정보 크기를 뺀 값 초과) `54000`(내부 번호 8003)이다.
-- 한계 : 결과 전체가 서버 메모리에 한 번 올라온다.
+- 한계 : 모든 중간 연산의 메모리를 제한하는 외부 정렬은 제공하지 않는다. 클라이언트가 전체 결과를 모으는 API를 쓰면 클라이언트 메모리도 결과 크기에 비례한다.
 
 ## 11. 오류 응답
 
@@ -314,9 +323,12 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 | 8002 | `57P05` | 유휴 시간 초과로 서버가 세션을 끊음 |
 | 8003 | `54000` | 처리 한도 초과 (행 하나가 메시지에 안 들어감, UDP 조각 수 초과) |
 | 8004 | `34000` | 커서가 없음 |
-| 8005 | `53400` | 구성 한도 초과 (열린 커서 16개, 요청 대기열 64개) |
+| 8005 | `53400` | 구성 한도 초과 (열린 커서 16개, 준비 문장 64개·SQL 합계 16 MiB, 요청 대기열 64개) |
 | 8006 | `08006` | 연결 실패 — **클라이언트가 만드는 오류**. UDP 재전송 한도, 연결 끊김, 응답 시간 초과, 서버 확인 실패. 서버는 보내지 않는다 |
 | 8007 | `08001` | 접속을 맺지 못함 : TLS 서버 인증서 검증 실패 — **클라이언트가 만드는 오류**. 2-2 절의 재시도를 다 쓰고도 실패했을 때 |
+| 8008 | `26000` | 현재 세션에 준비 문장이 없음 |
+| 8009 | `0A000` | USE·객체 정의 변경으로 준비 문장 무효화. 다시 준비해야 함 |
+| 8010 | `57014` | 실행 문장 취소. 그 문장의 변경만 되돌림 |
 
 앞 단계의 번호를 다시 쓰는 것 : 인증 실패 `28000`(7000), CONNECT 거부 `28000`(7006), 권한 없음 `42501`(7001), 서버 종료 `57P01`(6003), 프로토콜 버전 불일치 `0A000`(1), 파라미터 개수 `07001`(5008), 잘못된 필드 값 `22023`.
 
@@ -331,6 +343,7 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 | 인증 전 접속 수 | 동시에 `max(16, 2 × maxConnections)` |
 | 기본 묶음 행 수 / 상한 / 바이트 소프트 한도 | 500 / 100,000 / 1 MiB |
 | 열린 커서 | 접속당 16 |
+| 준비 문장 / SQL UTF-8 합계 | 세션당 64개 / 16 MiB. 커서와 독립 |
 | 처리 대기 요청 | 접속당 64 |
 | `params` 개수 | 65,535 |
 | UDP 패킷 크기 | `udp.maxPacketSize` (기본 1200, 64 ~ 65,507). 헤더 20바이트 |
@@ -363,6 +376,8 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 | 서버 정상 종료 | 새 접속 받기를 멈추고 세션을 모두 닫은 뒤(롤백) 접속마다 `id: 0` 오류 `57P01` 을 보내고 닫기. 데이터 파일 반영 뒤 정상 종료 표시를 쓴다 |
 | 인증 시간 초과 | 오류 없이 접속 닫기 |
 
+세션이 끝나면 준비 문장 레지스트리·열린 커서·진행 중인 임시 결과도 정리한다. CPU 처리 중인 실행과 잠금 대기는 취소되며, 연결 종료와 달리 요청별 `cancel`은 연결과 앞선 수동 트랜잭션 변경을 유지한다.
+
 ## 15. 클라이언트 구현 체크리스트
 
 드라이버가 지켜야 하는 것이다. 참고 구현은 `rdbms/src/client/connection.ts`, `transports.ts`, `udpTransport.ts` 이다.
@@ -376,12 +391,13 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 7. BIGINT, NUMERIC, 날짜시간을 파라미터로 보낼 때는 문자열을 쓴다. 안전 정수를 넘는 정수는 반드시 문자열이다.
 8. 현재 테이블스페이스가 없는 세션(`tablespace: null`)을 처리한다.
 9. 서버 오류 메시지는 번역하지 않고 `sqlState`, `code` 로 판단한다. `position` 이 있으면 SQL 의 해당 위치를 보여 줄 수 있다.
+10. `helloOk.capabilities`에서 새 기능을 확인한다. 준비 문장 ID와 커서 ID를 구분하고, 취소는 별도 요청 ID로 보내 원래 실행의 최종 응답도 기다린다. 자동 DML 재실행은 하지 않는다.
 
 ## 16. 알려진 한계와 런타임 차이
 
 - UDP 는 암호화하지 않는다. 비밀번호는 SCRAM 이라 평문으로 가지 않지만 이후의 문장과 결과는 평문이다. UDP 의 상대 주소는 위조될 수 있으며, 운영체제는 보통 외부 인터페이스에서 들어온 루프백 출발지 패킷을 버리지만 보장되지 않는다.
 - 유실이 아주 심한 망(지속적으로 30% 이상)에서는 재전송 한도(10번)를 넘어 접속이 끊길 수 있다. 정확성에는 영향이 없다(잘못된 데이터를 전달하지 않고 실패한다).
-- 문장 실행은 한 스레드에서 동기로 도므로 오래 걸리는 문장 하나가 다른 접속의 응답과 ACK 처리를 늦춘다. UDP 의 RTO 가 헛되이 만료될 수 있으나 중복은 무시되므로 결과는 맞다.
+- 비동기 실행은 스캔·조인·정렬·DML 등에서 주기적으로 이벤트 루프에 제어를 돌려 다른 연결의 응답과 취소·UDP ACK를 처리한다. 저장 I/O·커밋·DDL 확정 단계는 동기이므로 그 구간에서는 응답이 늦어질 수 있다. 양보 중 다른 세션의 커밋·DDL이 발생하면 해당 문장만 되돌려 재시도하며, 제한 시간 안에 일관된 실행이 되지 않으면 `40001`이다.
 - **bun 으로 데몬을 구동할 때**(2026-10-16 bun 1.3.14 확인) : 네임드 파이프, TCP, UDP, SCRAM, 프레임, 커서는 Node.js 와 같게 동작한다. TLS 는 최소 버전을 `tcp.ssl.minVersion` 대로 적용하지 못한다.
   bun 의 TLS 서버는 BoringSSL 의 기본값(TLS 1.2 이상)을 쓴다. 그래서 기본 설정(`TLSv1.2`)은 그대로 지켜지지만 `TLSv1.3` 으로 올려도 1.2 클라이언트를 받고, `TLSv1`·`TLSv1.1`(구버전 허용)은 켤 수 없다. (구동 로그에 경고한다. 필요하면 Node.js 로 구동한다)
   bun 의 TLS 클라이언트는 `minVersion`, `maxVersion` 옵션을 적용하지 않는다.
@@ -402,10 +418,21 @@ RFC 5802(SCRAM), RFC 7677(SCRAM-SHA-256)을 따른다. 채널 바인딩은 쓰�
 
 모든 요청에는 별도의 양의 안전 정수 id가 필요하다. statement는 세션에 속한 양의 안전 정수이다. 다른 세션 ID·해제한 ID는 26000/8008이다. 준비 문장은 세션당 64개이며 커서 16개 제한과 독립이다. 해제는 이미 반환한 결과 커서를 닫지 않는다. USE 또는 서버 내 객체 정의 변경 후에는 0A000/8009로 다시 준비하게 한다. 설명·실행 때 권한을 재검사한다.
 
+무효화는 객체별 의존성보다 보수적인 서버 전체 정의 revision을 사용한다. 관계없는 객체의 DDL도 무효화할 수 있다. 준비 SQL의 UTF-8 크기 합계는 세션당 16 MiB이며, 한도 초과는 `53400`/8005이다. GRANT·REVOKE는 권한을 다시 검사하며 그 자체로 정의 revision을 올리지 않는다.
+
+| 클라이언트 | 서버 | 동작 |
+|---|---|---|
+| 기존 클라이언트 | 새 서버 | capabilities를 무시하고 기존 execute·fetch 사용 |
+| 새 클라이언트 | 기능 없는 v1 서버 | 기존 실행 유지. 새 기능 호출은 로컬에서 0A000 |
+| 새 클라이언트 | 새 서버 | 광고한 기능만 사용. 일반 요청 직렬 처리와 cancel 우선 처리 |
+
 parameterTypes는 파라미터 수와 같은 길이의 SQL 타입 선언 문자열/null 배열이다. null은 힌트 없음이다. parameters는 순서대로 `{index, ...컬럼 메타데이터}`이며 index는 1부터이다. columns는 결과 컬럼 메타데이터이다. 타입 미정은 `typeName: "UNKNOWN", declared: "UNKNOWN"`이며 길이·정밀도를 꾸며 넣지 않는다. nullable은 YES/NO/UNKNOWN이다. resultKind는 rows 또는 ok이다. prepare와 describe는 행·DEFAULT·현재 시각을 평가하지 않으며 트랜잭션·자동 커밋·현재 테이블스페이스·저장 파일에 영향을 주지 않는다.
+
+파라미터 개수와 타입 힌트 개수가 다르면 `07001`, 잘못된 타입 선언은 `22023`, 문맥과 호환되지 않는 타입 힌트는 `42804`이다. describe에 새 힌트를 주면 그 준비 문장에 저장하여 다음 설명·실행에 적용한다. 결과 컬럼의 nullable은 현재 보수적으로 UNKNOWN을 제공한다.
 
 ```json
 {"id":10,"type":"prepare","sql":"SELECT CAST(? AS DECIMAL(12,0)) AS N"}
+{"id":10,"type":"prepared","statement":123,"parameterCount":1,"parameters":[{"index":1,"name":"PARAM1","typeName":"DECIMAL","declared":"DECIMAL(12,0)","precision":12,"scale":0}],"columns":[{"name":"N","typeName":"DECIMAL","declared":"DECIMAL(12,0)","precision":12,"scale":0,"nullable":"UNKNOWN"}],"resultKind":"rows"}
 {"id":11,"type":"describe","statement":123,"parameterTypes":["DECIMAL(12,0)"]}
 {"id":12,"type":"executePrepared","statement":123,"params":["42"]}
 {"id":13,"type":"cancel","targetId":12}

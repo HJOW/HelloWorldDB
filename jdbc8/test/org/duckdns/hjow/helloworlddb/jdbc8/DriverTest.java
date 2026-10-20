@@ -190,7 +190,9 @@ public final class DriverTest {
                     try (ResultSet r = other.getMetaData().getTables(null, space, "%", null)) { ok(r.next()); equal("VW", r.getString("TABLE_NAME")); ok(!r.next()); }
                     try (Statement s = other.createStatement()) { state("42501", () -> s.executeQuery("SELECT * FROM " + space + ".Q")); try (ResultSet r = s.executeQuery("SELECT * FROM " + space + ".VW")) { ok(r.next()); } }
                     try (ResultSet r = other.getMetaData().getTablePrivileges(null, space, "VW")) { ok(r.next()); equal(user, r.getString("GRANTEE")); equal("SELECT", r.getString("PRIVILEGE")); }
-                    try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "%")) { ok(r.next()); equal("ID", r.getString("COLUMN_NAME")); ok(r.next()); equal("V", r.getString("COLUMN_NAME")); ok(!r.next()); }
+                    try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "%")) { ok(r.next()); equal("ID", r.getString("COLUMN_NAME")); equal(DatabaseMetaData.columnNullableUnknown, r.getInt("NULLABLE")); equal("", r.getString("IS_NULLABLE")); ok(r.next()); equal("V", r.getString("COLUMN_NAME")); ok(!r.next()); }
+                    try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "V")) { ok(r.next()); equal("V", r.getString("COLUMN_NAME")); equal(2, r.getInt("ORDINAL_POSITION")); ok(!r.next()); }
+                    try (ResultSet r = other.getMetaData().getColumns(null, space, "VW", "MISSING")) { ok(!r.next()); }
                 }
                 try (Statement s = c.createStatement()) { s.execute("DROP USER " + user); }
             });

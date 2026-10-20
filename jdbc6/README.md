@@ -3,7 +3,7 @@
 자바 6~7용 드라이버이며 같은 JAR을 자바 8 이상에서도 사용할 수 있도록 개발한다.
 패키지는 `org.duckdns.hjow.helloworlddb.jdbc6`이다.
 
-현재는 **14-1 ~ 14-4**를 구현했다. TCP·TLS·UDP 통신, SCRAM 인증, JDBC 4.0 인터페이스·자동 등록과 타입 변환을 제공한다. 같은 Java 6 JAR을 Java 6·7·8·21에서 검증했다.
+**14-1 ~ 14-5**와 서버 prepare/describe·cancel 연동을 완료했다. TCP·TLS·UDP 통신, SCRAM 인증, JDBC 4.0·자동 등록·타입 변환과 실행 전 메타데이터·요청별 취소·질의 제한 시간을 제공한다. 같은 Java 6 JAR을 Java 6·7·8·21·25에서 검증했다.
 자세한 진행 상황과 다음 작업은 [PROGRESS.md](PROGRESS.md)에 기록한다.
 
 ## 빌드
@@ -19,6 +19,8 @@ npm.cmd run build
 npm.cmd test
 npm.cmd run test:matrix
 npm.cmd run test:integration
+npm.cmd run test:extensions
+npm.cmd run test:consumer
 ```
 
 자바 6 문법·바이트코드뿐 아니라 **API도 실제 JDK 6으로 제한**한다. 최신 JDK의 `-source`, `-target`만 지정하는 방식은 사용하지 않는다.
@@ -51,7 +53,7 @@ HWDB_JAVA6_HOME=/opt/jdk6 HWDB_JAVA7_HOME=/opt/jdk7 HWDB_JAVA8_HOME=/opt/jdk8 np
 ```
 
 시험은 기본값 PATH의 컴파일러를 사용하지 않는다. 자바 7 전용 클래스, 자바 8 전용 메서드, JDBC 4.1 전용 메서드와 자바 7 문법이 실제로 컴파일에 실패하는지도 확인한다.
-`npm run test:integration`은 같은 JAR과 Java 6으로 컴파일한 시험 클래스의 main을 Java 6·7·8·21에서 실행한다. 이 명령은 네 런타임 모두 필요하며, 서버를 매번 다시 빌드하고 임시 설치·데이터 디렉토리와 빈 포트로 띄운 뒤 정상 종료·정리한다. `../rdbms/node_modules`가 준비되어 있어야 한다. Node.js `24.19.0` 서버에서 단위·실제 서버 시험 200개와 기존 빌드 시험 14개가 통과했다.
+`npm run test:integration`은 같은 JAR과 Java 6으로 컴파일한 시험 클래스의 main을 Java 6·7·8·21과 추가로 발견한 런타임에서 실행한다. 앞의 네 런타임은 모두 필요하다. 서버를 매번 다시 빌드하고 임시 설치·데이터 디렉토리와 빈 포트로 띄운 뒤 정상 종료·정리한다. `../rdbms/node_modules`가 준비되어 있어야 한다. 최신 Node.js 22.23.3 서버와 Java 6·7·8·21·25에서 단위·실제 서버 시험 255개와 빌드 시험 15개가 통과했다.
 
 `VM-W11-Codex`의 자바 7은 설치된 `C:\Program Files\Java\jdk1.7.0_80`을 사용한다.
 `java -version`과 `javac -version`에서 모두 `1.7.0_80`을 확인했다. 빌드·시험 명령은 JDK를 내려받지 않는다.
@@ -91,8 +93,29 @@ WITH TIME ZONE 타입은 JDBC 4.0에 맞게 Types.TIME·Types.TIMESTAMP로 보�
 
 동적 프록시로 JDBC 인터페이스를 제공하므로 상위 런타임에서 추가된 메서드도 클래스 로딩 오류나 AbstractMethodError 없이 처리한다. `getSchema`, `setSchema`, `closeOnCompletion`, large count 등 가능한 호환 메서드는 구현하고 JDBC 4.2 SQLType과 지원하지 않는 기능은 0A000이다.
 
-서버에 describe 요청이 없어 실행 전 PreparedStatement.getMetaData()는 null이다. ParameterMetaData는 개수·IN 모드와 UNKNOWN 타입을 제공한다. 결과의 기반 테이블·NULL 허용 여부를 추정하지 않는다. 뷰 컬럼은 SELECT 권한이 있을 때 WHERE 1 = 0의 메타데이터로 보완한다. 응답 시간 초과는 SQLTimeoutException(`08006`/8006)이며 연결을 닫는다. LOB·배열·CallableStatement·생성 키·갱신/스크롤 ResultSet·cancel은 미지원이다.
+서버가 `prepareDescribe`를 광고하면 PreparedStatement를 서버에 준비하고, `getMetaData()`·`getParameterMetaData()`는 실행 전에 결과 컬럼·파라미터 타입을 제공한다. DML·DDL을 분석해도 실행하거나 진행 중인 트랜잭션을 자동 커밋하지 않는다. 미정 타입은 `Types.OTHER`·`UNKNOWN`, 미정 길이·정밀도는 0으로 보존한다. 알려진 컬럼 문맥을 우선하고 미정 자리는 바인딩 타입 힌트로 보완한다. NULL 허용 여부·기반 테이블을 임의로 추정하지 않는다. 뷰 컬럼은 서버 SYS_COLUMNS를 먼저 읽고 빠진 객체만 기존 조회로 보완한다.
+
+```java
+PreparedStatement statement = connection.prepareStatement(
+    "SELECT CAST(? AS DECIMAL(12,0)) AS N");
+try {
+    ResultSetMetaData columns = statement.getMetaData(); // 실행 없이 정밀도 12
+    statement.setBigDecimal(1, new java.math.BigDecimal("12345678901"));
+    statement.setQueryTimeout(3);
+    ResultSet rows = statement.executeQuery();
+    try { while (rows.next()) System.out.println(rows.getBigDecimal(1)); }
+    finally { rows.close(); }
+} finally { statement.close(); }
+```
+
+`Statement.cancel()`은 같은 문장을 실행하는 동안 다른 스레드에서 호출할 수 있다. 단일 수신 경로가 실행 응답과 취소 응답을 요청 ID로 구분한다. 사용자 취소는 `57014`이며 앞선 수동 트랜잭션 변경과 연결은 유지한다. `setQueryTimeout()`은 서버 취소를 요청하고 실제 취소 오류가 오면 `SQLTimeoutException`(`57014`/8010)이다. 확정 단계의 늦은 취소는 정상 완료와 경합할 수 있다. 통신 응답 시간 초과는 별도로 `SQLTimeoutException`(`08006`/8006)을 내고 연결을 닫는다. 결과를 모르는 DML은 자동 재실행하지 않는다.
+
+준비 문장은 세션당 64개·SQL 합계 16 MiB이며 문장·연결 종료로 해제한다. 실행 중 문장을 닫으면 먼저 취소를 요청하고 정리한다. USE·객체 DDL 뒤 서버가 `0A000`/8009를 반환하면 새 PreparedStatement를 만든다. 열려 있는 결과 커서와 준비 문장 ID는 서로 다르다. 서버가 선택 기능을 광고하지 않으면 기존 실행을 유지하고 실행 전 결과 메타데이터는 null·파라미터 타입은 UNKNOWN이다. 그 서버의 cancel·질의 제한 시간은 명시적인 `SQLFeatureNotSupportedException`(`0A000`)이다.
+
+동작 기준은 Java 6의 [PreparedStatement](https://docs.oracle.com/javase/6/docs/api/java/sql/PreparedStatement.html)와 [Statement](https://docs.oracle.com/javase/6/docs/api/java/sql/Statement.html), 메시지 규약은 [서버 프로토콜 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)이다. LOB·배열·CallableStatement·생성 키·갱신/스크롤 ResultSet은 계속 미지원이다.
 
 프로토콜 원본은 이 프로젝트의 `src/.../protocol`이며 jdbc8의 `npm run sync:protocol`로 패키지 선언만 바꾸어 공유한다. JDBC 계층은 Java 6·8 API 기준에 맞게 각각 유지한다. 시험 서버 도우미는 `../jdbc8/scripts/test-support.mjs`를 공유한다.
 
-후속 14-5의 독립 배포 소비자와 최종 검증, 다른 OS 시험은 남아 있다. 이번 시험은 14-4까지의 구현 검증이며 세부 결과는 [PROGRESS.md](PROGRESS.md)에 기록했다.
+`npm run test:extensions`는 준비·설명·반복 실행·해제·타입 힌트·CPU/잠금 대기 취소·질의 제한 시간·실행 중 close·기능 없는 서버 fallback을 TCP·TLS·UDP·유실/중복 UDP에서 검증한다. `HWDB_JDBC_TEST_MAJORS=6`처럼 지정하면 집중 시험을 할 수 있으며 최종 회귀에는 모든 지원 런타임을 사용한다. `test:consumer`는 저장소 시험 클래스 없이 JAR만 복사한 별도 앱을 JDK 6으로 컴파일해 TCP·UDP·TLS로 실행한다.
+
+2026-10-20 Windows / Node.js 22.23.3에서 사용자 지정 Oracle JDK 6u45·7u80과 Java 8u504·21.0.12.1·25를 사용했다. 같은 배포 JAR의 기존 서버 시험 255개, 확장 85개, 빌드 행렬 15개, 독립 소비자 15개가 모두 통과했다. 다른 OS와 장시간 원격 부하는 추가 검증 범위이다.

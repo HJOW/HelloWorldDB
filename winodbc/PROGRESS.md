@@ -9,7 +9,7 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 - 최종 갱신: 2026-10-20.
 - 진행 단계: **개발 계획 작성 완료, 구현 미착수**. 이 문서의 `[ ]`는 앞으로 해야 할 일이다. 코드·DLL·설치 프로그램·ODBC 적합성 시험은 아직 없다.
 - 이번 작업: 개발 순서, 구현할 API, 상태·메모리 규칙, 시험과 완료 기준을 정리했다. 문서 작성이 드라이버 구현 착수를 뜻하지는 않는다.
-- 다음 작업: 구현 지시가 오면 **WO-0**부터 시작한다. 서버에 없는 prepare/describe·cancel은 [rdbms/PREPARE.md](../rdbms/PREPARE.md)의 PD-1 ~ PD-6과 연계한다.
+- 다음 작업: 구현 지시가 오면 **WO-0**부터 시작한다. 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀를 완료했고, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 연결·진단 매핑·적합성 시험은 이 프로젝트에서 구현한다.
 - 기존 프로토콜로 TCP 시제품은 만들 수 있다. 그러나 실행 전 결과 메타데이터와 실행 중 정상 취소를 검증하기 전에는 정식 ODBC Core 적합성 완료를 선언하지 않는다.
 
 ## 1. 이 문서를 따라 작업하는 방법
@@ -105,7 +105,7 @@ winodbc/
 - [ ] WO-0.2: 최초 검증 OS, 제품 최소 OS, x86/x64, 목표 ODBC 앱을 결정한다. Excel/Access 등은 설치 여부와 앱 자체의 비트 수를 확인하고 목표/미시험을 구분한다.
 - [ ] WO-0.3: `docs/api-support.md`에 API별 담당 계층, A/W export, 지원 호출 형태, 상태, 오류, 시험 ID를 적는다. 함수 목록과 속성/descriptor 필드 목록은 별도 표로 만든다.
 - [ ] WO-0.4: ODBC 3.8의 버전 협상·C 타입 검증·`SQL_ATTR_RESET_CONNECTION`·비동기 미지원 보고를 포함한다. `ODBCVER=0x0380`으로 컴파일했다는 이유만으로 3.8 완성을 선언하지 않는다. [3.8 드라이버 지침](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-driver/upgrading-a-3-5-driver-to-a-3-8-driver?view=sql-server-ver17).
-- [ ] WO-0.5: 서버 prepare/describe·cancel의 기능 협상과 완료 기준을 rdbms/PREPARE.md에 맞춘다. 서버 메시지 이름은 그 문서의 제안이며 protocol.md 확정 전 하드코딩하지 않는다.
+- [ ] WO-0.5: 서버 prepare/describe·cancel의 기능 협상과 완료 기준을 rdbms/PREPARE.md와 protocol.md 17절에 맞춘다. prepareDescribe·cancel을 광고하지 않는 서버에는 새 요청을 보내지 않는다.
 - [ ] WO-0.6: JSON·정확한 10진 변환·인증 구현의 의존성을 결정하고 버전·라이선스를 기록한다. 큰 정수와 DECIMAL을 double로 바꾸지 않는 것이 필수 조건이다.
 
 완료 기준: 함수·속성·descriptor·타입·서버 기능·테스트의 대응표가 있다. 서버 미구현 기능을 ODBC의 성공 스텁으로 가리지 않는다. 이 단계의 문서 검토는 드라이버 실행 시험으로 세지 않는다.
@@ -392,9 +392,11 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 제품 최소 Windows/Windows Server 버전과 ARM64의 후속 지원 여부. 최초 구현·검증 기준은 Windows 11 x64와 x86/x64 앱이다.
 - MSVC·SDK·CMake의 실제 버전, CRT·JSON 라이브러리 등 배포 의존성.
 - 반드시 지원할 실제 앱과 그 버전·비트 수. 도구 미설치를 기능 구현 완료나 호환 성공으로 기록하지 않는다.
-- 서버 준비 문장/describe/cancel의 확정 wire 규약·타입 힌트·기능 협상, 세션 초기화의 추가 서버 지원 여부. 결정·구현은 rdbms/PREPARE.md에서 먼저 추적한다.
+- 서버 준비 문장/describe/cancel의 wire 규약·타입 힌트·기능 협상은 확정·구현되었다. ODBC 진단·descriptor·수명으로의 매핑과 세션 초기화의 추가 서버 지원 필요 여부는 WO-0·WO-6·WO-8에서 검토한다.
 - 배포 패키지 형식·코드 서명·설치 표시명·업그레이드 정책. 문서 기본안은 확정 배포 정책이 아니다.
 
 ## 작업 이력
+
+- 2026-10-20: 서버 PD-1 ~ PD-5·기존 드라이버 회귀와 jdbc6 새 API 연동 완료를 반영했다. 서버 규약 의존성은 해소했고 PD-6의 ODBC 시험은 남아 있다. ODBC 코드·DLL 구현과 적합성 시험은 이번 작업에 포함하지 않았다.
 
 - 2026-10-20: AGENTS.md를 다시 읽고 빈 winodbc/PROGRESS.md에 WO-0 ~ WO-13 개발 계획을 작성했다. 각 단계의 절차·필수 시험·완료 기준, ODBC 3.8 Core/Unicode/descriptor·배열·취소·x86/x64 설치 주의점을 명시했다. 사용자 추가 지시에 따라 서버 prepare/describe·cancel을 rdbms/PREPARE.md의 다음 작업으로 연결했다. 구현·빌드·실행 시험과 드라이버 등록은 하지 않았다.

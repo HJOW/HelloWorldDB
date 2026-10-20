@@ -210,13 +210,14 @@ final class Values {
         /** 컬럼 이름, 서버 선언 원문, 정규화된 타입 이름. */
         final String name, declared, typeName;
         /** JDBC 타입 코드, 정밀도(표시 길이), 소수 자릿수. */
-        final int type, precision, scale;
+        final int type, precision, scale, nullable;
         /** 서버 응답의 컬럼 정보 맵으로부터 설명을 만든다.
          *
          * @param m 서버가 보낸 컬럼 정보 맵 */
         Column(Map<String, Object> m) {
             name = String.valueOf(m.get("name")); declared = String.valueOf(m.get("declared")); typeName = String.valueOf(m.get("typeName")); type = sqlType(typeName);
             precision = number(m, "length", number(m, "precision", defaultPrecision(type, number(m, "fractionalPrecision", 0)))); scale = number(m, "scale", number(m, "fractionalPrecision", 0));
+            nullable = "YES".equals(m.get("nullable")) ? ResultSetMetaData.columnNullable : "NO".equals(m.get("nullable")) ? ResultSetMetaData.columnNoNulls : ResultSetMetaData.columnNullableUnknown;
         }
         /** 컬럼 이름과 선언 문자열로부터 설명을 만든다.
          *

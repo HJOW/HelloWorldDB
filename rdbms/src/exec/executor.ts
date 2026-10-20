@@ -8,7 +8,7 @@
  *  - 서브쿼리 : 스칼라, 인라인 뷰, IN, EXISTS, ANY, ALL, 상관 서브쿼리
  *  - FROM 절이 없는 SELECT 는 행 하나짜리 결과를 낸다.
  *  - SELECT ... FOR UPDATE 는 읽은 행에 잠금을 건다. (txn/lockManager.ts)
- *  - 결과를 한꺼번에 만들지 않고, 요청하는 만큼씩 꺼내 갈 수 있게 한다.
+ *  - 네트워크 단순 조회는 지연 순회하여 결과 파일에 쓴다. 복합 조회의 중간 결과는 구체화할 수 있다.
  *
  * 식의 계산은 expression.ts, 함수는 functions.ts 에 맡긴다.
  * 읽기는 커밋된 값에 자기 트랜잭션의 변경을 합쳐 본다. (READ COMMITTED, txn/transaction.ts)

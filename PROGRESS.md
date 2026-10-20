@@ -6,9 +6,9 @@
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
-- **2026-10-20 : rdbms 후속 구현 반영, 사용자 지시에 따라 오류 수정에서 종료.** prepare/describe·cancel, 협력 실행·조회 파일 커서, 뷰 컬럼·인덱스 이름 생략 규칙을 반영했다. NULL 파라미터/타입 힌트 오류와 jdbc6·jdbc8의 뷰 컬럼 중복을 수정했다. **최종 전체·Bun·JDBC 재빌드/회귀는 다음 작업이며 완료로 판정하지 않는다.** 구현·기존 실패·일부 통과 결과·재개 명령은 [rdbms/HANDOFF.md](rdbms/HANDOFF.md)에 있다. 기존 드라이버의 새 요청 API 연동은 별도 후속 작업이다.
-- **2026-10-20 : 네 드라이버에 서버 prepare/describe·cancel 연동 계획 등록.** [nodejsDriver](nodejsDriver/PROGRESS.md)·[pythonDriver](pythonDriver/PROGRESS.md)·[jdbc6](jdbc6/PROGRESS.md)·[jdbc8](jdbc8/PROGRESS.md)의 다음 작업에 준비 문장·실행 전 메타데이터·요청별 취소·제한 시간·호환성 시험을 추가했다. [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-5와 규약 확정 후 착수하고 PD-6에서 함께 검증한다. 기존 PY-4 ~ PY-6·13-5·14-5는 유지하며 이번 변경은 문서만 해당한다.
-- **2026-10-20 : Windows ODBC 개발 계획 작성.** [winodbc/PROGRESS.md](winodbc/PROGRESS.md)에 WO-0 ~ WO-13의 구현 순서·필수 시험·완료 기준과 ODBC 3.8/Unicode/descriptor·배열·취소·x86/x64 설치 계획을 적었다. 사용자 추가 요청으로 서버의 prepare/describe·cancel은 [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-6과 rdbms 진행 문서의 다음 작업에 등록했다. 드라이버·서버 구현, 빌드·실행 시험, ODBC 등록은 아직 하지 않았다.
+- **2026-10-20 : rdbms 후속 구현·검증 완료.** prepare/describe·cancel·협력 실행·파일 커서·뷰 컬럼·인덱스 이름 생략을 검토하고 IN/BETWEEN/CASE/서브쿼리 분석, 선언 타입 NULL, 결과 파일 정리·부분 쓰기를 수정했다. TypeScript 6.0.3 / Node.js 22.23.3 전체 **949개 중 948개 통과·Windows SIGTERM 1개 건너뜀·실패 0**. Bun 주요 167개와 마지막 NULL 수정을 포함한 핵심 42개도 통과했다. 규약·매뉴얼·진행 기록을 갱신했고 [rdbms/HANDOFF.md](rdbms/HANDOFF.md)에 최종 결과와 남은 범위를 정리했다.
+- **2026-10-20 : jdbc6 서버 확장 연동과 14-5 검증 완료.** 지정한 `C:\Program Files\Java\jdk1.6.0_45`로 빌드하고 `C:\Program Files\Java\jdk1.7.0_80`을 포함한 Java 6·7·8·21·25에서 같은 JAR을 실행했다. 실행 전 결과·파라미터 메타데이터, UNKNOWN·힌트, 서버 준비 문장, 요청별 취소·시간 제한·실행 중 close를 구현했다. 기존 서버 255개·확장 85개·빌드 15개·독립 소비자 15개가 통과했다. 공유 코드를 동기화한 jdbc8 기존 130개, Node.js 드라이버 116개, Python 3.2·3.13.1 각각 124개도 통과했다. 나머지 드라이버의 새 공개 API와 ODBC 시험은 후속이다.
+- **2026-10-20 : Windows ODBC 개발 계획 작성.** [winodbc/PROGRESS.md](winodbc/PROGRESS.md)에 WO-0 ~ WO-13의 구현 순서·필수 시험·완료 기준과 ODBC 3.8/Unicode/descriptor·배열·취소·x86/x64 설치 계획을 적었다. 사용자 추가 요청으로 서버의 prepare/describe·cancel은 [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-6과 rdbms 진행 문서의 다음 작업에 등록했다. 이 항목은 계획 작성 당시의 기록이다. 이후 서버 구현·검증은 완료했고 ODBC 드라이버 구현·등록·적합성 시험은 미착수이다.
 - **2026-10-20 : `jdbc8` 13-1 ~ 13-4, `jdbc6` 14-1 ~ 14-4 완료.** 사용자 추가 지시에 따라 두 드라이버를 구현했다. Java 6 범위의 JSON·TCP·TLS·UDP·SCRAM 프로토콜을 공유하고 JDBC 4.0/4.2 계층·타입·트랜잭션·메타데이터를 각각 제공한다. jdbc8은 실제 JDK 8로 빌드한 같은 JAR의 Java 8·21 시험 **130개**, jdbc6는 실제 JDK 6 JAR의 Java 6·7·8·21 실제 서버 시험 **200개**와 빌드 회귀 **14개**가 통과했다(실패·건너뜀 0). TLS 인증서 검증과 Java 6 TLSv1, 나머지 기본 TLSv1.2 접속, 유실·중복·지연 UDP, 권한·타입·커서·오류를 확인했다. 시험 서버는 정상 종료·정리했고 서버 소스는 바꾸지 않았다. 다음은 13-5·14-5 최종 검증이다. 상세는 [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md), [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md), 사용법은 각 README에 있다. GUI 보류는 유지한다.
 - **2026-10-20 : `nodejsDriver`의 Node.js 22.x 후속 검증 완료.** `VM-W11-Codex`의 Node.js 22.23.3 / TypeScript 6.0.3에서 드라이버와 실제 서버를 모두 실행하여 전체 116개 시험이 통과했다(실패·건너뜀 0). 배포본을 새 소비자 프로젝트에 설치해 Node.js 22.23.3·Bun 1.4.2 각각의 TCP·TLS·UDP 접속, 엄격한 타입 검사, Node.js의 CommonJS `require(esm)` 접속을 확인했다. 호환성 결함은 발견되지 않아 소스 수정은 없으며 README와 진행 문서를 갱신했다. 서버 전체의 독립 Node.js 22 시험과 다른 OS 검증은 이번 범위에 포함하지 않았다. 상세는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)의 "Node.js 22 호환성 및 배포본 검증"이다.
 - **2026-10-20 : `pythonDriver` PY-3 완료.** DB-API 2.0 계층(`types`, `cursor`, `connection`, 모듈 수준)을 구현하고 시험 47개를 더했다. 타입 변환·생성자·타입 객체, `connect()` 옵션 검증, Hello World, 자동 커밋 OFF·커밋·롤백·컨텍스트 관리자, fetch·반복·`executemany`·`description`·`rowcount`, 타입 왕복, 스레드 공유 접속을 실제 `rdbms` 로 확인했다. Windows / Node.js 24.19.0 / Python 3.2·3.12.4에서 각각 124개 통과·실패와 건너뜀 0이다. 시험 중 Param 이중 인코딩 결함과 3.2의 `utcoffset()` 검증을 찾아 고쳤고, 미결 9(`float` 정수값 처리)는 서버 동작 확인으로 닫았다. TLS·UDP는 `NotSupportedError` 이며 다음은 PY-4이다. 자세한 내용은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)에 있다.
@@ -23,10 +23,10 @@
 - `rdbms` 는 1 ~ 11단계를 마쳤다. 11단계(통합 검증)에서 개요 1 ~ 15 항목마다 실제 데몬에 접속하는 시험을 갖추고(87개), 사용 설명서 [rdbms/docs/manual.md](rdbms/docs/manual.md)와 검증 기록 [rdbms/docs/verification.md](rdbms/docs/verification.md)를 썼다. 이 과정에서 제품 결함 넷(NULL 리터럴 타입, 데이터 파일 절대 경로, 행 삽입 비용, 인덱스 범위 조건의 틀린 결과)을 찾아 고쳤다.
   구현 범위는 다음과 같다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사, **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 접속과 접속용 클라이언트 라이브러리(`rdbms/src/client`)에 더해,
   10단계에서 **`hwdb` 명령**을 완성했다 : `hwdb start`(분리된 데몬), `hwdb stop`, `hwdb status`, 그리고 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 화면에 보이지 않는 비밀번호 입력, 한글 폭을 맞춘 표 출력, 초기 암호 변경 안내, 종료 때 롤백 안내). 동작은 [rdbms/docs/cli.md](rdbms/docs/cli.md)에 있다.
-- 현재 진행할 범위는 `pythonDriver`, `jdbc6`, `jdbc8`이다. `rdbms`와 `nodejsDriver`의 구현·점검은 완료했고 GUI DB툴(`gui`)의 보류는 유지한다.
-- 다음 작업 : `pythonDriver` PY-4(TLS), `jdbc6` 14-5·`jdbc8` 13-5 최종 검증. AGENTS.md C·D절과 각 프로젝트의 PROGRESS.md를 따른다. 프로토콜의 기준은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md), 사용자 관점의 동작은 [rdbms/docs/manual.md](rdbms/docs/manual.md)이다.
+- 이번 `rdbms`·`jdbc6` 작업을 완료했다. GUI DB툴(`gui`)의 보류는 유지한다. 아래 이전 날짜의 구현·검증 내용은 누적 기록이며 최신 결과는 위 두 항목과 프로젝트별 상태표를 따른다.
+- 다음 작업 : 나머지 드라이버의 prepare/describe·cancel 공개 API, `pythonDriver` PY-4(TLS), `jdbc8` 13-5 범용 도구 검증, ODBC WO-0 이후 구현이다. 서버 PD-6의 ODBC 항목은 남아 있다. 각 프로젝트의 PROGRESS.md와 [통신 규약](rdbms/docs/protocol.md)을 따른다.
 - 11단계 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 888개 중 887개 통과, 1개 건너뜀(Windows에서 SIGTERM을 받을 수 없는 유닉스 전용 시험), 실패 0. bun 1.3.14에서는 통합 시험 87개를 시험 러너와 데몬 모두 bun으로 돌려 85개 통과, 2개 건너뜀(bun의 TLS 최소 버전 제약, SIGTERM)이다. 결함을 일부러 주입한 빌드에서 새 시험이 실패하는지 확인했다(모두 잡힘).
-  확인하지 못한 것 : Node.js 22.x 장비, 리눅스·macOS(유닉스 소켓, `hwdb start`의 세션 분리, SIGTERM 종료), 실제 터미널 앱의 탭 닫기, 실제 자바 6의 TLS 1.0 접속. 알려진 한계 : `SYS_COLUMNS`에 뷰의 컬럼이 없음, 인덱스 이름에 테이블스페이스를 붙여야 하는 경우(`rdbms/PROGRESS.md` 미결 사항).
+  당시 미확인 항목 중 Node.js 22, 실제 Java 6 TLSv1, 뷰 컬럼·인덱스 이름 생략은 이번 후속 작업에서 해소했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 미검증이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
 - 2026-10-15 : 7단계 남은 마무리(`SYS_SESSIONS` 연결, `docs/transactions.md`)를 끝내고 8단계를 완료했다.
 - 6단계 점검 보완(2026-10-10)에서 결함 7건을 고쳤다. 7단계에서 `BEGIN`·`ROLLBACK` 등을 막아 둔 `0A000` 을 풀었다. DML의 행 단위 접근은 당시 미구현이었고 2026-10-16에 완료했다.
@@ -40,11 +40,11 @@
 
 | 프로젝트 | 패키지명 | 단계 | 상태 | 착수 조건 | 세부 계획 |
 |---|---|---|---|---|---|
-| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11 | 1 ~ 11단계 완료(`hwdb`, 통합 검증, 사용 설명서 포함) | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
+| `rdbms` | `org.duckdns.hjow.helloworlddb.rdbms` | 1 ~ 11, PD | 기본 단계·PD-1 ~ PD-5 완료. PD-6 ODBC 시험 후속 | 없음 | [rdbms/PROGRESS.md](rdbms/PROGRESS.md) |
 | `nodejsDriver` | `org.duckdns.hjow.helloworlddb.nodejsdriver` | 12 | 12단계 완료 (TCP·SSL·UDP, 트랜잭션, 커넥션 풀, 타입 정의, README) | 11단계 완료 (충족) | [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md) |
-| `pythonDriver` | `org.duckdns.hjow.helloworlddb.pythondriver` (import `helloworlddb`) | PY-1 ~ PY-6 | PY-3 완료. Python 3.2·3.12.4 각 124개 통과. TLS·UDP는 PY-4·PY-5 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md) |
-| `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 없음 | 보류. 자바 8 이상, JDBC 4.2 | 계획부터 다시 정한다 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
-| `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 14-1 ~ 14-5 | 14-1 완료. JDK 6 빌드, Java 6·7·8·21 실행 검증. 다음 14-2 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
+| `pythonDriver` | `org.duckdns.hjow.helloworlddb.pythondriver` (import `helloworlddb`) | PY-1 ~ PY-6 | PY-3 완료. 최신 회귀 Python 3.2·3.13.1 각 124개 통과. TLS·UDP는 PY-4·PY-5 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md) |
+| `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 13-1 ~ 13-5 | 13-1 ~ 13-4 완료. 공유 통신·기존 130개 회귀 완료. 새 공개 API·13-5 후속 | 선행 조건 충족 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
+| `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 14-1 ~ 14-5 | 14-1 ~ 14-5·prepare/describe·cancel 완료. Java 6·7·8·21·25 검증 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
 | `gui` | `org.duckdns.hjow.helloworlddb.gui` | 없음 | 보류 | 계획부터 다시 정한다 | [gui/PROGRESS.md](gui/PROGRESS.md) |
 
 ## 공통 인수인계 사항
@@ -53,7 +53,7 @@
 - JDBC 기준(2026-10-16 사용자 결정) : 자바 5 지원을 철회했다. 프로젝트·폴더·패키지는 `jdbc6` 기준으로 바꾸고 자바 6~7용 JDBC 4.0을 개발한다. 같은 배포본을 자바 8 이상에서도 사용할 수 있어야 한다. `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 두 프로젝트의 공통 프로토콜 코드는 자바 6 범위로 유지한다. 사양은 AGENTS.md 상세 8-1이다.
 - RDBMS 사양 중 보류한 프로젝트를 위한 부분(TLS 1.2를 쓸 수 없는 자바 6 환경용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 `rdbms`에서 그대로 구현한다.
 - 프로토콜 명세는 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)에 확정되어 있다(2026-10-16, 버전 1). 모든 드라이버가 이 문서를 기준으로 삼는다. 클라이언트가 해야 하는 검증(서버 nonce·서명 확인, TLS 인증서 검증과 재시도 등)은 그 문서 15절의 체크리스트이다.
-  프로토콜을 바꾸면 프로토콜 버전을 올리고, 영향을 받는 드라이버 프로젝트의 PROGRESS.md 에 알린다.
+  기존 필수 규약과 호환되지 않는 변경은 프로토콜 버전을 올리고 드라이버 진행 기록에 알린다. 이번 선택 확장은 버전 1을 유지하고 helloOk.capabilities의 prepareDescribe·cancel로 협상한다. 전체 호환 표는 protocol.md 17절이다.
 - 11단계에서 서버 동작에 바뀐 것(드라이버가 알아 둘 점) : (1) 데이터 파일 경로를 데이터 디렉토리 기준 상대 경로로 기록하므로 데이터 디렉토리를 복사해 다른 위치·포트의 인스턴스로 옮길 수 있다. (2) 인덱스를 쓰는 범위 조건의 결과가 바로잡혔다(DESC 컬럼, 컬럼이 더 있는 복합 인덱스). (3) 타입이 정해지지 않은 `NULL` 이 상대 타입을 따른다(`NVL(NULL, x)`, `1 + NULL` 등). 프로토콜은 바뀌지 않았다.
   서버를 띄우고 접속하는 사용자 관점의 설명은 [rdbms/docs/manual.md](rdbms/docs/manual.md), 통합 시험의 구성과 한계는 [rdbms/docs/verification.md](rdbms/docs/verification.md)이다. 모든 키를 기본값으로 적은 설정 예시는 `rdbms/config.sample.json`이다.
 - 명령은 `hwdb` 하나이다. `hwdb start`, `hwdb stop`, `hwdb status` 로 데몬을 제어하고, `hwdb` 로 SQL 접속을 한다. 서버 실행 파일을 따로 두지 않는다. (10단계에서 구현을 마쳤다. [rdbms/docs/cli.md](rdbms/docs/cli.md))
@@ -66,7 +66,7 @@
 - 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계에서 마쳤고, SQL 트랜잭션과 행 잠금은 7단계에서 구현했다(설계 요약은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 결정 사항).
 - v1 고정 바이너리(`rdbms/test/fixtures/storage-v1.hwdb`)와 서버 전체의 데이터 디렉토리 자료(`datadir-v1/`, 11단계)를 해시 검증 테스트와 함께 보관했다. 포맷 버전을 올리면 이전 버전 자료가 없을 때 시험이 실패한다(버전 보호). 개요 3의 1.0 출시 전 포맷 변경 예외는 적용 가능하며, 변경 시 포맷 문서와 테스트 자료도 의도적으로 갱신한다.
 - 변경된 타입 정책은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md)에 정리했다. VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이며 DECIMAL/DEC/NUMERIC의 인자 전체 생략은 (10,3), 정밀도만 지정한 `(p)`는 (p,0)이다. 드라이버와 DB툴은 실제 컬럼 인자를 서버 메타데이터에서 읽는다.
-- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 기존 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, Bun 1.4.2이다. `nodejsDriver`는 2026-10-20 Node.js 22.23.3에서 전체 116개 시험과 배포본 검증을 마쳤다(서버도 Node.js 22로 구동). `rdbms` 전체의 독립 Node.js 22.x 검증은 남아 있다.
+- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 기존 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, Bun 1.4.2이다. `nodejsDriver`는 2026-10-20 Node.js 22.23.3에서 전체 116개 시험과 배포본 검증을 마쳤다(서버도 Node.js 22로 구동). `rdbms`도 이번 Node.js 22.23.3 전체 949개 중 948개 통과·SIGTERM 1개 건너뜀으로 검증했다.
 - 드라이버와 DB툴이 참고할 `rdbms` 문서이다. 타입과 값의 규칙은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md), SQL 의 어휘 규칙·예약어·지원 문법·한도는 [rdbms/docs/sql-syntax.md](rdbms/docs/sql-syntax.md), 저장 포맷은 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md),
   트랜잭션과 잠금의 동작(오류 번호 `55P03`, `40P01` 등)은 [rdbms/docs/transactions.md](rdbms/docs/transactions.md), 계정·권한·오류 번호 `28000`·`42501` 등과 딕셔너리 뷰의 가시성은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md), 프로토콜(전송 계층, 메시지, SCRAM, 값 표현, 커서, 오류 8000번대, 한도, 런타임 차이)은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - **TLS 서버 인증서 검증(모든 클라이언트 공통, 2026-10-15 결정)** : 접속용 CLI(`hwdb --ssl`)와 드라이버는 서버 인증서를 기본으로 검증한다. 신뢰할 CA 를 지정하는 방법과 검증을 끄는 방법을 함께 제공한다.
@@ -89,9 +89,9 @@
 
 `pythonDriver`는 2026-10-20 사용자 작업 지시에 따라 착수했다. 기존 설계의 명명 기본안을 적용하고 AGENTS.md D절에 순서를 명시하여 이전의 착수 대기는 해소했다. 후속 검증 사항은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)의 "미결 사항"에 있다.
 이 PC(`DESKTOP-HJOW`)에서 Python 3.2는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 Python은 `C:\Program Files\Python\P312\python.exe`(3.12.4)이다. 이전 3.13.1 경로는 현재 없어 시험하지 않았다. 다른 장비의 경로는 별도로 기록한다.
-`VM-W11-Codex` 에서는 Python 3.2가 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 Python(3.12.4)이 `C:\Program Files\Python\312\python.exe` 이다. PY-2는 이 PC에서 3.2·3.12.4 각각 77개 통과로 검증했다.
-같은 PC의 Node.js 22는 `C:\Program Files\nodejs22\node.exe`(22.23.3)에 설치되어 있다. 기본 PATH의 Node.js와 구분하여 시험하며, `nodejsDriver/README.md`에 런타임 선택 명령을 기록했다.
-자바 7은 사용자 지정 경로 `C:\Program Files\Java\jdk1.7.0_80`을 사용한다. `jdbc6` 시험 실행기의 기본 후보도 이 경로로 변경했으며 Java 6·7·8·21의 14개 시험이 통과했다. 초기 시험용 Azul 디렉토리는 더 이상 사용하지 않으며 삭제 명령이 자동 승인 검토에서 차단되어 사용자에게 수동 삭제 경로를 안내했다. 상세 경로는 `jdbc6/PROGRESS.md`에 기록했다.
+이번 환경에서는 Python 3.2가 `C:\Program Files\Python\302\python.exe`, Python 3.13.1이 `C:\Program Files\Python\313\python.exe`이며 각 124개를 검증했다. 앞의 다른 경로는 이전 장비 기록이다.
+이번 Node.js 22.23.3은 `%TEMP%\hwdb-validation-runtimes\node22.exe`를 사용했다. 기본 Node.js는 24.21.0, Bun은 1.4.2이다. Java 8·21 임시 경로는 같은 디렉토리의 `jdk-homes.json`에 있다.
+Java 6·7은 사용자가 지정한 `C:\Program Files\Java\jdk1.6.0_45`·`C:\Program Files\Java\jdk1.7.0_80`을 사용했다. 실제 버전과 컴파일러를 확인했고 이후 임시 Java 6·7 배포본은 사용하지 않았다. 최신 검증 기록은 `jdbc6/PROGRESS.md`를 따른다.
 
 지금 `rdbms` 와 `nodejsDriver` 에서 사용자 확인을 기다리는 것은 없다. 아래 3건은 2026-10-16 에 사용자가 정했고, 결정 내용은 "공통 인수인계 사항" 에 있다.
 
@@ -101,9 +101,11 @@
 
 보류한 프로젝트의 확인 사항(자바 빌드와 시험 환경, UI 프레임워크 등)은 각 PROGRESS.md 의 "미결 사항" 에 있으며, 보류를 풀 때 확인한다.
 
-JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-4와 jdbc8 13-4까지 구현했다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
+JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-5와 서버 확장 연동을 완료했고 jdbc8은 13-4 및 공통 통신 회귀까지 마쳤다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
 
 ## 작업 이력
+
+- 2026-10-20 : AGENTS.md·각 PROGRESS.md·HANDOFF.md를 읽고 서버 남은 수정·검증과 jdbc6 추가 작업을 마쳤다. 서버 Node.js 22 전체 949개 중 948 통과·1 건너뜀, Bun 주요 167개·최종 핵심 42개 통과. 지정 Oracle JDK 6·7과 Java 8·21·25의 jdbc6 기존 255개·확장 85개·빌드 15개·독립 소비자 15개, jdbc8 기존 130개, Node.js 116개와 Python 3.2·3.13.1 각 124개가 통과했다. SQL 분석·NULL·파일 쓰기·JDBC 정상 종료 경합을 보완하고 규약·매뉴얼·완료 체크리스트·진행 기록을 갱신했다. ODBC와 나머지 드라이버의 새 API는 후속이며 GUI 보류를 유지한다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-20 : rdbms 남은 구현 작업을 진행한 뒤 사용자의 추가 지시로 마지막 오류 수정에서 종료했다. 서버 NULL/타입 힌트 오류와 JDBC 뷰 컬럼 중복을 수정했고, 추가 테스트·최종 검증·문서 정리를 rdbms/HANDOFF.md 및 각 진행 문서의 다음 작업에 명시했다. 커밋·푸시는 하지 않았다.
 

@@ -4,6 +4,7 @@ import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.ArrayDeque;
 import java.util.concurrent.*;
 
 /**
@@ -39,6 +40,8 @@ public final class UdpTransport implements Transport, Runnable {
     private int total;
     /** 확인 응답을 기다리는 송신 중인 메시지이다. {@code null}이면 유휴 상태이다. */
     private Outgoing sending;
+    /** 실행 요청의 ACK를 기다리는 동안 도착한 취소 요청도 순서대로 전송한다. */
+    private final ArrayDeque<Outgoing> outgoing = new ArrayDeque<Outgoing>();
     /** 평활화된 왕복 시간 추정치(밀리초)이다. */
     private double srtt;
     /** 왕복 시간 편차 추정치이다. */
@@ -78,7 +81,7 @@ public final class UdpTransport implements Transport, Runnable {
     public void setLimit(int size) { limit = size; }
     /**
      * 메시지 하나를 조각내어 송신 큐에 올린다.
-     * <p>이전 메시지의 확인 응답이 끝나기 전에는 새 메시지를 보낼 수 없다.</p>
+     * <p>확인 응답을 기다리는 동안의 취소 요청도 큐에 넣고 메시지 순서대로 전송한다.</p>
      *
      * @param bytes 전송할 메시지 본문
      * @throws IOException 닫힌 상태, 크기 위반, 미확인 메시지 존재, 조각 한도 초과 시
@@ -87,11 +90,11 @@ public final class UdpTransport implements Transport, Runnable {
         synchronized (lock) {
             if (closed) throw new IOException("UDP connection closed.");
             if (bytes.length < 1 || bytes.length > limit) throw new IOException("Message size limit exceeded.");
-            if (sending != null) throw new IOException("Previous UDP message is not acknowledged.");
+            if (outgoing.size() >= 64) throw new IOException("UDP send queue limit exceeded.");
             int count = (bytes.length + packetSize - 21) / (packetSize - 20);
             if (count > 65535) throw new FragmentLimit();
             if (next == 0) throw new IOException("UDP sequence exhausted.");
-            sending = new Outgoing(bytes, count, next++, packetSize - 20); tick();
+            outgoing.addLast(new Outgoing(bytes, count, next++, packetSize - 20)); tick();
         }
     }
     /**
@@ -215,6 +218,7 @@ public final class UdpTransport implements Transport, Runnable {
      * @throws IOException 재전송 한도 초과 시
      */
     private void tick() throws IOException {
+        if (sending == null) sending = outgoing.pollFirst();
         if (sending == null) return;
         int outstanding = 0;
         for (int i = 0; i < sending.parts.length; i++) if (!sending.acked[i] && sending.sent[i] != 0) outstanding++;
@@ -239,7 +243,7 @@ public final class UdpTransport implements Transport, Runnable {
         synchronized (lock) {
             if (closed) return;
             try { if (session != 0) packet(8, 0, 0, 0, new byte[0]); } catch (IOException ignored) { }
-            closed = true; socket.close(); incoming.offer(new IOException("UDP connection closed."));
+            closed = true; sending = null; outgoing.clear(); socket.close(); incoming.offer(new IOException("UDP connection closed."));
         }
     }
     /**
