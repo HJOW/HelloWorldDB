@@ -6,6 +6,7 @@
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
+- **2026-10-20 : `nodejsDriver`의 Node.js 22.x 후속 검증 완료.** `VM-W11-Codex`의 Node.js 22.23.3 / TypeScript 6.0.3에서 드라이버와 실제 서버를 모두 실행하여 전체 116개 시험이 통과했다(실패·건너뜀 0). 배포본을 새 소비자 프로젝트에 설치해 Node.js 22.23.3·Bun 1.4.2 각각의 TCP·TLS·UDP 접속, 엄격한 타입 검사, Node.js의 CommonJS `require(esm)` 접속을 확인했다. 호환성 결함은 발견되지 않아 소스 수정은 없으며 README와 진행 문서를 갱신했다. 서버 전체의 독립 Node.js 22 시험과 다른 OS 검증은 이번 범위에 포함하지 않았다. 상세는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)의 "Node.js 22 호환성 및 배포본 검증"이다.
 - **2026-10-20 : `pythonDriver` PY-3 완료.** DB-API 2.0 계층(`types`, `cursor`, `connection`, 모듈 수준)을 구현하고 시험 47개를 더했다. 타입 변환·생성자·타입 객체, `connect()` 옵션 검증, Hello World, 자동 커밋 OFF·커밋·롤백·컨텍스트 관리자, fetch·반복·`executemany`·`description`·`rowcount`, 타입 왕복, 스레드 공유 접속을 실제 `rdbms` 로 확인했다. Windows / Node.js 24.19.0 / Python 3.2·3.12.4에서 각각 124개 통과·실패와 건너뜀 0이다. 시험 중 Param 이중 인코딩 결함과 3.2의 `utcoffset()` 검증을 찾아 고쳤고, 미결 9(`float` 정수값 처리)는 서버 동작 확인으로 닫았다. TLS·UDP는 `NotSupportedError` 이며 다음은 PY-4이다. 자세한 내용은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)에 있다.
 - **2026-10-20 : `pythonDriver` PY-1 완료.** 사용자 작업 지시에 따라 `rdbms`·`nodejsDriver` 다음에 착수하고 기존 설계 기본안의 배포 이름(`org.duckdns.hjow.helloworlddb.pythondriver`)과 import 이름(`helloworlddb`)을 적용했다. 패키지 구성, Python 3.2 호환 계층, 버전별 시험 실행기, 소스 호환성 검사, 임시 `hwdb start`/`stop` 도우미를 구현했다. Windows의 Python 3.2·3.12.4에서 각각 34개 통과·실패와 건너뜀 0이다. 소스 배포본과 `py3-none-any` 휠도 생성했다. Python 드라이버의 실제 접속·DB-API는 아직 미구현이며 다음 단계는 PY-2(TCP 프로토콜 코어)이다. 자세한 내용은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)에 있다.
 - **2026-10-20 : `nodejsDriver` 점검·수정을 완료했다.** 풀 생성 중 종료·시간 초과의 대기 요청 누락, 주석으로 인한 트랜잭션 상태 오류와 미커밋 행 재사용, 남은 커서·테이블스페이스·타임존 초기화 누락, 특수 컬럼 이름의 결과 변환, 인증 제한 시간·응답 검증·소켓 조기 종료·시험 서버 정리를 보완했다. 회귀 시험 16개를 추가해 Node.js 24.22.0 / TypeScript 6.0.3에서 전체 116개 통과·실패 0이다. Bun 1.3.14는 최종 시나리오 115개 통과·1개 건너뜀(기존 구버전 TLS)·실패 0. 상세는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)의 "코드 점검 및 수정"이며 README도 갱신했다. 서버 소스·사양·통신 메시지 형식은 바꾸지 않았다.
@@ -61,7 +62,7 @@
 - 저장 포맷과 트랜잭션 설계는 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md)에 있다. 저장 API는 `storage/format/format.ts`만 통해 사용한다. SQL 카탈로그와 데몬 연결은 5단계에서 마쳤고, SQL 트랜잭션과 행 잠금은 7단계에서 구현했다(설계 요약은 [rdbms/PROGRESS.md](rdbms/PROGRESS.md)의 결정 사항).
 - v1 고정 바이너리(`rdbms/test/fixtures/storage-v1.hwdb`)와 서버 전체의 데이터 디렉토리 자료(`datadir-v1/`, 11단계)를 해시 검증 테스트와 함께 보관했다. 포맷 버전을 올리면 이전 버전 자료가 없을 때 시험이 실패한다(버전 보호). 개요 3의 1.0 출시 전 포맷 변경 예외는 적용 가능하며, 변경 시 포맷 문서와 테스트 자료도 의도적으로 갱신한다.
 - 변경된 타입 정책은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md)에 정리했다. VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이며 DECIMAL/DEC/NUMERIC의 인자 전체 생략은 (10,3), 정밀도만 지정한 `(p)`는 (p,0)이다. 드라이버와 DB툴은 실제 컬럼 인자를 서버 메타데이터에서 읽는다.
-- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 현재 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, Bun 1.4.2이다. Node.js 22.x 장비에서의 전역 검증은 남아 있다.
+- 저장 엔진의 저장/재열기, 인덱스, 롤백, v1 자료 읽기와 포그라운드 종료는 앞선 단계에서 Node.js와 bun으로 확인했다. 기존 검증 환경은 Windows, Node.js 24.19.0, TypeScript 6.0.3, Bun 1.4.2이다. `nodejsDriver`는 2026-10-20 Node.js 22.23.3에서 전체 116개 시험과 배포본 검증을 마쳤다(서버도 Node.js 22로 구동). `rdbms` 전체의 독립 Node.js 22.x 검증은 남아 있다.
 - 드라이버와 DB툴이 참고할 `rdbms` 문서이다. 타입과 값의 규칙은 [rdbms/docs/data-types.md](rdbms/docs/data-types.md), SQL 의 어휘 규칙·예약어·지원 문법·한도는 [rdbms/docs/sql-syntax.md](rdbms/docs/sql-syntax.md), 저장 포맷은 [rdbms/docs/storage-v1.md](rdbms/docs/storage-v1.md),
   트랜잭션과 잠금의 동작(오류 번호 `55P03`, `40P01` 등)은 [rdbms/docs/transactions.md](rdbms/docs/transactions.md), 계정·권한·오류 번호 `28000`·`42501` 등과 딕셔너리 뷰의 가시성은 [rdbms/docs/accounts-and-privileges.md](rdbms/docs/accounts-and-privileges.md), 프로토콜(전송 계층, 메시지, SCRAM, 값 표현, 커서, 오류 8000번대, 한도, 런타임 차이)은 [rdbms/docs/protocol.md](rdbms/docs/protocol.md)이다.
 - **TLS 서버 인증서 검증(모든 클라이언트 공통, 2026-10-15 결정)** : 접속용 CLI(`hwdb --ssl`)와 드라이버는 서버 인증서를 기본으로 검증한다. 신뢰할 CA 를 지정하는 방법과 검증을 끄는 방법을 함께 제공한다.
@@ -85,6 +86,7 @@
 `pythonDriver`는 2026-10-20 사용자 작업 지시에 따라 착수했다. 기존 설계의 명명 기본안을 적용하고 AGENTS.md D절에 순서를 명시하여 이전의 착수 대기는 해소했다. 후속 검증 사항은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)의 "미결 사항"에 있다.
 이 PC(`DESKTOP-HJOW`)에서 Python 3.2는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 Python은 `C:\Program Files\Python\P312\python.exe`(3.12.4)이다. 이전 3.13.1 경로는 현재 없어 시험하지 않았다. 다른 장비의 경로는 별도로 기록한다.
 `VM-W11-Codex` 에서는 Python 3.2가 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 Python(3.12.4)이 `C:\Program Files\Python\312\python.exe` 이다. PY-2는 이 PC에서 3.2·3.12.4 각각 77개 통과로 검증했다.
+같은 PC의 Node.js 22는 `C:\Program Files\nodejs22\node.exe`(22.23.3)에 설치되어 있다. 기본 PATH의 Node.js와 구분하여 시험하며, `nodejsDriver/README.md`에 런타임 선택 명령을 기록했다.
 
 지금 `rdbms` 와 `nodejsDriver` 에서 사용자 확인을 기다리는 것은 없다. 아래 3건은 2026-10-16 에 사용자가 정했고, 결정 내용은 "공통 인수인계 사항" 에 있다.
 
@@ -135,3 +137,4 @@ JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 202
 - 2026-10-20 : `pythonDriver` 휠을 깨끗한 Python 3.12.4 가상 환경에 네트워크 없이 설치해 소스 트리 밖 import와 호환 계산을 확인했다. Python 시험용 데몬은 최종 0개이다. 실제 드라이버 접속을 쓰는 최종 배포 시험은 PY-6에 남아 있다.
 - 2026-10-20 : `pythonDriver` PY-2 구현·검증 (`VM-W11-Codex`). 저수준 TCP 코어와 시험 43개를 추가해 Python 3.2·3.12.4 각각 77개 통과, 실패·건너뜀 0이다. 오래된 `rdbms/dist` 로 실제 서버 시험이 실패해 다시 빌드한 뒤 통과했다. 다음은 PY-3이며 커밋·푸시는 하지 않았다.
 - 2026-10-20 : `pythonDriver` PY-3 구현·검증. DB-API 2.0 계층과 시험 47개를 추가해 Python 3.2·3.12.4 각각 124개 통과, 실패·건너뜀 0이다. Param 이중 인코딩 결함과 3.2의 `utcoffset()` 검증을 찾아 고쳤고 미결 9는 서버 동작 확인으로 닫았다. 다음은 PY-4이며 커밋·푸시는 하지 않았다.
+- 2026-10-20 : `nodejsDriver` Node.js 22.x 검증 완료(`VM-W11-Codex`, 22.23.3). 전체 116개 통과·실패와 건너뜀 0, 배포본의 Node.js·Bun TCP·TLS·UDP 접속과 타입 정의 및 CommonJS 소비자를 확인했다. 호환성 수정은 필요하지 않았으며 시험 데몬과 임시 배포본을 정리했다. README와 진행 문서를 갱신했고 커밋·푸시는 하지 않았다.

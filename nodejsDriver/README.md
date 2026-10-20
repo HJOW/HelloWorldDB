@@ -262,6 +262,17 @@ npm test        # rdbms 가 빌드되어 있지 않으면 먼저 빌드한 뒤, 
 통합 시험은 이 저장소의 형제 디렉토리 `../rdbms` 를 `hwdb start` 로 띄워(임시 디렉토리, 빈 포트) 수행한다. 서버를 돌리는 런타임은 환경 변수 `HWDB_TEST_RUNTIME` 으로 고른다.
 bun 으로 시험하려면 `npm run build` 뒤에 `bun test dist/test/<파일>.test.js` 를 파일마다 실행한다.
 
+Windows에 Node.js가 여러 버전 설치되어 있으면 현재 터미널의 PATH 맨 앞에 시험할 버전의 디렉토리를 둔다. `VM-W11-Codex`의 Node.js 22 설치 경로를 쓰는 예이다. `nodejsDriver` 디렉토리에서 실행한다.
+
+```powershell
+$env:Path = "C:\Program Files\nodejs22;$env:Path"
+$env:HWDB_TEST_RUNTIME = "C:\Program Files\nodejs22\node.exe"
+node --version
+npm.cmd test
+```
+
+Node.js 22.23.3에서 드라이버와 서버를 모두 실행하여 전체 116개 시험을 통과했다. 배포본을 별도 프로젝트에 설치한 Node.js 22.23.3·Bun 1.4.2의 TCP·TLS·UDP 접속과 TypeScript 6.0.3 타입 검사도 확인했다. 자세한 범위는 [PROGRESS.md](PROGRESS.md)의 "Node.js 22 호환성 및 배포본 검증"에 있다.
+
 ## 문서
 
 - 프로토콜 명세(드라이버의 기준) : [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)
