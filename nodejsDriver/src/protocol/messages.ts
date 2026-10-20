@@ -154,6 +154,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function integer(value: unknown, minimum = 0): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
+}
+
+function validColumn(value: unknown): boolean {
+  if (!isRecord(value) || typeof value["name"] !== "string" || typeof value["typeName"] !== "string" || typeof value["declared"] !== "string") return false;
+  for (const key of ["length", "precision", "scale", "fractionalPrecision", "leadingPrecision"]) {
+    if (value[key] !== undefined && !integer(value[key])) return false;
+  }
+  return ["startField", "endField"].every((key) => value[key] === undefined || typeof value[key] === "string");
+}
+
+function validSession(value: unknown): boolean {
+  return isRecord(value) && integer(value["id"], 1) && typeof value["user"] === "string" &&
+    (value["tablespace"] === null || typeof value["tablespace"] === "string") &&
+    typeof value["timeZone"] === "string" && typeof value["autocommit"] === "boolean";
+}
+
+function scalar(value: unknown): boolean {
+  return value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value));
+}
+
 export type DecodeResponseResult = { ok: true; response: Response } | { ok: false; reason: string };
 
 /** 응답 본문을 해석한다. 봉투와 핵심 필드의 모양만 확인하고, 모르는 필드는 그대로 둔다. */
@@ -173,18 +195,34 @@ export function decodeResponse(body: Uint8Array): DecodeResponseResult {
     condition ? null : { ok: false, reason: `Response "${type}" has an invalid field: ${what}.` };
   const problem = ((): DecodeResponseResult | null => {
     switch (type) {
-      case "helloOk":
-        return need(typeof parsed["version"] === "number" && typeof parsed["maxMessageBytes"] === "number", "version");
+      case "helloOk": {
+        const udp = parsed["udp"];
+        return need(integer(parsed["version"], 1) && integer(parsed["maxMessageBytes"], 1) && parsed["maxMessageBytes"] <= MAX_MESSAGE_BYTES &&
+          integer(parsed["defaultFetchSize"], 1) && typeof parsed["server"] === "string" && typeof parsed["mechanism"] === "string" &&
+          (udp === undefined || (isRecord(udp) && integer(udp["sessionTimeoutMs"]) && integer(udp["maxPacketSize"], 64) && udp["maxPacketSize"] <= 65_507)), "hello fields");
+      }
       case "authChallenge":
         return need(typeof parsed["serverFirst"] === "string", "serverFirst");
       case "authOk":
-        return need(typeof parsed["serverFinal"] === "string" && isRecord(parsed["session"]), "serverFinal, session");
-      case "rows":
-        return need(Array.isArray(parsed["rows"]) && typeof parsed["hasMore"] === "boolean", "rows, hasMore");
+        return need(typeof parsed["serverFinal"] === "string" && validSession(parsed["session"]), "serverFinal, session");
+      case "rows": {
+        const columns = parsed["columns"];
+        const rows = parsed["rows"];
+        return need(Array.isArray(rows) && rows.every((row) => Array.isArray(row) && row.every(scalar) &&
+          (!Array.isArray(columns) || row.length === columns.length)) && typeof parsed["hasMore"] === "boolean" &&
+          (columns === undefined || (Array.isArray(columns) && columns.every(validColumn))) &&
+          (parsed["cursor"] === undefined || integer(parsed["cursor"], 1)) &&
+          (parsed["hasMore"] !== true || integer(parsed["cursor"], 1)), "rows, hasMore, cursor, columns");
+      }
       case "ok":
-        return need(typeof parsed["message"] === "string", "message");
-      case "error":
-        return need(typeof parsed["sqlState"] === "string" && typeof parsed["code"] === "number" && typeof parsed["message"] === "string", "sqlState, code, message");
+        return need(typeof parsed["message"] === "string" && (parsed["rowCount"] === undefined || integer(parsed["rowCount"])), "message, rowCount");
+      case "error": {
+        const position = parsed["position"];
+        return need(typeof parsed["sqlState"] === "string" && /^[A-Z0-9]{5}$/.test(parsed["sqlState"]) && integer(parsed["code"]) && typeof parsed["message"] === "string" &&
+          (position === undefined || (isRecord(position) && integer(position["offset"]) && integer(position["line"], 1) && integer(position["column"], 1))), "sqlState, code, message, position");
+      }
+      case "bye":
+        return need(parsed["rolledBack"] === undefined || typeof parsed["rolledBack"] === "boolean", "rolledBack");
       default:
         return null;
     }

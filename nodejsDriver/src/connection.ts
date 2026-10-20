@@ -102,20 +102,15 @@ export class QueryResult {
 
   /** 행을 컬럼 이름을 키로 하는 객체로 바꾼다. 같은 이름의 컬럼이 둘이면 뒤의 것이 남는다. */
   records(): Array<Record<string, Value>> {
-    return this.rows.map((row) => {
-      const record: Record<string, Value> = {};
-      this.columns.forEach((column, index) => {
-        record[column.name] = row[index] as Value;
-      });
-      return record;
-    });
+    return this.rows.map((row) => Object.fromEntries(this.columns.map((column, index) => [column.name, row[index] as Value])));
   }
 }
 
-/** 문장 맨 앞의 주석을 건너뛰고 첫 두 낱말(대문자)을 돌려준다. 트랜잭션 상태를 가늠하는 데만 쓴다. */
-function leadingWords(sql: string): [string, string] {
+/** 낱말 사이의 주석도 건너뛰고 처음 세 낱말을 읽는다. 문자열·식별자 안까지 해석하지 않는다. */
+function leadingWords(sql: string): string[] {
   let rest = sql;
-  for (;;) {
+  const words: string[] = [];
+  while (words.length < 3) {
     rest = rest.trimStart();
     if (rest.startsWith("--")) {
       const end = rest.indexOf("\n");
@@ -124,11 +119,13 @@ function leadingWords(sql: string): [string, string] {
       const end = rest.indexOf("*/");
       rest = end < 0 ? "" : rest.slice(end + 2);
     } else {
-      break;
+      const match = /^([A-Za-z_]+)/.exec(rest);
+      if (match === null) break;
+      words.push(match[1]!.toUpperCase());
+      rest = rest.slice(match[0].length);
     }
   }
-  const match = /^([A-Za-z_]+)(?:\s+([A-Za-z_]+))?/.exec(rest);
-  return [(match?.[1] ?? "").toUpperCase(), (match?.[2] ?? "").toUpperCase()];
+  return words;
 }
 
 const SCHEMA_STATEMENTS: ReadonlySet<string> = new Set(["CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE"]);
@@ -157,6 +154,11 @@ export class Connection extends EventEmitter {
   private autocommit: boolean;
   private readonly defaultAutocommit: boolean;
   private inTxn = false;
+  private pendingStatements = 0;
+  private uncertainSession = false;
+  private changedTablespace = false;
+  private changedTimeZone = false;
+  private readonly cursors = new Set<Cursor>();
   private releaser: (() => void) | null = null;
   /** 마지막으로 문장을 보낸 시각(ms)이다. 커넥션 풀이 쓴다. */
   lastUsedAt = Date.now();
@@ -266,8 +268,12 @@ export class Connection extends EventEmitter {
   async cursor(sql: string, params: readonly Param[] = [], options: QueryOptions = {}): Promise<Cursor> {
     const raw = await this.run(sql, params, options);
     const fetchSize = options.fetchSize ?? this.fetchSize;
-    if (raw.kind === "ok") return new Cursor(this.protocol, [], [], null, false, fetchSize, raw.rowCount, raw.message);
-    return new Cursor(this.protocol, raw.columns, raw.rows, raw.cursor, raw.hasMore, fetchSize, null, null);
+    const cursor = raw.kind === "ok"
+      ? new Cursor(this.protocol, [], [], null, false, fetchSize, raw.rowCount, raw.message)
+      : new Cursor(this.protocol, raw.columns, raw.rows, raw.cursor, raw.hasMore, fetchSize, null, null);
+    this.cursors.add(cursor);
+    cursor._onClose(() => this.cursors.delete(cursor));
+    return cursor;
   }
 
   /** 조회를 실행하고 행을 하나씩 비동기 반복자로 읽는다. 반복을 중간에 멈추면 커서를 닫는다. */
@@ -285,21 +291,34 @@ export class Connection extends EventEmitter {
     checkFetchSize(options.fetchSize, "fetchSize");
     const encoded = encodeParams(params);
     this.lastUsedAt = Date.now();
-    const raw = await this.protocol.execute(sql, encoded, options.fetchSize ?? this.fetchSize);
-    this.trackStatement(sql);
-    return raw;
+    this.pendingStatements++;
+    try {
+      const raw = await this.protocol.execute(sql, encoded, options.fetchSize ?? this.fetchSize);
+      this.trackStatement(sql);
+      return raw;
+    } catch (error) {
+      // 시간 초과나 실패한 DDL처럼 서버의 최종 상태를 추정할 수 없는 경우에는 풀에서 반드시 초기화한다.
+      this.uncertainSession = true;
+      throw error;
+    } finally {
+      this.pendingStatements--;
+    }
   }
 
   /** 성공한 문장에서 자동 커밋과 트랜잭션 상태를 가늠한다. */
   private trackStatement(sql: string): void {
-    const [first, second] = leadingWords(sql);
+    const [first = "", second, third] = leadingWords(sql);
     if (first === "BEGIN" || (first === "START" && second === "TRANSACTION")) {
       this.inTxn = true;
     } else if (first === "COMMIT" || (first === "ROLLBACK" && second !== "TO")) {
       this.inTxn = false;
     } else if (first === "SET" && second === "AUTOCOMMIT") {
-      const text = sql.replace(/;\s*$/, "").trim().toUpperCase();
-      this.autocommit = !text.endsWith("OFF");
+      this.autocommit = third !== "OFF";
+      if (this.autocommit) this.inTxn = false;
+    } else if (first === "USE") {
+      this.changedTablespace = true;
+    } else if (first === "SET" && second === "TIME" && third === "ZONE") {
+      this.changedTimeZone = true;
     } else if (SCHEMA_STATEMENTS.has(first)) {
       this.inTxn = false; // DDL, GRANT, REVOKE 는 실행 전후에 자동으로 커밋된다.
     } else if (!this.autocommit && first !== "") {
@@ -382,20 +401,43 @@ export class Connection extends EventEmitter {
     this.releaser = release;
   }
 
-  /** @internal 풀에 돌려줄 때 되돌릴 것이 있는지이다. (트랜잭션 중이거나 자동 커밋 상태가 로그인 때와 다르다) */
+  /** @internal 트랜잭션·설정·커서 또는 완료 여부가 불확실한 문장을 초기화해야 하는지이다. */
   get _needsReset(): boolean {
-    return this.inTxn || this.autocommit !== this.defaultAutocommit;
+    return this.inTxn || this.autocommit !== this.defaultAutocommit || this.pendingStatements > 0 || this.uncertainSession ||
+      this.cursors.size > 0 || this.changedTablespace || this.changedTimeZone;
   }
 
   /** @internal 풀에 돌려주기 전에 접속을 로그인 직후의 상태로 되돌린다. */
   async _reset(): Promise<void> {
-    if (this.inTxn) await this.rollback();
-    if (this.autocommit !== this.defaultAutocommit) await this.setAutoCommit(this.defaultAutocommit);
+    // 추정값에 기대지 않고 선행 문장 뒤에 ROLLBACK을 보내 서버 상태를 확정한다.
+    await this.rollback();
+    for (const cursor of this.cursors) await cursor.close();
+    if (this.changedTablespace || this.uncertainSession) {
+      if (this.sessionInfo.tablespace === null) throw new Error("Cannot restore a session without a default tablespace.");
+      await this.query(`USE "${this.sessionInfo.tablespace.replace(/"/g, '""')}"`);
+    }
+    if (this.changedTimeZone || this.uncertainSession) {
+      await this.query(`SET TIME ZONE '${this.sessionInfo.timeZone.replace(/'/g, "''")}'`);
+    }
+    await this.setAutoCommit(this.defaultAutocommit);
+    this.uncertainSession = false;
+    this.changedTablespace = false;
+    this.changedTimeZone = false;
   }
 }
 
 /** 조회 결과를 나누어 읽는 커서이다. `Connection.cursor` 가 만든다. */
 export class Cursor implements AsyncIterable<Row> {
+  private closeListener: (() => void) | null = null;
+
+  /** @internal 풀에서 열린 커서를 추적한다. */
+  _onClose(listener: () => void): void { this.closeListener = listener; }
+
+  private notifyClosed(): void {
+    const listener = this.closeListener;
+    this.closeListener = null;
+    listener?.();
+  }
   private buffer: Row[];
   private cursorId: number | null;
   private hasMore: boolean;
@@ -429,12 +471,14 @@ export class Cursor implements AsyncIterable<Row> {
     if (this.buffer.length > 0) {
       const rows = this.buffer;
       this.buffer = [];
+      if (!this.hasMore) this.notifyClosed();
       return rows;
     }
     if (this.closed || !this.hasMore || this.cursorId === null) return [];
     const batch = await this.protocol.fetch(this.cursorId, size ?? this.fetchSize);
     this.cursorId = batch.cursor;
     this.hasMore = batch.hasMore;
+    if (!this.hasMore) this.notifyClosed();
     return batch.rows.map((raw) => decodeRow(raw, this.columns as ColumnMeta[]));
   }
 
@@ -446,6 +490,7 @@ export class Cursor implements AsyncIterable<Row> {
     const id = this.cursorId;
     this.cursorId = null;
     this.hasMore = false;
+    this.notifyClosed();
     if (id !== null && !this.protocol.isClosed) {
       try {
         await this.protocol.closeCursor(id);

@@ -29,7 +29,7 @@ export type Target =
   | { kind: "udp"; host: string; port: number };
 
 export interface ProtocolOptions {
-  /** 연결과 핸드셰이크의 제한 시간(ms)이다. */
+  /** 연결부터 핸드셰이크와 인증까지의 제한 시간(ms)이다. */
   connectTimeoutMs: number;
   /** 요청마다 응답을 기다리는 제한 시간(ms)이다. 없으면 기다린다. (문장이 잠금을 기다리면 30초까지 걸릴 수 있다) */
   requestTimeoutMs?: number;
@@ -89,6 +89,7 @@ export class ProtocolConnection {
   private constructor(
     private readonly transport: MessageTransport,
     private readonly options: ProtocolOptions,
+    private readonly connectDeadline: number,
   ) {
     transport.setHandlers({
       onMessage: (body) => this.handleMessage(body),
@@ -98,15 +99,17 @@ export class ProtocolConnection {
 
   /** 연결하고 핸드셰이크(`hello`)까지 마친다. 로그인은 `login` 으로 따로 한다. */
   static async open(target: Target, options: ProtocolOptions): Promise<ProtocolConnection> {
+    const deadline = Date.now() + options.connectTimeoutMs;
     const transport =
       target.kind === "tcp"
         ? await connectTcp(target.host, target.port, target.ssl, options.connectTimeoutMs, options.internal)
         : await connectUdp(target.host, target.port);
-    const connection = new ProtocolConnection(transport, options);
+    const connection = new ProtocolConnection(transport, options, deadline);
     try {
       // 서버가 응답하지 않는 경우(UDP 에서 서버가 없을 때 등)를 연결 제한 시간 안에 알아차린다.
-      const hello = await connection.request({ type: "hello", versions: [PROTOCOL_VERSION], client: options.clientName }, options.connectTimeoutMs);
+      const hello = await connection.request({ type: "hello", versions: [PROTOCOL_VERSION], client: options.clientName }, connection.remainingConnectTime());
       if (hello.type !== "helloOk") throw connectionFailure("Unexpected response to hello.");
+      if (hello.version !== PROTOCOL_VERSION || hello.mechanism !== AUTH_MECHANISM) throw connectionFailure("The server selected an unsupported protocol version or authentication mechanism.");
       connection.helloInfo = hello;
       transport.onHello?.(hello);
       connection.startKeepAlive(hello.udp?.sessionTimeoutMs ?? 0);
@@ -148,17 +151,18 @@ export class ProtocolConnection {
   // -------------------------------------------------------------------------
 
   private handleMessage(body: Buffer): void {
+    if (this.closed) return;
     const decoded = decodeResponse(body);
     if (!decoded.ok) {
-      this.failAll(connectionFailure(`Invalid response from the server: ${decoded.reason}`));
-      this.transport.close();
+      this.closedError = connectionFailure(`Invalid response from the server: ${decoded.reason}`);
+      this.abort();
       return;
     }
     const response = decoded.response;
     if (response.id === 0) {
       // 서버가 먼저 보낸 메시지이다. (유휴 시간 초과, 서버 종료) 서버는 곧 접속을 닫는다.
-      if (response.type === "error") this.closedError = toDbError(response);
-      this.failAll(this.closedError ?? connectionFailure("The server closed the connection."));
+      this.closedError = response.type === "error" ? toDbError(response) : connectionFailure("Unexpected unsolicited response from the server.");
+      this.abort();
       return;
     }
     const waiting = this.pending.get(response.id);
@@ -245,8 +249,8 @@ export class ProtocolConnection {
     });
   }
 
-  private async expect<T extends Response["type"]>(type: T, message: Record<string, unknown> & { type: string }): Promise<Extract<Response, { type: T }>> {
-    const response = await this.request(message);
+  private async expect<T extends Response["type"]>(type: T, message: Record<string, unknown> & { type: string }, timeoutMs?: number): Promise<Extract<Response, { type: T }>> {
+    const response = await this.request(message, timeoutMs ?? this.options.requestTimeoutMs);
     if (response.type !== type) throw connectionFailure(`Unexpected response "${response.type}" to "${message.type}".`);
     return response as Extract<Response, { type: T }>;
   }
@@ -254,6 +258,12 @@ export class ProtocolConnection {
   // -------------------------------------------------------------------------
   // 인증
   // -------------------------------------------------------------------------
+
+  private remainingConnectTime(): number {
+    const remaining = this.connectDeadline - Date.now();
+    if (remaining <= 0) throw connectionFailure("Timed out connecting and authenticating to the server.");
+    return remaining;
+  }
 
   /** SCRAM-SHA-256 으로 로그인한다. 비밀번호는 평문으로 오가지 않으며, 서버 서명을 검증해 서버를 확인한다. */
   async login(params: LoginParams): Promise<SessionInfoMessage> {
@@ -264,7 +274,7 @@ export class ProtocolConnection {
       clientFirst: clientFirstMessage(params.user, clientNonce),
       ...(params.tablespace === undefined ? {} : { tablespace: params.tablespace }),
       ...(params.timeZone === undefined ? {} : { timeZone: params.timeZone }),
-    });
+    }, this.remainingConnectTime());
     const parsed = parseServerFirst(challenge.serverFirst);
     // 서버 nonce 는 우리 nonce 로 시작해야 한다. 아니면 응답을 되돌려 보내는 공격일 수 있다.
     if (parsed === null || !parsed.nonce.startsWith(clientNonce) || parsed.nonce.length === clientNonce.length) {
@@ -274,7 +284,7 @@ export class ProtocolConnection {
     const withoutProof = clientFinalWithoutProof(parsed.nonce);
     const message = authMessage(clientFirstBare(params.user, clientNonce), challenge.serverFirst, withoutProof);
     const proof = computeClientProof(params.password, parsed.salt, parsed.iterations, message);
-    const ok = await this.expect("authOk", { type: "authFinish", clientFinal: `${withoutProof},p=${proof}` });
+    const ok = await this.expect("authOk", { type: "authFinish", clientFinal: `${withoutProof},p=${proof}` }, this.remainingConnectTime());
     const signature = ok.serverFinal.startsWith("v=") ? ok.serverFinal.slice(2) : "";
     if (signature === "" || !verifyServerSignature(params.password, parsed.salt, parsed.iterations, message, signature)) {
       this.abort();
@@ -294,6 +304,11 @@ export class ProtocolConnection {
   async execute(sql: string, params: readonly ParamValue[], fetchSize?: number): Promise<RawOutcome> {
     const response = await this.request({ type: "execute", sql, params, ...(fetchSize === undefined ? {} : { fetchSize }) });
     if (response.type === "rows") {
+      if (response.columns === undefined) {
+        this.closedError = connectionFailure("The execute response is missing column metadata.");
+        this.abort();
+        throw this.closedError;
+      }
       return { kind: "rows", columns: response.columns ?? [], rows: response.rows, cursor: response.cursor ?? null, hasMore: response.hasMore };
     }
     if (response.type === "ok") return { kind: "ok", message: response.message, rowCount: response.rowCount ?? null };

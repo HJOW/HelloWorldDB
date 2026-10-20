@@ -255,15 +255,14 @@ export class TestServer {
     if (this.disposed) return;
     this.disposed = true;
     undisposed.delete(this);
-    if (this.livePid() !== null) {
-      this.hwdb(["stop", "--timeout", "20"]);
-      const pid = this.livePid();
-      if (pid !== null) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // 그 사이에 끝났다.
-        }
+    // 파일 존재 검사 대신 실제 제어 채널로 먼저 정상 종료를 시도한다.
+    this.hwdb(["stop", "--timeout", "20"]);
+    const pid = this.livePid();
+    if (pid !== null) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // 그 사이에 끝났다.
       }
     }
     try {

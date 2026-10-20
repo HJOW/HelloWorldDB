@@ -105,8 +105,15 @@ export function streamTransport(socket: net.Socket): MessageTransport {
   const decoder = new FrameDecoder(() => MAX_MESSAGE_BYTES);
   let handlers: TransportHandlers | null = null;
   let closed = false;
+  let closeNotified = false;
   let failure: Error | null = null;
   const buffered: Buffer[] = [];
+
+  const notifyClose = (): void => {
+    if (!closed || handlers === null || closeNotified) return;
+    closeNotified = true;
+    handlers.onClose(failure);
+  };
 
   const deliver = (chunk: Buffer): void => {
     try {
@@ -127,11 +134,11 @@ export function streamTransport(socket: net.Socket): MessageTransport {
   socket.once("close", () => {
     if (closed) return;
     closed = true;
-    handlers?.onClose(failure);
+    notifyClose();
   });
   return {
     send(body: Buffer): void {
-      if (socket.destroyed || !socket.writable) return;
+      if (socket.destroyed || !socket.writable) throw connectionFailure("The connection is closed.");
       socket.write(encodeFrame(body));
     },
     close(): void {
@@ -144,10 +151,8 @@ export function streamTransport(socket: net.Socket): MessageTransport {
     setHandlers(next: TransportHandlers): void {
       handlers = next;
       for (const chunk of buffered.splice(0)) deliver(chunk);
-      if (socket.destroyed && !closed) {
-        closed = true;
-        next.onClose(failure);
-      }
+      if (socket.destroyed) closed = true;
+      notifyClose();
     },
   };
 }

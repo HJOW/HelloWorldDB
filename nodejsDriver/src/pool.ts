@@ -3,7 +3,7 @@
  *
  * 담당
  *  - 접속을 `max` 개까지 만들어 두고 빌려주고(`acquire`) 돌려받는다(`Connection.release`). 모자라면 빌릴 때까지 줄 서서 기다린다.
- *  - 돌려받은 접속은 로그인 직후의 상태로 되돌린다 : 커밋하지 않은 트랜잭션은 롤백하고, 바꾼 자동 커밋 상태는 되돌린다.
+ *  - 돌려받은 접속은 트랜잭션을 롤백하고 남은 커서를 닫으며, 자동 커밋·테이블스페이스·타임존을 복원한다.
  *    되돌리지 못하면(접속이 끊겼다 등) 그 접속은 버린다.
  *  - 끊긴 접속(서버가 유휴 시간 초과로 끊거나 서버가 내려간 경우)은 풀에서 빠지고, 빌릴 때 새로 만든다.
  *  - 오래 놀린 접속(`idleTimeoutMs`)과 너무 오래 쓴 접속(`maxLifetimeMs`)을 닫는다.
@@ -66,6 +66,8 @@ export class Pool {
   private readonly releasing = new Set<Connection>();
   private readonly createdAt = new WeakMap<Connection, number>();
   private readonly waiters: Waiter[] = [];
+  /** 접속을 만드는 동안에도 acquire를 종료·시간 초과 처리할 수 있게 보관한다. */
+  private readonly connectingWaiters = new Set<Waiter>();
   private creating = 0;
   private closing = false;
   private reaper: ReturnType<typeof setInterval> | null = null;
@@ -128,16 +130,19 @@ export class Pool {
       }
       if (this.total() >= this.max) break;
       const waiter = this.waiters.shift() as Waiter;
+      this.connectingWaiters.add(waiter);
       this.creating++;
       Connection.connect(this.connectOptions).then(
         (created) => {
           this.creating--;
+          this.connectingWaiters.delete(waiter);
           this.createdAt.set(created, Date.now());
           created.on("close", () => this.forget(created));
           if (waiter.done || this.closing) {
             // 기다리던 요청이 이미 포기했거나 풀이 닫혔다.
             if (this.closing) created.destroy();
             else this.keepIdle(created);
+            this.dispatch();
             this.settle();
             return;
           }
@@ -145,6 +150,7 @@ export class Pool {
         },
         (error: unknown) => {
           this.creating--;
+          this.connectingWaiters.delete(waiter);
           if (!waiter.done) {
             waiter.done = true;
             if (waiter.timer !== null) clearTimeout(waiter.timer);
@@ -318,7 +324,8 @@ export class Pool {
         clearInterval(this.reaper);
         this.reaper = null;
       }
-      for (const waiter of this.waiters.splice(0)) {
+      for (const waiter of [...this.waiters.splice(0), ...this.connectingWaiters]) {
+        if (waiter.done) continue;
         waiter.done = true;
         if (waiter.timer !== null) clearTimeout(waiter.timer);
         waiter.reject(new DbError("08003", ERROR_CODES.CONNECTION_FAILURE, "The pool is closed."));
