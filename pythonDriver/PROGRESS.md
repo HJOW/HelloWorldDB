@@ -8,12 +8,13 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
-- 진행 단계 : **PY-1 완료** (패키지 구성, 호환 계층, 시험 실행기, 통합 시험 도우미). TCP 접속과 공개 DB-API는 아직 구현하지 않았다.
+- 진행 단계 : **PY-2 완료** (TCP 프로토콜 코어). `errors.py`(PEP 249 매핑), `_protocol.py`(프레임·메시지·파라미터), `_scram.py`(SCRAM-SHA-256), `_tcp.py`(TCP 접속·인증·실행·커서)를 구현했다. 공개 DB-API는 PY-3에서 이 위를 감싼다.
 - 이 PC (`DESKTOP-HJOW`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\P312\python.exe`이다. 2026-10-20 실제 실행으로 재확인했다. 이전 기록의 `C:\Python\python.exe`(3.13.1)는 현재 없어 이번에 시험하지 않았다.
+- 이 PC (`VM-W11-Codex`) 의 Python : 하한 **3.2**는 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\312\python.exe`이다. 2026-10-20 실제 실행으로 확인했다 (OpenSSL 1.0.0a, `unicodedata` 6.0.0. `DESKTOP-HJOW` 의 3.2와 같다).
 - 착수 조건 : `rdbms` 11단계와 `nodejsDriver` 12단계 완료로 충족. 사용자의 작업 진행 지시에 따라 기존 설계 기본안의 배포 이름과 import 이름을 적용하고 AGENTS.md D절에 계획을 반영했다.
-- 검증 : Windows / Node.js 24.22.0 / Python **3.2, 3.12.4 각각 34개 통과**, 실패·건너뜀 0. 임시 `hwdb start`/`stop`, CLI를 통한 TCP 로그인·한글 질의, 시작 실패·시험 본문 예외·정리 실패 재시도, distutils/setuptools 빌드와 소스 밖 import 포함. Python 드라이버의 접속 검증은 아니다.
+- 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 77개 통과**, 실패·건너뜀 0. 가짜 TCP 서버 14개(프레임 분할·크기·검증 실패·`id: 0`·끊김·제한 시간), 실제 `rdbms` 3개(로그인·질의·대량 커서·오류), 기존 PY-1 34개와 SCRAM·프로토콜 단위 26개를 포함한다. `rdbms/dist` 가 오래된 경우 실제 서버 시험이 구동 실패로 오류가 나며, 이번에 `rdbms` 를 다시 빌드한 뒤 통과했다 (제품 결함 아님).
 - 배포 구성 : Python 3.12.4에서 소스 배포본과 `py3-none-any` 휠을 생성했다. 휠의 `Requires-Python: >=3.2`와 실행 의존 없음도 확인하고, 깨끗한 임시 가상 환경에 `pip --no-index --no-deps`로 설치해 소스 트리 밖 import와 PBKDF2 실행을 검증했다. 빌드 도구는 setuptools를 사용한다.
-- 다음 작업 : **PY-2 (TCP 프로토콜 코어)**. 프레임의 길이 선검사, 요청/응답 id, `id: 0` 오류, SCRAM nonce·반복 횟수·서명 검증부터 구현한다. `tests/rdbms_instance.py`를 실제 서버 시험에 재사용한다.
+- 다음 작업 : **PY-3 (DB-API 2.0 계층)**. `_tcp.TcpConnection` 의 rows/ok dict를 Python 값으로 바꾸고 `connect()`, `Connection`, `Cursor`, 예외 속성을 공개한다. `tests/rdbms_instance.py`를 실제 서버 시험에 재사용한다.
 
 ## 작업 규칙
 
@@ -39,6 +40,8 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 |---|---|---|---|---|---|
 | `DESKTOP-HJOW` | 하한 | `C:\Program Files\Python\P302` | `C:\Program Files\Python\P302\python.exe` | 3.2 (r32:88445, 2011-02-20, MSC v.1500 64비트) | OpenSSL **1.0.0a**(2010-06), `unicodedata` 6.0.0, **pip·setuptools 없음**(`distutils` 는 있음) |
 | `DESKTOP-HJOW` | 현재 구할 수 있는 상위 버전 | `C:\Program Files\Python\P312` | `C:\Program Files\Python\P312\python.exe` (PATH 의 `python`) | 3.12.4 | OpenSSL 3.0.13, setuptools 84.0.0. 2026-10-20 실제 확인 |
+| `VM-W11-Codex` | 하한 | `C:\Program Files\Python\302` | `C:\Program Files\Python\302\python.exe` | 3.2 | OpenSSL **1.0.0a**, `unicodedata` 6.0.0. 2026-10-20 실제 확인. 공백 경로이므로 PowerShell에서는 `& '...'` 로 실행한다 |
+| `VM-W11-Codex` | 현재 구할 수 있는 상위 버전 | `C:\Program Files\Python\312` | `C:\Program Files\Python\312\python.exe` (PATH 의 `python`) | 3.12.4 | Node.js 24.19.0. 2026-10-20 실제 확인 |
 
 - 이전 기록의 `C:\Python\python.exe`(3.13.1)는 2026-10-20 현재 경로가 없어 시험하지 못했다. 이 문서에서 상위 버전 시험이라고 하면 이번에는 3.12.4를 뜻하며 최신 안정판 전체의 검증을 뜻하지 않는다.
 
@@ -74,15 +77,17 @@ PY-1 검증 보충 : PBKDF2는 RFC 7914 11절의 두 SHA-256 벡터(다중 블�
 
 ### PY-2. 프로토콜 코어 (TCP)
 
-- [ ] 프레임 : 본문 길이(uint32 빅엔디언) + UTF-8 JSON. 길이는 본문을 모으기 **전에** 검사한다 (인증 전 64 KiB, 후 16 MiB). 한 번에 여러 메시지가 오거나 나뉘어 와도 처리한다 (상세 8, 프로토콜 2-1)
-- [ ] 메시지 : 요청 `id`(1부터) 와 응답 짝짓기, `id: 0` 의 서버 오류(서버 종료 `57P01`, 유휴 시간 초과 `57P05`)로 접속 닫힘 처리, 끊기면 `08006`. 한 접속에서 동시에 요청 하나만 둔다 (아래 "동시성")
-- [ ] 핸드셰이크와 버전 협상 (`versions: [1]`, `helloOk` 확인)
-- [ ] SCRAM-SHA-256 (프로토콜 7절) : 사용자 이름 이스케이프(`=2C`, `=3D`), 난수 nonce(`os.urandom`), 비밀번호는 **NFKC 정규화**(SASLprep 아님), PBKDF2-HMAC-SHA256,
+- [x] 프레임 : 본문 길이(uint32 빅엔디언) + UTF-8 JSON. 길이는 본문을 모으기 **전에** 검사한다 (인증 전 64 KiB, 후 16 MiB). 한 번에 여러 메시지가 오거나 나뉘어 와도 처리한다 (상세 8, 프로토콜 2-1)
+- [x] 메시지 : 요청 `id`(1부터) 와 응답 짝짓기, `id: 0` 의 서버 오류(서버 종료 `57P01`, 유휴 시간 초과 `57P05`)로 접속 닫힘 처리, 끊기면 `08006`. 한 접속에서 동시에 요청 하나만 둔다 (아래 "동시성")
+- [x] 핸드셰이크와 버전 협상 (`versions: [1]`, `helloOk` 확인)
+- [x] SCRAM-SHA-256 (프로토콜 7절) : 사용자 이름 이스케이프(`=2C`, `=3D`), 난수 nonce(`os.urandom`), 비밀번호는 **NFKC 정규화**(SASLprep 아님), PBKDF2-HMAC-SHA256,
   서버 nonce 가 자기 nonce 로 시작하고 더 긴지, 반복 횟수 1 ~ 10,000,000, 서버 서명 검증(상수 시간 비교). 하나라도 어긋나면 접속을 끊고 `08006`. RFC 7677 시험 벡터로 검증한다
-- [ ] 실행 `execute`(`fetchSize` 선택), `fetch`, `closeCursor`, `ping`, `close`(응답 `bye.rolledBack` 을 기록해 둔다)
-- [ ] 오류 응답을 예외로 : `sqlState`, `code`, `message`, `position`(줄·칸·offset)을 예외 속성으로 싣는다 (예외 계층은 PY-3)
-- [ ] 연결 제한 시간, 응답 제한 시간 옵션 (문장이 잠금을 기다리면 서버 설정 `transaction.lockTimeoutMs`(기본 30초)까지 걸리므로 응답 제한 시간의 기본은 없음)
-- [ ] 시험 : 가짜 서버(소켓 쌍)로 프레임·부분 읽기·크기 초과·검증 실패를 단위 시험하고, 실제 `rdbms` 로 로그인·질의·대량 결과·오류를 통합 시험한다
+- [x] 실행 `execute`(`fetchSize` 선택), `fetch`, `closeCursor`, `ping`, `close`(응답 `bye.rolledBack` 을 기록해 둔다)
+- [x] 오류 응답을 예외로 : `sqlState`, `code`, `message`, `position`(줄·칸·offset)을 예외 속성으로 싣는다 (`errors.py`에 PEP 249 계층과 매핑표를 함께 두어 PY-3에서 그대로 쓴다)
+- [x] 연결 제한 시간, 응답 제한 시간 옵션 (문장이 잠금을 기다리면 서버 설정 `transaction.lockTimeoutMs`(기본 30초)까지 걸리므로 응답 제한 시간의 기본은 없음)
+- [x] 시험 : 가짜 서버(루프백 TCP)로 프레임·부분 읽기·크기 초과·검증 실패를 단위 시험하고, 실제 `rdbms` 로 로그인·질의·대량 결과·오류를 통합 시험한다
+
+PY-2 검증 보충 : 3.2와 3.12.4에서 77개씩 통과했다 (기존 34개 + 신규 43개. SCRAM 8개, 프로토콜 18개, 가짜 TCP 14개, 실제 서버 3개). `base64.b64decode` 는 3.2에서 틀린 입력도 버리지 않고 받아들이므로 salt·서명의 base64를 직접 검사한다. `socket.create_connection` 과 블로킹 소켓의 제한 시간으로 연결·응답 제한을 구현하고 EINTR은 `_compat` 으로 다시 시도한다. 요청 제한 시간이 지나도 접속은 유지하며 늦은 응답의 옛 `id` 는 무시하고 다음 응답을 기다린다.
 
 ### PY-3. DB-API 2.0 계층
 
@@ -242,9 +247,13 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 ## 인수인계 사항
 
 - `DESKTOP-HJOW` 에서 Python 3.2 의 설치 디렉토리는 `C:\Program Files\Python\P302`, 실행 파일은 `C:\Program Files\Python\P302\python.exe` 이다. 3.2 를 실행할 때는 이 호스트에서 전체 경로를 쓴다 (`python`은 2026-10-20 재확인 기준 3.12.4이다).
-  이 경로는 `DESKTOP-HJOW` 에만 해당한다. 다른 PC의 설치 경로를 이 값으로 가정하지 않으며, 소스·시험·스크립트에서는 PC별 경로를 고정하지 않고 인자나 환경 변수로 받는다. 3.2 에는 pip·setuptools 가 없어 의존 패키지를 설치할 수 없으므로 표준 라이브러리만 쓰는 방침이 곧 필수 조건이다.
-- PY-1 실행 명령 (이 PC 예) : `python scripts/run_tests.py --python "C:\Program Files\Python\P302\python.exe" --python "C:\Program Files\Python\P312\python.exe"`. `tests/rdbms_instance.py`는 `HWDB_TEST_NODE`, `HWDB_TEST_RDBMS_DIR`로 시험 환경을 바꿀 수 있다. 정상 종료 확인 전에 임시 데이터 디렉토리를 지우지 않는다. 구동 실패나 정리 실패를 통합 시험의 건너뜀으로 처리하지 않는다.
-- PY-1의 패키지 `__init__.py`는 버전만 노출한다. `connect`, `Connection`, 예외 계층, DB-API 속성을 이미 제공한다고 가정하지 않는다. `_compat`의 공개 내부 도우미는 `monotonic`, `compare_digest`, `pbkdf2_hmac`, `hexlify`/`unhexlify`, `Mapping`/`Sequence`, `socket_error_code`와 errno 판정 함수, `which`이다.
+  `VM-W11-Codex` 에서는 설치 디렉토리 `C:\Program Files\Python\302`, 실행 파일 `C:\Program Files\Python\302\python.exe` 이며 `python`(3.12.4)은 `C:\Program Files\Python\312\python.exe` 이다. 공백 경로이므로 PowerShell에서는 `& 'C:\Program Files\Python\302\python.exe' -m unittest discover -s tests -v` 처럼 `&` 와 따옴표로 실행한다.
+  이 경로는 각 호스트에만 해당한다. 다른 PC의 설치 경로를 이 값으로 가정하지 않으며, 소스·시험·스크립트에서는 PC별 경로를 고정하지 않고 인자나 환경 변수로 받는다. 3.2 에는 pip·setuptools 가 없어 의존 패키지를 설치할 수 없으므로 표준 라이브러리만 쓰는 방침이 곧 필수 조건이다.
+- PY-1 실행 명령 (DESKTOP-HJOW 예) : `python scripts/run_tests.py --python "C:\Program Files\Python\P302\python.exe" --python "C:\Program Files\Python\P312\python.exe"`.
+  PY-2 실행 명령 (VM-W11-Codex 예) : `python scripts/run_tests.py --python "C:\Program Files\Python\302\python.exe" --python "C:\Program Files\Python\312\python.exe"`.
+  `tests/rdbms_instance.py`는 `HWDB_TEST_NODE`, `HWDB_TEST_RDBMS_DIR`로 시험 환경을 바꿀 수 있다. 정상 종료 확인 전에 임시 데이터 디렉토리를 지우지 않는다. 구동 실패나 정리 실패를 통합 시험의 건너뜀으로 처리하지 않는다.
+- PY-1의 패키지 `__init__.py`는 버전만 노출한다. `connect`, `Connection`, 예외 계층, DB-API 속성을 이미 제공한다고 가정하지 않는다. PY-2에서 둔 내부 API는 `helloworlddb.errors`(예외와 매핑), `helloworlddb._protocol`(프레임·메시지), `helloworlddb._scram`(SCRAM 계산), `helloworlddb._tcp`(저수준 TCP 접속)이다. 공개 DB-API는 PY-3에서 `helloworlddb.connection`, `cursor`, `types` 와 함께 `__init__.py` 에 노출한다. `_compat`의 공개 내부 도우미는 `monotonic`, `compare_digest`, `pbkdf2_hmac`, `hexlify`/`unhexlify`, `Mapping`/`Sequence`, `socket_error_code`와 errno 판정 함수, `which`이다.
+- PY-2의 `_tcp.TcpConnection` 은 rows/ok dict를 그대로 돌려준다. 값 변환과 `description`, `rowcount` 는 PY-3에서 한다. `execute(sql, params, fetch_size)` 의 params는 순서열만 받고 dict는 `TypeError` 이다. `close()` 는 예외를 올리지 않고 `{"rolledBack": bool}` 을 돌려준다. `login` 실패와 검증 실패는 접속을 끊고 `08006` 을 올린다.
 - 이번 환경의 제한된 셸에서는 RDBMS 빌드 출력 쓰기가 권한 오류로 실패했고, 임시 데몬 구동은 15초 내에 완료되지 않았다. 실행 권한을 확장한 `npx.cmd tsc -p tsconfig.json`으로 현재 서버를 다시 빌드한 뒤 권한을 확장한 실행에서 같은 시험을 수행해 통과했다. 해당 실패를 제품 결함이나 시험 건너뜀으로 처리하지 않았다. 마지막 조회에서 Python 시험용 데몬은 0개였고 초기 실패가 남긴 임시 디렉토리도 정리했다.
 - 프로토콜의 기준은 [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)(버전 1)이다. 구현 전에 15절의 클라이언트 체크리스트와 16절의 알려진 한계를 읽는다. 필드를 더하는 것은 버전을 올리지 않으므로 모르는 필드는 무시한다.
 - 같은 프로토콜의 참고 클라이언트 : `rdbms/src/client/connection.ts`(핸드셰이크, SCRAM, 실행, 커서, `ping`, 닫기), `transports.ts`(TCP·TLS, 인증서 오류 판정과 재시도), `udpTransport.ts`(UDP 전송), `rdbms/src/net/udpReliability.ts`(패킷 코덱, 송신자·수신자, RTO), `rdbms/src/auth/scram.ts`(SCRAM 계산).
@@ -268,3 +277,4 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - 2026-10-20 : 사용자 안내에 따라 Python 3.2 설치 경로를 호스트명 `DESKTOP-HJOW` 및 설치 디렉토리 `C:\Program Files\Python\P302` 와 함께 기록했다. 다른 PC 에는 해당 호스트명과 경로를 별도로 기록하도록 시험 환경 및 인수인계 문구를 갱신했다.
 - 2026-10-20 : 사용자 작업 지시에 따라 **PY-1 완료**. 기존 명명 기본안을 적용하고 AGENTS.md에 D절을 추가했다. 패키지·호환 계층·다중 Python 시험 실행기·AST/토큰 호환성 검사·실제 데몬 도우미와 시험 34개를 구현했다. Python 3.2와 3.12.4 각각 34개 통과, 실패·건너뜀 0이다. SCRAM용 PBKDF2는 RFC 7914 두 벡터를 통과했고, 3.2의 HMAC 생성자 차이와 AST의 `None` 표현 차이를 반영했다. 소스 배포본과 `py3-none-any` 휠을 생성했다. 3.13 경로가 현재 없는 것을 확인해 PC 환경 기록을 고쳤다. TCP 드라이버·DB-API·TLS·UDP는 아직 미구현이며 다음 작업은 PY-2이다. 커밋·푸시는 하지 않았다.
 - 2026-10-20 : 생성한 휠의 Python 하한·태그·실행 의존 메타데이터와 깨끗한 Python 3.12.4 가상 환경의 오프라인 설치·import·PBKDF2 실행을 확인했다. 최종 Python 시험 데몬 0개를 확인했다. 실제 접속을 쓰는 Hello World 배포 시험은 PY-6에 남겨 두었다.
+- 2026-10-20 : **PY-2 완료** (`VM-W11-Codex`). `errors.py`, `_protocol.py`, `_scram.py`, `_tcp.py` 와 시험 43개를 구현했다 (SCRAM 8개, 프로토콜 18개, 가짜 TCP 14개, 실제 서버 3개). Python 3.2(`C:\Program Files\Python\302\python.exe`)와 3.12.4(`C:\Program Files\Python\312\python.exe`)에서 각각 77개 통과, 실패·건너뜀 0이다. RFC 7677 벡터, 프레임 길이 선검사, 요청 `id` 짝짓기와 `id: 0` 종료, nonce·반복 횟수·서명 검증, 커서 나누어 받기와 `bye.rolledBack`, 연결·응답 제한 시간을 확인했다. 오래된 `rdbms/dist` 로 실제 서버 시험이 구동 실패가 나 `rdbms` 를 다시 빌드한 뒤 통과했다. 다음은 PY-3이며 커밋·푸시는 하지 않았다.
