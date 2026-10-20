@@ -587,11 +587,13 @@ SELECT * FROM HELLO
 6. Node.js 및 자바 패키지명은 `org.duckdns.hjow.helloworlddb` 로 시작하며, 그 뒤에 프로젝트 디렉토리 이름을 소문자로 붙인다.
    rdbms 는 `org.duckdns.hjow.helloworlddb.rdbms`, nodejsDriver 는 `org.duckdns.hjow.helloworlddb.nodejsdriver`,
    jdbc6 는 `org.duckdns.hjow.helloworlddb.jdbc6`, jdbc8 은 `org.duckdns.hjow.helloworlddb.jdbc8`, gui 는 `org.duckdns.hjow.helloworlddb.gui` 이다.
+   Python 드라이버의 배포 이름은 `org.duckdns.hjow.helloworlddb.pythondriver`, import 이름은 `helloworlddb` 로 한다.
 7. 타입스크립트 사용 시 타입스크립트 버전 6 에서도 컴파일이 가능하도록 호환성 있게 코드를 작성한다.
 
 # 구현 계획
 
 RDBMS → Node.js 드라이버 순서로 진행한다. 뒤 단계는 앞 단계의 결과물에 의존하므로, 앞 단계의 완료 기준을 채운 뒤 착수한다.
+Python 드라이버는 두 프로젝트 완료 후 진행한다. 세부 순서는 아래 D 절과 `pythonDriver/PROGRESS.md` 를 따른다.
 JDBC 와 GUI DB툴은 보류한다. 위의 둘을 마친 뒤 계획부터 다시 정한다.
 
 ## 공통 방침
@@ -659,4 +661,11 @@ JDBC 와 GUI DB툴은 보류한다. 위의 둘을 마친 뒤 계획부터 다시
 - 보류 전에 잡아 둔 초안은 각 프로젝트의 PROGRESS.md 에 참고용으로 남겨 두었다. 확정된 계획이 아니므로 그대로 착수하지 않는다.
 - JDBC 지원 범위는 상세 8-1을 따른다. `jdbc6`는 자바 6~7용 JDBC 4.0이며 자바 8 이상에서도 사용 가능해야 하고, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 자바 5는 지원하지 않는다.
 - RDBMS 사양 중 이들을 위한 부분(TLS 1.2를 쓸 수 없는 자바 6 환경용 TLS 최소 버전 설정, 메타데이터 조회용 딕셔너리 뷰)은 그대로 구현한다.
+
+## D. Python 드라이버 (`pythonDriver`)
+
+- Python 3.2 이상에서 같은 소스로 동작하고 DB-API 2.0(PEP 249)을 따른다. 실행과 시험은 표준 라이브러리만 사용한다.
+- 단계 번호는 `pythonDriver/PROGRESS.md` 의 PY-1 ~ PY-6 을 사용한다.
+  PY-1 패키지 구성과 호환 계층 → PY-2 TCP 프로토콜 코어 → PY-3 DB-API 계층 → PY-4 TLS → PY-5 UDP → PY-6 문서와 통합 검증 순서이다.
+- 완료 기준 : 실제 `rdbms` 와 TCP·TLS·UDP 접속, UDP 유실·중복, DB-API 규약과 타입 왕복 시험을 통과한다. 하한 Python 3.2와 장비에서 구할 수 있는 최신 Python으로 같은 시험을 수행하고, 실행하지 못한 환경은 진행 문서에 명시한다.
 
