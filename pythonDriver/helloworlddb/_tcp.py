@@ -299,6 +299,10 @@ class TcpConnection(object):
             except TypeError:
                 raise TypeError("Parameters must be a sequence.")
             encoded = [encode_param(value, index) for index, value in enumerate(items)]
+        return self.execute_encoded(sql, encoded, fetch_size)
+
+    def execute_encoded(self, sql, encoded, fetch_size=None):
+        """이미 Param으로 바꾼 값으로 실행한다. DB-API 계층이 쓴다."""
         if fetch_size is not None:
             if (not isinstance(fetch_size, int) or isinstance(fetch_size, bool) or
                     fetch_size < 1):

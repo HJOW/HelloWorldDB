@@ -4,23 +4,31 @@ Python 3.2 이상에서 사용할 DB-API 2.0 드라이버를 개발합니다. �
 `org.duckdns.hjow.helloworlddb.pythondriver`, import 이름은 `helloworlddb`입니다.
 실행과 시험은 표준 라이브러리만 사용합니다.
 
-현재 **PY-2(TCP 프로토콜 코어)** 단계입니다. 저수준 TCP 접속(`helloworlddb._tcp.connect`·`login`·`execute`·`fetch`·`ping`·`close`)과
-SCRAM-SHA-256, 프레임·메시지 해석, PEP 249 매핑(`helloworlddb.errors`)을 제공하며, **공개 DB-API(`connect`, `Connection`, `Cursor`)는 PY-3에서 둡니다**.
-다음 단계는 DB-API 2.0 계층입니다.
+현재 **PY-3(DB-API 2.0 계층)** 단계입니다. `helloworlddb.connect()` 로 접속해
+표준 DB-API(`Connection`, `Cursor`, 예외·생성자·타입 객체)로 질의·트랜잭션을 수행합니다.
+TCP 평문 접속만 지원하며 TLS·UDP는 `NotSupportedError` 이다. 다음 단계는 TLS이다.
 전체 작업 목록은 [PROGRESS.md](PROGRESS.md)에 있습니다.
 
 ```python
 import helloworlddb
-print(helloworlddb.__version__)
 
-from helloworlddb import _tcp
-connection = _tcp.connect("127.0.0.1", 7410)
+connection = helloworlddb.connect("127.0.0.1", 7410, user="SYSTEM", password="HelloWorldDB")
 try:
-    connection.login("SYSTEM", "HelloWorldDB")
-    print(connection.execute("SELECT 'Hello World'"))
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT 'Hello World'")
+        print(cursor.fetchall())
+    finally:
+        cursor.close()
+    connection.commit()
 finally:
-    connection.abort()
+    connection.close()
 ```
+
+자동 커밋은 처음에 꺼져 있다 (PEP 249). 서버의 기본은 켜짐이므로 `connect(autocommit=True)` 로 켤 수 있다.
+DDL·GRANT·사용자·테이블스페이스 문장은 서버에서 실행 전후에 자동 커밋된다.
+처음 접속하는 SYSTEM 계정은 초기 암호 `HelloWorldDB` 를 바꾸는 것이 표준 절차이다
+(`ALTER USER SYSTEM IDENTIFIED BY '새 비밀번호'`).
 
 시험은 `pythonDriver` 디렉토리에서 실행합니다.
 
@@ -48,7 +56,7 @@ python -m unittest discover -s tests -v
 통합 시험을 이유와 함께 건너뜁니다. `HWDB_TEST_NODE`로 Node.js 실행 파일,
 `HWDB_TEST_RDBMS_DIR`로 별도의 RDBMS 패키지 루트를 지정할 수 있습니다.
 정상 종료에 실패하면 설치 디렉토리를 보존해 재시도할 수 있게 합니다.
-PY-2의 실제 서버 시험은 저수준 TCP 접속으로 로그인·질의·대량 커서·오류를 확인합니다.
+실제 서버 시험은 DB-API로 로그인·질의·대량 커서·트랜잭션·타입 왕복·오류를 확인합니다.
 
 개발용 설치와 배포본 생성은 setuptools가 있는 최신 Python에서 수행합니다.
 
