@@ -7,11 +7,31 @@ import java.sql.*;
 import java.util.*;
 import org.duckdns.hjow.helloworlddb.jdbc6.protocol.Protocol;
 
-/** 현재 fetch 묶음만 보관하는 전진 전용·읽기 전용 ResultSet. */
+/** 현재 fetch 묶음만 보관하는 전진 전용·읽기 전용 ResultSet.
+ *
+ * <p>서버 커서에서 fetch 크기 단위로 행 묶음을 나눠 받아 현재 묶음만 메모리에 둔다.
+ * 앞으로만 이동할 수 있으며, 행이 더 있으면 서버에 fetch를 요청한다.
+ * 다 읽은 서버 커서는 닫아서 서버 자원을 돌려준다.
+ * 모든 공개 동작은 동적 프록시를 거쳐 {@link #call}에서 분기된다.</p> */
 final class JdbcResultSet extends JdbcProxy {
-    final JdbcStatement statement; final List<Values.Column> columns;
-    private List<?> rows; private int at = -1, rowNumber, fetchSize; private long cursor, maxRows;
+    /** 이 결과를 만든 문장. 메타데이터 조회용은 {@code null}이다. */
+    final JdbcStatement statement;
+    /** 결과의 컬럼 설명 목록. */
+    final List<Values.Column> columns;
+    /** 현재 fetch 묶음의 행 목록. */
+    private List<?> rows;
+    /** 묶음 안의 위치, 지금까지 읽은 행 번호, 가져오기 크기, 서버 커서, 행 수 상한. */
+    private int at = -1, rowNumber, fetchSize; private long cursor, maxRows;
+    /** 닫힘 여부, 마지막 뒤 도달 여부, 마지막 읽은 값이 NULL이었는지 여부. */
     private boolean closed, after, wasNull;
+    /** 서버 실행 응답으로부터 결과 집합 프록시를 만든다.
+     *
+     * @param s 이 결과를 만든 문장
+     * @param r 서버의 행 응답(컬럼, 행, 커서 정보 포함)
+     * @param fetch 다음 묶음을 요청할 때의 fetch 크기
+     * @param maxRows 읽을 최대 행 수. 0이면 제한이 없다
+     * @return 외부에 공개할 {@link java.sql.ResultSet} 프록시
+     * @throws SQLException 응답 형식이 잘못된 경우 */
     static JdbcResultSet from(JdbcStatement s, Map<String, Object> r, int fetch, long maxRows) throws SQLException {
         try {
             List<Values.Column> cols = new ArrayList<Values.Column>(); for (Object c : Protocol.list(r.get("columns"))) cols.add(new Values.Column(Protocol.map(c)));
@@ -20,9 +40,35 @@ final class JdbcResultSet extends JdbcProxy {
             result.create(ResultSet.class); return result;
         } catch (IOException e) { throw new SQLException(e.getMessage(), "08006", 8006, e); }
     }
+    /** 메타데이터 조회용 메모리 결과 집합을 만든다.
+     *
+     * @param columns 컬럼 설명 목록
+     * @param rows 메모리에 보관할 행 목록
+     * @return 외부에 공개할 {@link java.sql.ResultSet} 프록시 */
     static ResultSet memory(List<Values.Column> columns, List<List<Object>> rows) { JdbcResultSet r = new JdbcResultSet(null, columns, rows, 500); return r.create(ResultSet.class); }
+    /** 결과 집합의 내부 상태를 만든다.
+     *
+     * @param s 이 결과를 만든 문장. 메타데이터 조회용은 {@code null}이다
+     * @param cols 컬럼 설명 목록
+     * @param rows 현재 묶음의 행 목록
+     * @param fetch 다음 묶음을 요청할 때의 fetch 크기 */
     private JdbcResultSet(JdbcStatement s, List<Values.Column> cols, List<?> rows, int fetch) { statement = s; columns = cols; this.rows = rows; fetchSize = fetch; }
+    /** 결과 집합이 닫히지 않았는지 확인한다.
+     *
+     * @throws SQLException 결과 집합이 닫힌 경우 */
     private void check() throws SQLException { if (closed) throw new SQLException("ResultSet is closed.", "24000"); if (statement != null) statement.connection.check(); }
+    /** 프록시로 들어온 {@link java.sql.ResultSet} 호출을 처리한다.
+     *
+     * <p>행 이동, 현재 행의 타입별 값 읽기, 메타데이터와 속성 조회를 처리한다.
+     * 값을 읽을 때는 서버 전송값을 {@link Values}로 목표 타입에 맞게 바꾸며,
+     * 오프셋 표기는 {@code getString} 계열에서 원문대로 돌려준다.
+     * 갱신·삽입·삭제와 스크롤 관련 호출은 지원하지 않는다.</p>
+     *
+     * @param n 호출된 메서드 이름
+     * @param a 호출 인자
+     * @param m 호출된 메서드 객체
+     * @return 호출 결과
+     * @throws Exception 결과 집합이 닫혔거나 위치·인자가 잘못되었거나 지원하지 않는 호출인 경우 */
     @Override synchronized Object call(String n, Object[] a, Method m) throws Exception {
         if (n.equals("close")) { close(); return null; }
         if (n.equals("isClosed")) return closed || statement != null && statement.connection.protocol.isClosed();
@@ -96,11 +142,20 @@ final class JdbcResultSet extends JdbcProxy {
         }
         return value;
     }
+    /** 컬럼 인덱스나 이름으로부터 0부터 시작하는 컬럼 위치를 구한다.
+     *
+     * @param key 1부터 시작하는 인덱스 또는 컬럼 이름(대소문자 무시)
+     * @return 0부터 시작하는 컬럼 위치
+     * @throws SQLException 인덱스나 이름이 유효하지 않은 경우 */
     private int index(Object key) throws SQLException {
         if (key instanceof Integer) { int i = (Integer) key - 1; if (i >= 0 && i < columns.size()) return i; }
         else if (key instanceof String) { for (int i = 0; i < columns.size(); i++) if (columns.get(i).name.equalsIgnoreCase((String) key)) return i; }
         throw new SQLException("Invalid column index or label.", "07009");
     }
+    /** 다음 행으로 이동한다. 현재 묶음을 다 읽으면 서버에 다음 묶음을 요청한다.
+     *
+     * @return 다음 행이 있으면 {@code true}, 더 이상 없으면 {@code false}
+     * @throws SQLException 서버 fetch에 실패한 경우 */
     private boolean next() throws SQLException {
         if (after) return false;
         if (maxRows > 0 && rowNumber >= maxRows) { releaseCursor(); after = true; return false; }
@@ -112,10 +167,26 @@ final class JdbcResultSet extends JdbcProxy {
         }
         rowNumber++; return true;
     }
+    /** 서버 커서를 닫고 서버 자원을 돌려준다. 이미 닫혔으면 아무 일도 하지 않는다.
+     *
+     * @throws SQLException 커서를 닫는 중에 오류가 발생한 경우 */
     private void releaseCursor() throws SQLException { if (cursor != 0) { long c = cursor; cursor = 0; if (!statement.connection.protocol.isClosed()) statement.connection.protocol.closeCursor(c); } }
+    /** 결과 집합을 닫는다. 남은 서버 커서를 닫고 문장에 닫힘을 알린다.
+     *
+     * @throws SQLException 서버 커서를 닫는 중에 오류가 발생한 경우 */
     void close() throws SQLException { if (closed) return; closed = true; try { releaseCursor(); } finally { rows = Collections.<Object>emptyList(); if (statement != null) statement.resultClosed(this); } }
+    /** 이 결과의 컬럼 정보를 담은 {@link java.sql.ResultSetMetaData}를 만든다.
+     *
+     * @return 컬럼 개수, 타입, 정밀도, 표시 길이를 담은 메타데이터 프록시 */
     ResultSetMetaData metadata() {
         return new JdbcProxy() {
+            /** 컬럼 메타데이터 조회 호출을 처리한다.
+             *
+             * @param n 호출된 메서드 이름
+             * @param a 호출 인자
+             * @param m 호출된 메서드 객체
+             * @return 호출 결과
+             * @throws SQLException 컬럼 위치가 잘못되었거나 지원하지 않는 호출인 경우 */
             @Override Object call(String n, Object[] a, Method m) throws SQLException {
                 if (n.equals("getColumnCount")) return columns.size();
                 Values.Column c = columns.get(index(a[0]));

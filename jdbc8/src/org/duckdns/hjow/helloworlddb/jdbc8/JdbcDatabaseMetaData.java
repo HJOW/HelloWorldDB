@@ -6,12 +6,44 @@ import java.util.*;
 import java.util.regex.Pattern;
 import org.duckdns.hjow.helloworlddb.jdbc8.protocol.Protocol;
 
-/** SYSTEM 딕셔너리의 가시성 규칙을 그대로 사용하는 JDBC 메타데이터. */
+/**
+ * SYSTEM 딕셔너리의 가시성 규칙을 그대로 사용하는 JDBC 메타데이터이다.
+ * <p>서버가 권한에 따라 걸러 준 {@code SYS_TABLES}, {@code SYS_COLUMNS},
+ * {@code SYS_CONSTRAINTS} 등의 딕셔너리 뷰를 읽어 JDBC 형식으로 변환한다.
+ * 뷰의 컬럼은 행을 읽지 않는 {@code WHERE 1 = 0} 조회로 보완한다.</p>
+ */
 final class JdbcDatabaseMetaData extends JdbcProxy {
+    /**
+     * 딕셔너리로 직접 제공할 SYSTEM 객체 이름 목록이다.
+     * <p>권한과 무관하게 스키마·테이블 목록에 함께 노출한다.</p>
+     */
     private static final List<String> SYSTEM_OBJECTS = Arrays.asList("DUAL", "SYS_TABLESPACES", "SYS_USERS", "SYS_TABLES", "SYS_COLUMNS", "SYS_VIEWS", "SYS_INDEXES", "SYS_INDEX_COLUMNS", "SYS_CONSTRAINTS", "SYS_CONSTRAINT_COLUMNS", "SYS_PRIVILEGES", "SYS_GROUP_GRANTS", "SYS_SESSIONS");
+    /** 소속 연결이다. */
     private final JdbcConnection c;
+    /**
+     * 메타데이터 객체를 생성한다.
+     *
+     * @param c 소속 연결
+     */
     private JdbcDatabaseMetaData(JdbcConnection c) { this.c = c; }
+    /**
+     * 데이터베이스 메타데이터 프록시를 연다.
+     *
+     * @param c 소속 연결
+     * @return {@link DatabaseMetaData} 프록시
+     */
     static DatabaseMetaData open(JdbcConnection c) { return new JdbcDatabaseMetaData(c).create(DatabaseMetaData.class); }
+    /**
+     * {@link DatabaseMetaData} 메서드 호출을 처리한다.
+     * <p>버전·기능 플래그·타입 정보는 고정값으로 답하고,
+     * 스키마·테이블·컬럼·키·인덱스·권한은 딕셔너리를 읽어 구성한다.</p>
+     *
+     * @param n 호출된 메서드 이름
+     * @param a 호출 인자
+     * @param m 호출된 메서드 리플렉션 정보
+     * @return 메서드 반환 값
+     * @throws Exception 세션 종료, 딕셔너리 조회 실패, 미지원 항목 조회 시
+     */
     @Override Object call(String n, Object[] a, Method m) throws Exception {
         c.check();
         switch (n) {
@@ -70,6 +102,14 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         if (m.getReturnType() == boolean.class) return false;
         throw unsupported(n);
     }
+    /**
+     * 딕셔너리 뷰 전체를 읽어 맵 목록으로 반환한다.
+     * <p>서버 커서가 열리면 묶음 단위로 끝까지 읽어 합친다.</p>
+     *
+     * @param name 읽을 딕셔너리 뷰 이름(예: {@code SYS_TABLES})
+     * @return 행 맵 목록. 키는 컬럼 이름이다
+     * @throws Exception 조회 실패 시
+     */
     private List<Map<String, Object>> dictionary(String name) throws Exception {
         Map<String, Object> response = c.protocol.execute("SELECT * FROM SYSTEM." + name, Collections.emptyList(), 500);
         List<Object> columns = Protocol.list(response.get("columns")); List<Map<String, Object>> result = new ArrayList<>(); long cursor = 0;
@@ -84,8 +124,29 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
             }
         } finally { if (cursor != 0 && !c.protocol.isClosed()) c.protocol.closeCursor(cursor); }
     }
+    /**
+     * 카탈로그 인자가 비었거나 빈 문자열인지 확인한다.
+     *
+     * @param value 카탈로그 인자
+     * @return 제한이 없으면 {@code true}
+     */
     private static boolean catalog(Object value) { return value == null || value.equals(""); }
+    /**
+     * 정확히 일치 조건을 검사한다.
+     *
+     * @param expected 기대값. {@code null}이면 제한이 없다
+     * @param value 실제 값
+     * @return 제한이 없거나 같으면 {@code true}
+     */
     private static boolean exact(Object expected, Object value) { return expected == null || expected.equals(value); }
+    /**
+     * JDBC의 {@code %}·{@code _} 패턴 일치를 검사한다.
+     * <p>{@code \}로 이스케이프한 문자는 글자 그대로 비교한다.</p>
+     *
+     * @param pattern 검색 패턴. {@code null}이면 제한이 없다
+     * @param value 실제 값
+     * @return 패턴에 맞으면 {@code true}
+     */
     private static boolean like(Object pattern, Object value) {
         if (pattern == null) return true; if (value == null) return false;
         String s = pattern.toString(); StringBuilder regex = new StringBuilder("(?s)");
@@ -95,16 +156,44 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         }
         return value.toString().matches(regex.toString());
     }
+    /**
+     * 메모리 결과 집합용 행을 생성한다.
+     *
+     * @param values 행의 컬럼 값 나열
+     * @return 값 목록 한 행
+     */
     static List<Object> row(Object... values) { return Arrays.asList(values); }
+    /**
+     * 이름·선언 목록에서 메모리 결과 집합을 생성한다.
+     *
+     * @param names 컬럼 이름 배열
+     * @param types 컬럼 선언 배열
+     * @param rows 행 목록
+     * @return {@link ResultSet} 프록시
+     */
     private static ResultSet table(String[] names, String[] types, List<List<Object>> rows) {
         List<Values.Column> columns = new ArrayList<>(); for (int i = 0; i < names.length; i++) columns.add(new Values.Column(names[i], types[i])); return JdbcResultSet.memory(columns, rows);
     }
+    /**
+     * 스키마(테이블스페이스) 목록을 조회한다.
+     *
+     * @param a {@code getSchemas} 인자. 카탈로그와 스키마 패턴을 받는다
+     * @return 스키마 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet schemas(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>();
         if (a.length == 0 || catalog(a[0])) for (Map<String, Object> t : dictionary("SYS_TABLESPACES")) if (a.length == 0 || like(a[1], t.get("TABLESPACE_NAME"))) rows.add(row(t.get("TABLESPACE_NAME"), null));
         rows.sort(Comparator.comparing(r -> String.valueOf(r.get(0))));
         return table(new String[] { "TABLE_SCHEM", "TABLE_CATALOG" }, new String[] { "VARCHAR(128)", "VARCHAR(128)" }, rows);
     }
+    /**
+     * 테이블·뷰·시스템 객체 목록을 조회한다.
+     *
+     * @param a {@code getTables} 인자. 카탈로그, 스키마·이름 패턴, 종류 목록을 받는다
+     * @return 테이블 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet tables(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>(); List<?> types = a[3] == null ? null : Arrays.asList((String[]) a[3]);
         if (catalog(a[0])) for (String view : Arrays.asList("SYS_TABLES", "SYS_VIEWS")) for (Map<String, Object> t : dictionary(view)) {
@@ -115,6 +204,15 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         rows.sort(Comparator.comparing(r -> r.get(3) + "\u0000" + r.get(1) + "\u0000" + r.get(2)));
         return table(new String[] { "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "TABLE_TYPE", "REMARKS", "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "SELF_REFERENCING_COL_NAME", "REF_GENERATION" }, Collections.nCopies(10, "VARCHAR(128)").toArray(new String[0]), rows);
     }
+    /**
+     * 컬럼 목록을 조회한다.
+     * <p>테이블 컬럼은 {@code SYS_COLUMNS}에서 읽고, 뷰 컬럼은
+     * {@link #viewColumns}로 보완한다.</p>
+     *
+     * @param a {@code getColumns} 인자. 카탈로그, 스키마·테이블·컬럼 패턴을 받는다
+     * @return 컬럼 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet columns(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>();
         if (catalog(a[0])) for (Map<String, Object> col : dictionary("SYS_COLUMNS")) {
@@ -135,6 +233,17 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         return table(new String[] { "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "NUM_PREC_RADIX", "NULLABLE", "REMARKS", "COLUMN_DEF", "SQL_DATA_TYPE", "SQL_DATETIME_SUB", "CHAR_OCTET_LENGTH", "ORDINAL_POSITION", "IS_NULLABLE", "SCOPE_CATALOG", "SCOPE_SCHEMA", "SCOPE_TABLE", "SOURCE_DATA_TYPE", "IS_AUTOINCREMENT", "IS_GENERATEDCOLUMN" },
             new String[] { "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "INTEGER", "VARCHAR", "INTEGER", "INTEGER", "INTEGER", "INTEGER", "INTEGER", "VARCHAR", "VARCHAR", "INTEGER", "INTEGER", "INTEGER", "INTEGER", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "SMALLINT", "VARCHAR", "VARCHAR" }, rows);
     }
+    /**
+     * 뷰나 시스템 객체의 컬럼을 결과 메타데이터로 보완한다.
+     * <p>{@code WHERE 1 = 0} 조회로 행 없이 컬럼 정의만 가져오며,
+     * 권한이 없어 읽을 수 없는 뷰는 건너뛴다.</p>
+     *
+     * @param rows 결과를 쌓을 행 목록
+     * @param schema 테이블스페이스 이름
+     * @param name 뷰·시스템 객체 이름
+     * @param pattern 컬럼 이름 패턴
+     * @throws Exception 조회 실패 시
+     */
     private void viewColumns(List<List<Object>> rows, String schema, String name, Object pattern) throws Exception {
         Map<String, Object> response;
         try { response = c.protocol.execute("SELECT * FROM " + quote(schema) + "." + quote(name) + " WHERE 1 = 0", Collections.emptyList(), 1); }
@@ -148,6 +257,13 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
                 ordinal, "", null, null, null, null, "NO", "NO"));
         }
     }
+    /**
+     * 기본 키 목록을 조회한다.
+     *
+     * @param a {@code getPrimaryKeys} 인자. 카탈로그, 스키마, 테이블 이름을 받는다
+     * @return 기본 키 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet primaryKeys(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>(); List<Map<String, Object>> cols = dictionary("SYS_CONSTRAINT_COLUMNS");
         if (catalog(a[0])) for (Map<String, Object> k : dictionary("SYS_CONSTRAINTS")) if ("PRIMARY KEY".equals(k.get("CONSTRAINT_TYPE")) && exact(a[1], k.get("TABLESPACE_NAME")) && exact(a[2], k.get("TABLE_NAME")))
@@ -155,7 +271,24 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         rows.sort(Comparator.comparing(r -> String.valueOf(r.get(3))));
         return table(new String[] { "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "KEY_SEQ", "PK_NAME" }, new String[] { "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "SMALLINT", "VARCHAR" }, rows);
     }
+    /**
+     * 두 딕셔너리 행이 같은 테이블스페이스와 제약조건 이름인지 확인한다.
+     *
+     * @param a 첫 번째 행
+     * @param b 두 번째 행
+     * @param key 제약조건 이름 컬럼
+     * @return 같은 제약조건이면 {@code true}
+     */
     private static boolean same(Map<String, Object> a, Map<String, Object> b, String key) { return Objects.equals(a.get("TABLESPACE_NAME"), b.get("TABLESPACE_NAME")) && Objects.equals(a.get(key), b.get(key)); }
+    /**
+     * 외래 키 목록을 조회한다.
+     * <p>호출 종류에 따라 가져온 키·내보낸 키·상호 참조를 구분한다.</p>
+     *
+     * @param n 호출된 메서드 이름
+     * @param a 키 조회 인자. 카탈로그, 스키마, 테이블 이름 등을 받는다
+     * @return 외래 키 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet foreignKeys(String n, Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>(); List<Map<String, Object>> keys = dictionary("SYS_CONSTRAINTS"), cols = dictionary("SYS_CONSTRAINT_COLUMNS");
         if (catalog(a[0]) && (a.length != 6 || catalog(a[3]))) for (Map<String, Object> k : keys) if ("FOREIGN KEY".equals(k.get("CONSTRAINT_TYPE"))) {
@@ -168,7 +301,20 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         rows.sort(Comparator.comparing((List<Object> r) -> r.get(n.equals("getImportedKeys") ? 2 : 6) + "\u0000" + r.get(11)).thenComparingLong(r -> ((Number) r.get(8)).longValue()));
         return table(new String[] { "PKTABLE_CAT", "PKTABLE_SCHEM", "PKTABLE_NAME", "PKCOLUMN_NAME", "FKTABLE_CAT", "FKTABLE_SCHEM", "FKTABLE_NAME", "FKCOLUMN_NAME", "KEY_SEQ", "UPDATE_RULE", "DELETE_RULE", "FK_NAME", "PK_NAME", "DEFERRABILITY" }, new String[] { "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "SMALLINT", "SMALLINT", "SMALLINT", "VARCHAR", "VARCHAR", "SMALLINT" }, rows);
     }
+    /**
+     * 참조 동작 문자열을 JDBC 규칙 상수로 변환한다.
+     *
+     * @param r 서버의 참조 동작 값
+     * @return JDBC 외래 키 규칙 상수
+     */
     private static int rule(Object r) { if ("CASCADE".equals(r)) return DatabaseMetaData.importedKeyCascade; if ("SET NULL".equals(r)) return DatabaseMetaData.importedKeySetNull; if ("RESTRICT".equals(r)) return DatabaseMetaData.importedKeyRestrict; return DatabaseMetaData.importedKeyNoAction; }
+    /**
+     * 인덱스 목록을 조회한다.
+     *
+     * @param a {@code getIndexInfo} 인자. 카탈로그, 스키마, 테이블 이름과 유일 여부 등을 받는다
+     * @return 인덱스 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet indexes(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>(); List<Map<String, Object>> cols = dictionary("SYS_INDEX_COLUMNS");
         if (catalog(a[0])) for (Map<String, Object> i : dictionary("SYS_INDEXES")) if (exact(a[1], i.get("TABLESPACE_NAME")) && exact(a[2], i.get("TABLE_NAME")) && (!(Boolean) a[3] || "YES".equals(i.get("IS_UNIQUE"))))
@@ -176,11 +322,24 @@ final class JdbcDatabaseMetaData extends JdbcProxy {
         rows.sort(Comparator.comparing((List<Object> r) -> r.get(3) + "\u0000" + r.get(5)).thenComparingLong(r -> ((Number) r.get(7)).longValue()));
         return table(new String[] { "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "NON_UNIQUE", "INDEX_QUALIFIER", "INDEX_NAME", "TYPE", "ORDINAL_POSITION", "COLUMN_NAME", "ASC_OR_DESC", "CARDINALITY", "PAGES", "FILTER_CONDITION" }, new String[] { "VARCHAR", "VARCHAR", "VARCHAR", "BOOLEAN", "VARCHAR", "VARCHAR", "SMALLINT", "SMALLINT", "VARCHAR", "CHAR", "BIGINT", "BIGINT", "VARCHAR" }, rows);
     }
+    /**
+     * 테이블 권한 목록을 조회한다.
+     *
+     * @param a {@code getTablePrivileges} 인자. 카탈로그, 스키마, 테이블 패턴을 받는다
+     * @return 테이블 권한 목록 결과 집합
+     * @throws Exception 딕셔너리 조회 실패 시
+     */
     private ResultSet privileges(Object[] a) throws Exception {
         List<List<Object>> rows = new ArrayList<>();
         if (catalog(a[0])) for (Map<String, Object> p : dictionary("SYS_PRIVILEGES")) if (p.get("OBJECT_NAME") != null && like(a[1], p.get("TABLESPACE_NAME")) && like(a[2], p.get("OBJECT_NAME"))) rows.add(row(null, p.get("TABLESPACE_NAME"), p.get("OBJECT_NAME"), null, p.get("GRANTEE"), p.get("PRIVILEGE"), "NO"));
         return table(new String[] { "TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "GRANTOR", "GRANTEE", "PRIVILEGE", "IS_GRANTABLE" }, Collections.nCopies(7, "VARCHAR").toArray(new String[0]), rows);
     }
+    /**
+     * 지원하는 타입 목록을 반환한다.
+     * <p>서버 타입 정책을 그대로 반영하며, 정밀도와 검색 가능 여부 등을 함께 제공한다.</p>
+     *
+     * @return 타입 정보 결과 집합
+     */
     private ResultSet typeInfo() {
         List<List<Object>> rows = new ArrayList<>();
         for (String name : Arrays.asList("CHAR", "VARCHAR", "BINARY", "VARBINARY", "SMALLINT", "INTEGER", "BIGINT", "DECIMAL", "REAL", "DOUBLE PRECISION", "BOOLEAN", "DATE", "TIME", "TIME WITH TIME ZONE", "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "INTERVAL")) {

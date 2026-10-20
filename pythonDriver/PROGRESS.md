@@ -15,6 +15,19 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 124개 통과**, 실패·건너뜀 0. 기존 77개에 PY-3 신규 47개(`test_types` 23개, `test_dbapi` 24개. 모듈 규약·접속 검증·Hello World·자동 커밋·트랜잭션·fetch·description·타입 왕복·스레드 공유)를 더했다.
 - 배포 구성 : Python 3.12.4에서 소스 배포본과 `py3-none-any` 휠을 생성했다. 휠의 `Requires-Python: >=3.2`와 실행 의존 없음도 확인하고, 깨끗한 임시 가상 환경에 `pip --no-index --no-deps`로 설치해 소스 트리 밖 import와 PBKDF2 실행을 검증했다. 빌드 도구는 setuptools를 사용한다.
 - 다음 작업 : **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
+- 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)를 선행 조건으로 하며, 기존 PY-4 ~ PY-6과 별도로 아래 미완료 작업을 추적한다.
+
+## 다음 작업: 서버 prepare/describe·cancel 연동
+
+착수 조건은 [rdbms/PREPARE.md](../rdbms/PREPARE.md)의 PD-1 ~ PD-5 구현과 [통신 규약](../rdbms/docs/protocol.md) 확정이다. PD-6의 드라이버 회귀 검증과 함께 진행한다. 요청 이름·필드·오류 코드는 확정 명세를 따른다. Python 3.2 이상·표준 라이브러리만 사용한다는 기준과 PY-4 ~ PY-6의 순서는 유지한다.
+
+- [ ] 기능 협상과 메시지를 구현한다. 구형 서버에서도 기존 `execute`·`executemany`가 동작하고, 지원하지 않는 새 기능은 `NotSupportedError`로 알리도록 한다.
+- [ ] 준비·설명·해제·취소를 노출할 드라이버 확장 API와 수명을 정한다. 이 API를 DB-API 2.0 필수 메서드로 설명하지 않는다. 기존 qmark 바인딩·`execute`·`executemany`·`rowcount` 규약을 유지하면서 서버 준비 문장 ID와 반복 실행을 연동한다.
+- [ ] 서버 메타데이터를 `Cursor.description`의 7개 항목과 타입 변환에 정확히 대응시킨다. 준비 단계의 정보와 실행 후 `description`의 DB-API 규칙을 구분하고, 미정 정보는 해당 항목의 규칙에 맞게 `None` 등으로 나타낸다. 임의의 VARCHAR 타입이나 길이를 만들거나 분석을 위해 DML을 실행하지 않는다.
+- [ ] 현재 요청 잠금과 블로킹 수신 구조를 검토하여, 실행 응답 대기 중 다른 스레드가 취소를 보낼 수 있게 한다. 단일 수신 경로에서 ID별 응답을 전달하고 두 스레드가 같은 소켓을 각각 읽지 않게 한다. `threadsafety=2`와 Cursor 비공유 기준을 유지하며 Python 3.2에 없는 `asyncio` 등에 의존하지 않는다.
+- [ ] 사용자 취소·질의 제한 시간·통신 단절의 예외 매핑을 확정하고 SQLSTATE·내부 번호·위치를 보존한다. 취소 접수만으로 실행 성공/실패를 확정하지 않는다. 늦은 취소와 정상 완료의 경합, 응답 정리, 연결 재사용을 처리하고 결과 불명 DML을 자동 재실행하지 않는다.
+- [ ] Cursor·Connection 종료 시 준비 문장과 커서를 해제한다. USE·DDL·권한 변경에 따른 무효화를 처리하고, 취소된 문장 이전의 수동 트랜잭션 변경이 보존되는지 확인한다.
+- [ ] Python 3.2와 당시 사용 가능한 상위 Python에서 실제 서버 회귀 시험을 수행한다. TCP와 PY-4·PY-5에서 구현한 TLS·UDP, 실행 없는 describe·타입 미정·반복 바인딩·잠금 대기/CPU 질의 취소·UDP 유실/중복·구형 서버를 검증한 뒤 README와 진행 기록을 갱신한다.
 
 ## 작업 규칙
 
@@ -273,6 +286,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - `gui` 는 보류 중이며 `nodejsDriver` 를 쓴다. 이 드라이버를 쓰는 프로젝트는 아직 없다.
 
 ## 작업 이력
+
+- 2026-10-20 : 서버 prepare/describe·cancel 구현 후의 연동을 다음 작업으로 등록했다. DB-API 확장 API·description·취소 예외·스레드 수신 구조와 Python 3.2 회귀 검증을 미완료 항목으로 추가했다. PY-4 ~ PY-6은 유지하며 이번 변경은 문서만 해당한다.
 
 - 2026-10-16 : 개발 계획 작성. AGENTS.md 와 `rdbms` 프로토콜 명세, SCRAM·UDP 참고 구현, 타입 문서를 읽고 PY-1 ~ PY-6 으로 나누었다. DB-API 2.0 대응, 예외 매핑, 타입 대응, Python 3.2 범위 주의 목록, 미결 사항을 정리했다. 코드는 없다.
 - 2026-10-16 : Python 3.2 / OpenSSL 1.0.0a / `unicodedata` 6.0.0 / pip·setuptools 없음과 계획의 3.2 가정(없는 것·되는 것 목록, `match_hostname` 의 IP 주소 SAN 비교 실패)을 실제 실행해 검증했다.

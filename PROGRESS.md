@@ -6,6 +6,8 @@
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-20
+- **2026-10-20 : 네 드라이버에 서버 prepare/describe·cancel 연동 계획 등록.** [nodejsDriver](nodejsDriver/PROGRESS.md)·[pythonDriver](pythonDriver/PROGRESS.md)·[jdbc6](jdbc6/PROGRESS.md)·[jdbc8](jdbc8/PROGRESS.md)의 다음 작업에 준비 문장·실행 전 메타데이터·요청별 취소·제한 시간·호환성 시험을 추가했다. [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-5와 규약 확정 후 착수하고 PD-6에서 함께 검증한다. 기존 PY-4 ~ PY-6·13-5·14-5는 유지하며 이번 변경은 문서만 해당한다.
+- **2026-10-20 : Windows ODBC 개발 계획 작성.** [winodbc/PROGRESS.md](winodbc/PROGRESS.md)에 WO-0 ~ WO-13의 구현 순서·필수 시험·완료 기준과 ODBC 3.8/Unicode/descriptor·배열·취소·x86/x64 설치 계획을 적었다. 사용자 추가 요청으로 서버의 prepare/describe·cancel은 [rdbms/PREPARE.md](rdbms/PREPARE.md)의 PD-1 ~ PD-6과 rdbms 진행 문서의 다음 작업에 등록했다. 드라이버·서버 구현, 빌드·실행 시험, ODBC 등록은 아직 하지 않았다.
 - **2026-10-20 : `jdbc8` 13-1 ~ 13-4, `jdbc6` 14-1 ~ 14-4 완료.** 사용자 추가 지시에 따라 두 드라이버를 구현했다. Java 6 범위의 JSON·TCP·TLS·UDP·SCRAM 프로토콜을 공유하고 JDBC 4.0/4.2 계층·타입·트랜잭션·메타데이터를 각각 제공한다. jdbc8은 실제 JDK 8로 빌드한 같은 JAR의 Java 8·21 시험 **130개**, jdbc6는 실제 JDK 6 JAR의 Java 6·7·8·21 실제 서버 시험 **200개**와 빌드 회귀 **14개**가 통과했다(실패·건너뜀 0). TLS 인증서 검증과 Java 6 TLSv1, 나머지 기본 TLSv1.2 접속, 유실·중복·지연 UDP, 권한·타입·커서·오류를 확인했다. 시험 서버는 정상 종료·정리했고 서버 소스는 바꾸지 않았다. 다음은 13-5·14-5 최종 검증이다. 상세는 [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md), [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md), 사용법은 각 README에 있다. GUI 보류는 유지한다.
 - **2026-10-20 : `nodejsDriver`의 Node.js 22.x 후속 검증 완료.** `VM-W11-Codex`의 Node.js 22.23.3 / TypeScript 6.0.3에서 드라이버와 실제 서버를 모두 실행하여 전체 116개 시험이 통과했다(실패·건너뜀 0). 배포본을 새 소비자 프로젝트에 설치해 Node.js 22.23.3·Bun 1.4.2 각각의 TCP·TLS·UDP 접속, 엄격한 타입 검사, Node.js의 CommonJS `require(esm)` 접속을 확인했다. 호환성 결함은 발견되지 않아 소스 수정은 없으며 README와 진행 문서를 갱신했다. 서버 전체의 독립 Node.js 22 시험과 다른 OS 검증은 이번 범위에 포함하지 않았다. 상세는 [nodejsDriver/PROGRESS.md](nodejsDriver/PROGRESS.md)의 "Node.js 22 호환성 및 배포본 검증"이다.
 - **2026-10-20 : `pythonDriver` PY-3 완료.** DB-API 2.0 계층(`types`, `cursor`, `connection`, 모듈 수준)을 구현하고 시험 47개를 더했다. 타입 변환·생성자·타입 객체, `connect()` 옵션 검증, Hello World, 자동 커밋 OFF·커밋·롤백·컨텍스트 관리자, fetch·반복·`executemany`·`description`·`rowcount`, 타입 왕복, 스레드 공유 접속을 실제 `rdbms` 로 확인했다. Windows / Node.js 24.19.0 / Python 3.2·3.12.4에서 각각 124개 통과·실패와 건너뜀 0이다. 시험 중 Param 이중 인코딩 결함과 3.2의 `utcoffset()` 검증을 찾아 고쳤고, 미결 9(`float` 정수값 처리)는 서버 동작 확인으로 닫았다. TLS·UDP는 `NotSupportedError` 이며 다음은 PY-4이다. 자세한 내용은 [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md)에 있다.
@@ -101,6 +103,10 @@
 JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-4와 jdbc8 13-4까지 구현했다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
 
 ## 작업 이력
+
+- 2026-10-20 : 사용자 요청에 따라 nodejsDriver·pythonDriver·jdbc6·jdbc8 진행 문서에 서버 prepare/describe·cancel 구현 후 연동 작업을 추가했다. 각 드라이버의 API·런타임·메타데이터·취소 처리·회귀 시험과 서버 선행 조건을 명시했다. 코드 변경과 실행 시험은 하지 않았다.
+
+- 2026-10-20: AGENTS.md의 Windows ODBC 프로젝트 추가를 읽고 winodbc 상세 개발 계획을 작성했다. 서버 prepare/describe·cancel의 후속 작업 문서를 신설하고 두 프로젝트의 선행 조건·참조와 진행 기록을 연결했다. 문서만 변경했으며 커밋·푸시는 하지 않았다.
 
 - 2026-10-20 : 사용자 추가 지시에 따라 jdbc8 13-4와 jdbc6 14-4 완료. TCP·TLS·UDP·SCRAM 공통 계층, JDBC 4.0/4.2와 타입 변환·메타데이터·트랜잭션·커서, JAR 서비스 등록과 실제 서버 시험 실행기를 구현했다. Windows VM-W11-Codex / Node.js 24.19.0에서 jdbc8(Java 8·21) 130개, jdbc6(Java 6·7·8·21) 200개와 빌드 회귀 14개 통과. 두 프로젝트 README·PROGRESS·AGENTS.md를 갱신했다. 후속 단계는 13-5·14-5이며 커밋·푸시는 하지 않았다.
 
