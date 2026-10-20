@@ -7,11 +7,11 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-16
+- 최종 갱신 : 2026-10-20
 - 진행 단계 : 계획 작성 (코드 없음)
-- 이 PC 의 Python : **3.2 는 `C:\Python\Py302\python.exe`**, 최신은 3.13.1 (`C:\Python\python.exe`, PATH 의 `python`). 2026-10-16 에 직접 실행해 확인했다. "이 PC 의 시험 환경" 절을 본다
+- 이 PC (`DESKTOP-HJOW`) 의 Python : **3.2 설치 디렉토리는 `C:\Program Files\Python\P302`**, 실행 파일은 `C:\Program Files\Python\P302\python.exe` 이다 (경로는 2026-10-20 사용자 안내). 최신은 3.13.1 (`C:\Python\python.exe`, PATH 의 `python`). Python 3.2 환경 특성은 2026-10-16 에 직접 실행해 확인했다. "PC별 시험 환경" 절을 본다
 - 착수 조건 : (1) `rdbms` 11단계 완료 (**충족**, 2026-10-16). 프로토콜 명세 [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)(버전 1)와 참고 클라이언트 `rdbms/src/client` 는 이미 있다. (2) 사용자가 일정(`nodejsDriver` 와의 선후)을 정하고 AGENTS.md "구현 계획"에 이 프로젝트의 단계를 더한다. "미결 사항" 1.
-- 다음 작업 : 사용자 확인이 필요한 "미결 사항" 1, 2 를 정한 뒤 PY-1 (패키지 구성과 호환 계층). Python 3.2 시험 환경(미결 사항 3)은 이 PC 에서 해결되었다
+- 다음 작업 : 사용자 확인이 필요한 "미결 사항" 1, 2 를 정한 뒤 PY-1 (패키지 구성과 호환 계층). Python 3.2 시험 환경(미결 사항 3)은 `DESKTOP-HJOW` 에서 해결되었다
 
 ## 작업 규칙
 
@@ -27,24 +27,26 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 - 한다 : TCP(SSL 포함)와 UDP 접속, 인증(SCRAM-SHA-256), 문장 실행과 `?` 파라미터, 결과 나누어 받기, 트랜잭션, 타입 변환, DB-API 2.0 의 모듈·`Connection`·`Cursor`·예외·타입 객체.
 - 하지 않는다 : 로컬 전용 채널(네임드 파이프, 유닉스 소켓)과 데몬 제어(구동, 종료, 상태 조회)는 CLI(`hwdb`)의 몫이다. `nodejsDriver` 와 같은 원칙이다.
   `asyncio` 용 비동기 API(Python 3.2 에는 `asyncio` 가 없다), ORM·SQLAlchemy 방언, 서버 쪽 변경은 이 계획의 범위 밖이다.
-- 지원 Python : 3.2 이상 모든 버전. 한 소스로 3.2 부터 최신 안정판까지 돈다. (이 PC 에는 하한 3.2 와 최신 3.13.1 이 모두 있다. 아래 "이 PC 의 시험 환경")
+- 지원 Python : 3.2 이상 모든 버전. 한 소스로 3.2 부터 최신 안정판까지 돈다. (`DESKTOP-HJOW` 에는 하한 3.2 와 최신 3.13.1 이 모두 있다. 아래 "PC별 시험 환경")
 
-## 이 PC 의 시험 환경
+## PC별 시험 환경
 
-| 구분 | 경로 | 버전 | 비고 |
-|---|---|---|---|
-| 하한 | `C:\Python\Py302\python.exe` | 3.2 (r32:88445, 2011-02-20, MSC v.1500 64비트) | OpenSSL **1.0.0a**(2010-06), `unicodedata` 6.0.0, **pip·setuptools 없음**(`distutils` 는 있음) |
-| 최신 | `C:\Python\python.exe` (PATH 의 `python`) | 3.13.1 | OpenSSL 3.0.15 |
+설치 경로는 PC마다 다르므로 호스트명과 경로를 함께 기록한다. 아래 Python 3.2 경로는 `DESKTOP-HJOW` 에만 해당한다.
 
-- 이 경로는 **이 PC 에만 해당**한다. 소스와 시험에 경로를 적지 않는다. 다른 장비에서도 돌 수 있게, 인터프리터 경로를 인자나 환경 변수로 받아 버전마다 전체 시험을 돌리는 실행 스크립트를 PY-1 에서 만든다.
+| 호스트명 | 구분 | 설치 디렉토리 | 실행 파일 | 버전 | 비고 |
+|---|---|---|---|---|---|
+| `DESKTOP-HJOW` | 하한 | `C:\Program Files\Python\P302` | `C:\Program Files\Python\P302\python.exe` | 3.2 (r32:88445, 2011-02-20, MSC v.1500 64비트) | OpenSSL **1.0.0a**(2010-06), `unicodedata` 6.0.0, **pip·setuptools 없음**(`distutils` 는 있음) |
+| `DESKTOP-HJOW` | 최신 | `C:\Python` | `C:\Python\python.exe` (PATH 의 `python`) | 3.13.1 | OpenSSL 3.0.15 |
+
+- 위 경로는 **호스트명 `DESKTOP-HJOW` 에만 해당**한다. 다른 PC 에서는 해당 PC 의 호스트명과 Python 설치 경로를 별도로 기록한다. 소스에는 PC별 경로를 넣지 않는다. 다른 장비에서도 돌 수 있게, 인터프리터 경로를 인자나 환경 변수로 받아 버전마다 전체 시험을 돌리는 실행 스크립트를 PY-1 에서 만든다.
 - 3.2 로 직접 확인한 것 (2026-10-16. 읽기 전용 조사 스크립트로 확인)
   - **없다** : `time.monotonic`·`perf_counter`, `hmac.compare_digest`, `hashlib.pbkdf2_hmac`, `collections.abc`, `unittest.mock`, `unittest.TestCase.subTest`, `selectors`, `enum`, `pathlib`, `typing`, `ipaddress`, `shutil.which`, `subprocess.DEVNULL`·`run`, `str.casefold`, `bytes.hex`, `datetime.timestamp`·`fromisoformat`,
     `ConnectionResetError`·`FileNotFoundError`, `json.JSONDecodeError`, `ssl.create_default_context`, `ssl.PROTOCOL_TLS`, `ssl.PROTOCOL_TLSv1_1`·`PROTOCOL_TLSv1_2`, `SSLContext.check_hostname`·`minimum_version`, `venv`, `asyncio`
   - **된다** : `ssl.SSLContext`, `OP_NO_SSLv2`·`OP_NO_SSLv3`, `ssl.match_hostname`(DNS 이름만), `datetime.timezone`, `int.to_bytes`·`from_bytes`, `concurrent.futures`, `socket` 과 `tempfile.TemporaryDirectory` 의 컨텍스트 관리자, `os.makedirs(exist_ok=True)`, `Thread.daemon` 속성, `functools.lru_cache`, `{}` 자동 번호, `unicodedata.normalize("NFKC")`,
     `hmac.new`+`hashlib.sha256`, `binascii.hexlify`, `assertRaisesRegex`, UDP 소켓의 `select.select`. `json.loads` 는 `bytes` 를 거부한다(`str` 만 받음)
   - **`ssl.match_hostname` 은 IP 주소 SAN 을 비교하지 못한다** : SAN 에 `127.0.0.1` 이 있는 인증서도 `127.0.0.1` 로 검증하면 `CertificateError`. 3.2 로 하는 TLS 시험은 인증서의 DNS 이름(`localhost`)으로 접속하거나 PY-4 의 보완 구현이 필요하다
-  - **이 3.2 는 TLS 1.1·1.2 를 못 한다**(OpenSSL 1.0.0a). 이 PC 의 3.2 로 SSL 을 시험하려면 서버의 `tcp.ssl.minVersion` 을 `TLSv1` 로 낮춰야 한다 (서버는 구버전을 허용하면 암호 스위트도 함께 허용하고 구동 로그에 경고한다). 3.13 은 서버 기본 설정(`TLSv1.2`)으로 시험한다
-  - **pip 와 setuptools 가 없다** : 이 3.2 에는 설치 시험이 불가능하다. 시험은 설치하지 않고 소스 트리(작업 디렉토리 `pythonDriver`)에서 `C:\Python\Py302\python.exe -m unittest discover -s tests` 로 돌린다 (PY-1 에서 실제로 되는지 확인). `setup.py` 는 `setuptools` 를 가져오지 못하면 `distutils.core` 로 물러서게 쓴다
+  - **이 3.2 는 TLS 1.1·1.2 를 못 한다**(OpenSSL 1.0.0a). `DESKTOP-HJOW` 의 3.2 로 SSL 을 시험하려면 서버의 `tcp.ssl.minVersion` 을 `TLSv1` 로 낮춰야 한다 (서버는 구버전을 허용하면 암호 스위트도 함께 허용하고 구동 로그에 경고한다). 3.13 은 서버 기본 설정(`TLSv1.2`)으로 시험한다
+  - **pip 와 setuptools 가 없다** : 이 3.2 에는 설치 시험이 불가능하다. `DESKTOP-HJOW` 에서 시험은 설치하지 않고 소스 트리(작업 디렉토리 `pythonDriver`)에서 `"C:\Program Files\Python\P302\python.exe" -m unittest discover -s tests` 로 돌린다 (PY-1 에서 실제로 되는지 확인). `setup.py` 는 `setuptools` 를 가져오지 못하면 `distutils.core` 로 물러서게 쓴다
   - 통합 시험이 `rdbms` 를 띄우는 부분은 Node.js 가 필요하며, 그 도우미는 3.2 에서 도는 `subprocess` 만 쓴다 (`DEVNULL` 은 `open(os.devnull)` 로)
 
 ## 세부 계획
@@ -55,12 +57,12 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 ### PY-1. 패키지 구성과 호환 계층
 
 - [ ] 디렉토리 구성 : `helloworlddb/`(패키지), `tests/`, `setup.py`, `README.md`, `.gitignore`(`__pycache__`, `build`, `dist`, `*.egg-info`). 이름은 "미결 사항" 2 가 정해지면 확정한다
-- [ ] `setup.py` : `python_requires=">=3.2"`, 외부 의존 없음, 순수 파이썬(`py3-none-any`) 휠. `setup.py` 자체도 3.2 문법으로 쓰고, `setuptools` 가 없으면 `distutils.core` 로 물러선다 (이 PC 의 3.2 에는 setuptools 가 없다)
-- [ ] 버전별 시험 실행 스크립트 : 인터프리터 경로를 인자나 환경 변수로 받아 같은 시험을 여러 버전으로 돌린다. 이 PC 에서는 `C:\Python\Py302\python.exe` 와 `python`(3.13.1). 경로를 소스에 적지 않는다
+- [ ] `setup.py` : `python_requires=">=3.2"`, 외부 의존 없음, 순수 파이썬(`py3-none-any`) 휠. `setup.py` 자체도 3.2 문법으로 쓰고, `setuptools` 가 없으면 `distutils.core` 로 물러선다 (`DESKTOP-HJOW` 의 3.2 에는 setuptools 가 없다)
+- [ ] 버전별 시험 실행 스크립트 : 인터프리터 경로를 인자나 환경 변수로 받아 같은 시험을 여러 버전으로 돌린다. `DESKTOP-HJOW` 에서는 `C:\Program Files\Python\P302\python.exe` 와 `python`(3.13.1)을 사용한다. PC별 경로를 소스에 적지 않는다
 - [ ] `_compat.py` : 버전 차이를 한곳에서 흡수한다. 다른 모듈은 이것만 통해 쓴다 (아래 "Python 3.2 범위 주의 목록")
   `monotonic()`, `compare_digest()`, `pbkdf2_hmac()`(3.4 미만은 순수 파이썬), `hexlify`/`unhexlify`, `collections.abc`, 소켓 오류 분류(errno 기반), `which()`
 - [ ] `unittest` 구성 : `python -m unittest discover -s tests` 가 3.2 에서 돈다. `unittest.mock`, `subTest` 를 쓰지 않는다
-- [ ] 소스 호환성 시험 `tests/test_source_compat.py` : 소스 전체를 `ast` 와 `tokenize` 로 읽어 3.2 에 없는 문법(f-문자열, `yield from`, `async`/`await`, 변수 주석, `u''` 접두, `raise ... from None`)과 import(3.2 에 없는 표준 모듈)를 찾는다. 3.2 인터프리터가 없는 장비에서도 이 시험이 최소한을 지킨다 (이 PC 에서는 실제 3.2 로도 전체 시험을 돈다)
+- [ ] 소스 호환성 시험 `tests/test_source_compat.py` : 소스 전체를 `ast` 와 `tokenize` 로 읽어 3.2 에 없는 문법(f-문자열, `yield from`, `async`/`await`, 변수 주석, `u''` 접두, `raise ... from None`)과 import(3.2 에 없는 표준 모듈)를 찾는다. 3.2 인터프리터가 없는 장비에서도 이 시험이 최소한을 지킨다 (`DESKTOP-HJOW` 에서는 실제 3.2 로도 전체 시험을 돈다)
 - [ ] 통합 시험 도우미 `tests/rdbms_instance.py` : 임시 설치 디렉토리에 시험용 포트의 config.json 을 쓰고 `rdbms` 를 `hwdb start` 로 띄웠다가 `hwdb stop` 으로 끝낸다 (`HWDB_INSTALL_DIR` 환경 변수. [rdbms/docs/cli.md](../rdbms/docs/cli.md) 1절).
   `node` 와 빌드된 `rdbms/dist` 가 없으면 통합 시험을 건너뛰고 이유를 보여 준다. TCP·UDP 가 모두 비어 있는 포트를 고른다 (Windows 의 제외 포트 범위 때문. `rdbms/test/net/helpers.ts` 의 `freePort`)
 
@@ -94,10 +96,10 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 - [ ] `ssl` 모듈로 TCP 를 TLS 로 감싼다. 서버 인증서는 **기본으로 검증**한다. 신뢰할 CA 지정(`ssl_ca`)과 검증 끄기(`ssl_verify=False`)를 함께 제공한다 (상세 8)
 - [ ] **재시도 규칙** : 인증서 오류로 핸드셰이크가 실패하면 연결을 닫고 100 ms 뒤 새 연결로 다시 시도한다. 최대 2회. 재시도에서도 검증은 그대로 한다. 인증서 오류가 아닌 실패(연결 거부, 시간 초과, 끊김, TLS 버전 불일치, 서버가 TLS 가 아님)에는 재시도하지 않는다. 모두 실패하면 `08001` 에 해당하는 `OperationalError`(내부 번호 8007)이고 메시지에 시도 횟수와 원인을 싣는다 (프로토콜 2-2절)
 - [ ] 인증서 오류 분류 : Python 버전마다 예외가 다르다 (`ssl.SSLError` 의 `reason`/`verify_code`, `ssl.CertificateError`, 3.7+ 의 `ssl.SSLCertVerificationError`). 한곳에서 "인증서 오류인가" 를 판정한다
-- [ ] 호스트 이름 검증 : `SSLContext.check_hostname`(3.4+)이 있으면 그것을, 없으면 `ssl.match_hostname`(3.2 ~ 3.11)을 쓴다. 3.12 부터 `match_hostname` 이 없고, 3.2 ~ 3.4 는 IP 주소 SAN 을 비교하지 못한다 (3.5 에서 추가. 이 PC 의 3.2 에서 실패를 확인했다). IP 로 접속하는 구버전을 위한 보완을 구현 때 버전별로 확인해 정한다
-- [ ] TLS 버전 : 3.2 ~ 3.5 는 `PROTOCOL_SSLv23` 과 `OP_NO_SSLv2`·`OP_NO_SSLv3`, 3.6+ 는 `PROTOCOL_TLS`, 3.7+ 는 `PROTOCOL_TLS_CLIENT` 와 `minimum_version` 으로 맞춘다. 옛 Python 이 링크한 OpenSSL 이 TLS 1.2 를 못 하면 서버의 `tcp.ssl.minVersion` 을 `TLSv1` 로 낮춰야 한다 (자바 6 과 같은 문제. 사용 설명서에 적는다). **이 PC 의 3.2 는 OpenSSL 1.0.0a 라 TLS 1.2 를 못 하는 것을 확인했다.** 3.2 의 SSL 시험은 서버를 `TLSv1` 로 낮춘 설정으로, 3.13 은 기본 설정(`TLSv1.2`)으로 한다
+- [ ] 호스트 이름 검증 : `SSLContext.check_hostname`(3.4+)이 있으면 그것을, 없으면 `ssl.match_hostname`(3.2 ~ 3.11)을 쓴다. 3.12 부터 `match_hostname` 이 없고, 3.2 ~ 3.4 는 IP 주소 SAN 을 비교하지 못한다 (3.5 에서 추가. `DESKTOP-HJOW` 의 3.2 에서 실패를 확인했다). IP 로 접속하는 구버전을 위한 보완을 구현 때 버전별로 확인해 정한다
+- [ ] TLS 버전 : 3.2 ~ 3.5 는 `PROTOCOL_SSLv23` 과 `OP_NO_SSLv2`·`OP_NO_SSLv3`, 3.6+ 는 `PROTOCOL_TLS`, 3.7+ 는 `PROTOCOL_TLS_CLIENT` 와 `minimum_version` 으로 맞춘다. 옛 Python 이 링크한 OpenSSL 이 TLS 1.2 를 못 하면 서버의 `tcp.ssl.minVersion` 을 `TLSv1` 로 낮춰야 한다 (자바 6 과 같은 문제. 사용 설명서에 적는다). **`DESKTOP-HJOW` 의 3.2 는 OpenSSL 1.0.0a 라 TLS 1.2 를 못 하는 것을 확인했다.** 3.2 의 SSL 시험은 서버를 `TLSv1` 로 낮춘 설정으로, 3.13 은 기본 설정(`TLSv1.2`)으로 한다
 - [ ] 시험 : `rdbms/test/fixtures/tls/` 의 시험용 인증서로 신뢰하는 CA, 신뢰하지 않는 인증서(재시도 2회 뒤 실패), 이름이 다른 인증서, 검증 끄기, 평문 서버에 TLS 접속
-- [ ] 이 PC 의 3.2 : 서버가 `TLSv1` 설정에서 이 클라이언트(OpenSSL 1.0.0a)의 TLS 1.0 접속을 실제로 받는지, 시험용 인증서(RSA 2048, SHA-256 서명)를 이 클라이언트가 검증하는지 확인한다. 어긋나면 `rdbms/PROGRESS.md` 에 적는다
+- [ ] `DESKTOP-HJOW` 의 3.2 : 서버가 `TLSv1` 설정에서 이 클라이언트(OpenSSL 1.0.0a)의 TLS 1.0 접속을 실제로 받는지, 시험용 인증서(RSA 2048, SHA-256 서명)를 이 클라이언트가 검증하는지 확인한다. 어긋나면 `rdbms/PROGRESS.md` 에 적는다
 
 ### PY-5. UDP
 
@@ -120,8 +122,8 @@ HelloWorldDB 에 접속하는 Python 용 드라이버를 개발하는 프로젝�
 - [ ] 통합 테스트 : TCP, SSL, UDP 각각으로 로그인, 질의, 파라미터, 대량 결과, 트랜잭션(커밋·롤백·세이브포인트), 오류(문법, 제약, 권한, 교착·잠금 시간 초과), 접속 끊김(서버 종료 중 요청)
 - [ ] 동시성 : 한 접속을 여러 스레드가 공유(`threadsafety = 2`), 스레드마다 접속을 따로 연 10개 접속이 같은 테이블에 조회·변경 (상세 9)
 - [ ] 타입 왕복 시험 : 타입별 경계값(BIGINT 최소·최대, `DECIMAL(38,s)`, 빈 문자열과 NULL, 날짜 0001-01-01 ~ 9999-12-31, 마이크로초, 시간대, INTERVAL, 이진, 안전 정수를 넘는 정수 파라미터)
-- [ ] 3.2(`C:\Python\Py302`)와 최신 3.13.1 에서 같은 소스로 전체 시험 통과 (이 PC). 다른 장비에서 3.2 를 구하지 못하면 가장 낮게 구한 버전과 `test_source_compat` 으로 대신하고 그 한계를 이 문서에 적는다
-- [ ] 휠과 소스 배포본을 만들어 최신 Python 의 깨끗한 가상 환경에 설치해 Hello World 를 실행한다. 이 PC 의 3.2 에는 pip 이 없어 설치 시험을 못 하므로 소스 트리 실행(`distutils` 로 `setup.py` 가 도는지 포함)으로 대신한다
+- [ ] `DESKTOP-HJOW` 의 Python 3.2(`C:\Program Files\Python\P302`)와 최신 3.13.1 에서 같은 소스로 전체 시험 통과. 다른 장비에서 3.2 를 구하지 못하면 가장 낮게 구한 버전과 `test_source_compat` 으로 대신하고 그 한계를 이 문서에 적는다
+- [ ] 휠과 소스 배포본을 만들어 최신 Python 의 깨끗한 가상 환경에 설치해 Hello World 를 실행한다. `DESKTOP-HJOW` 의 3.2 에는 pip 이 없어 설치 시험을 못 하므로 소스 트리 실행(`distutils` 로 `setup.py` 가 도는지 포함)으로 대신한다
 - 완료 기준 : 실제 `rdbms` 를 띄워 수행하는 통합 테스트 통과(TCP, SSL, UDP. UDP 는 유실·중복 조건 포함). PEP 249 항목별 시험 통과. 3.2 와 최신 Python 에서 같은 소스 통과.
 
 ## 설계 초안 (확정 전)
@@ -193,7 +195,7 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 
 ## Python 3.2 범위 주의 목록
 
-3.2 에서 쓸 수 없는 것 중 실수하기 쉬운 것들이다 (Python 문서의 "New in version" 표기 기준. 이 PC 의 3.2 로 주요 항목을 직접 확인했다 : "이 PC 의 시험 환경". 구현 때 `test_source_compat` 이 일부를 기계로 검사한다).
+3.2 에서 쓸 수 없는 것 중 실수하기 쉬운 것들이다 (Python 문서의 "New in version" 표기 기준. `DESKTOP-HJOW` 의 3.2 로 주요 항목을 직접 확인했다 : "PC별 시험 환경". 구현 때 `test_source_compat` 이 일부를 기계로 검사한다).
 `jdbc6` 의 "자바 6 범위 주의 목록" 과 같은 역할이다.
 
 - 문법 : 문자열 `u''` 접두(3.3), `yield from`(3.3), `raise ... from None`(3.3), `async`/`await`(3.5), f-문자열(3.6), 변수 주석(3.6). 암묵적 네임스페이스 패키지(3.3)가 없으므로 모든 디렉토리에 `__init__.py` 를 둔다
@@ -204,7 +206,7 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - 3.2 에서 되는 것 : `ssl.SSLContext`·`match_hostname`, `datetime.timezone`, `int.to_bytes`/`from_bytes`, `concurrent.futures`, `socket` 과 `tempfile.TemporaryDirectory` 의 컨텍스트 관리자, `unittest` 의 `assertRaisesRegex`·`skipIf`·`setUpClass`, `os.makedirs(exist_ok=True)`, `functools.lru_cache`, `str.format` 의 `{}` 자동 번호
 - 새 Python 에서 사라진 것 : `ssl.wrap_socket`·`ssl.match_hostname`·`distutils`·`asyncore`·`imp`(3.12), `unittest` 의 `assertEquals`·`assertRaisesRegexp` 같은 옛 별칭(3.12), `unittest.makeSuite`(3.13), `collections.Mapping`(3.10), `Thread.isAlive`(3.9), `time.clock`(3.8). 3.2 에서 되는 이름(`assertEqual`, `assertRaisesRegex`, `is_alive`)을 쓰고 `ssl` 은 버전을 나누어 쓴다
 - 문자 인코딩은 `"utf-8"` 을 명시한다. `json.loads` 는 `str` 만 받으므로(3.6 부터 `bytes`) 먼저 디코딩한다
-- 3.2 의 `unicodedata` 는 오래된 유니코드 버전이다 (이 PC 의 3.2 는 6.0.0). 서버의 비밀번호 정규화(NFKC)와 결과가 달라질 수 있는 문자는 "미결 사항" 6 을 본다
+- 3.2 의 `unicodedata` 는 오래된 유니코드 버전이다 (`DESKTOP-HJOW` 의 3.2 는 6.0.0). 서버의 비밀번호 정규화(NFKC)와 결과가 달라질 수 있는 문자는 "미결 사항" 6 을 본다
 
 ## 미결 사항
 
@@ -212,10 +214,10 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 
 1. (확인) **일정과 순서**. AGENTS.md "구현 계획" 에 이 프로젝트의 단계가 없다. 권장 : `rdbms` 11단계 뒤에 `nodejsDriver`(12단계)와 병행하거나 그 다음에 착수하고, 정해지면 AGENTS.md 에 절을 더한다. 프로토콜을 한 번 더 써 보면 명세 보완점이 나오므로 `nodejsDriver` 를 먼저 하는 편이 낫다.
 2. (확인) **패키지 이름**. 지켜야 할 사항 6 은 Node.js 와 자바만 말한다. 권장 : 배포 이름은 규칙 6 을 따르고 import 이름은 짧게 `helloworlddb`. 규칙을 import 이름에도 적용하면 `org/duckdns/hjow/helloworlddb/pythondriver/` 로 5단계 중첩 패키지가 되고, 3.2 에는 네임스페이스 패키지가 없어 각 단계에 `pkgutil.extend_path` 가 필요하다. 정해지면 AGENTS.md 의 규칙 6 에 Python 을 적는다.
-3. **Python 3.2 시험 환경** — *이 PC 에서는 해결* : `C:\Python\Py302\python.exe`(3.2, OpenSSL 1.0.0a, pip·setuptools 없음). "이 PC 의 시험 환경" 절을 본다. 이 PC 가 아닌 장비(다른 개발자의 PC, 자동 시험 환경)에서 3.2 를 구하는 방법은 정하지 않았다. 못 구하면 `test_source_compat` 과 구할 수 있는 가장 낮은 버전으로 대신하고 한계를 적는다.
+3. **Python 3.2 시험 환경** — *`DESKTOP-HJOW` 에서는 해결* : 설치 디렉토리 `C:\Program Files\Python\P302`, 실행 파일 `C:\Program Files\Python\P302\python.exe` (3.2, OpenSSL 1.0.0a, pip·setuptools 없음). "PC별 시험 환경" 절을 본다. 다른 호스트(다른 개발자의 PC, 자동 시험 환경)에서 3.2 를 구하는 방법은 정하지 않았다. 못 구하면 `test_source_compat` 과 구할 수 있는 가장 낮은 버전으로 대신하고 한계를 적는다.
 4. **연-월 INTERVAL 의 Python 표현**. 연-월은 `timedelta` 로 나타낼 수 없다. 권장 : 첫 버전은 표준 표기 `str`. 필요해지면 `years`·`months` 를 가진 작은 클래스를 더한다.
-5. **옛 Python 의 TLS**. 이 PC 의 3.2 는 OpenSSL 1.0.0a 라 **TLS 1.2 를 못 하는 것을 확인했다**(`PROTOCOL_TLSv1_2` 가 없다). 그래서 이 3.2 의 SSL 시험에는 서버의 `tcp.ssl.minVersion=TLSv1` 이 필요하다. 남은 확인 : 서버가 그 설정에서 이 클라이언트의 TLS 1.0 접속을 실제로 받는지, 이 클라이언트가 시험용 인증서를 검증하는지(PY-4) (서버는 구버전을 허용하면 암호 스위트도 함께 허용하고 구동 로그에 경고한다. 같은 확인 항목이 [jdbc6/PROGRESS.md](../jdbc6/PROGRESS.md)의 미결 사항에 있다).
-6. **NFKC 정규화의 유니코드 버전 차이**. 비ASCII 비밀번호가 서버(Node.js)와 3.2 의 `unicodedata`(이 PC 에서 확인한 버전은 6.0.0)에서 다르게 정규화되는 문자가 있을 수 있다. ASCII 는 같다. 구현 때 시험하고 문서에 적는다.
+5. **옛 Python 의 TLS**. `DESKTOP-HJOW` 의 3.2 는 OpenSSL 1.0.0a 라 **TLS 1.2 를 못 하는 것을 확인했다**(`PROTOCOL_TLSv1_2` 가 없다). 그래서 이 3.2 의 SSL 시험에는 서버의 `tcp.ssl.minVersion=TLSv1` 이 필요하다. 남은 확인 : 서버가 그 설정에서 이 클라이언트의 TLS 1.0 접속을 실제로 받는지, 이 클라이언트가 시험용 인증서를 검증하는지(PY-4) (서버는 구버전을 허용하면 암호 스위트도 함께 허용하고 구동 로그에 경고한다. 같은 확인 항목이 [jdbc6/PROGRESS.md](../jdbc6/PROGRESS.md)의 미결 사항에 있다).
+6. **NFKC 정규화의 유니코드 버전 차이**. 비ASCII 비밀번호가 서버(Node.js)와 3.2 의 `unicodedata`(`DESKTOP-HJOW` 에서 확인한 버전은 6.0.0)에서 다르게 정규화되는 문자가 있을 수 있다. ASCII 는 같다. 구현 때 시험하고 문서에 적는다.
 7. **DB-API 준수 시험 틀**. 널리 쓰이는 비공식 `dbapi20.py` 를 쓸지. 라이선스를 확인하기 전에는 저장소에 넣지 않는다. 쓰지 않으면 PEP 249 항목별 시험을 직접 쓴다 (PY-3).
 8. **커넥션 풀과 비동기 API**. DB-API 밖이다. `nodejsDriver` 에는 풀이 있지만 여기서는 첫 버전 범위에서 뺐다. 필요해지면 별도 작업으로 한다 (비동기는 3.5 이상 전용 선택 모듈이 될 것이다).
 9. `float` 파라미터가 JSON 에서 정수처럼 보이는 경우(`3.0`, `1e16`)를 서버가 어떻게 해석하는지 PY-3 에서 확인한다 (정수 숫자는 안전 정수 범위를 넘으면 `22003` 이다). 어긋나면 `rdbms/PROGRESS.md` 에 적는다.
@@ -232,8 +234,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 
 ## 인수인계 사항
 
-- 이 PC 에서 Python 3.2 는 `C:\Python\Py302\python.exe` 이다. `C:\Python` 은 3.13.1 의 설치 디렉토리(PATH 에 있음)이고 `Py302` 는 그 아래에 따로 둔 3.2 이다. 3.2 를 실행할 때는 전체 경로를 쓴다 (`python` 은 3.13.1 이다).
-  이 경로는 이 PC 에만 해당하므로 소스·시험·스크립트에 적지 않고 인자나 환경 변수로 받는다. 3.2 에는 pip·setuptools 가 없어 의존 패키지를 설치할 수 없으므로 표준 라이브러리만 쓰는 방침이 곧 필수 조건이다.
+- `DESKTOP-HJOW` 에서 Python 3.2 의 설치 디렉토리는 `C:\Program Files\Python\P302`, 실행 파일은 `C:\Program Files\Python\P302\python.exe` 이다. 3.2 를 실행할 때는 이 호스트에서 전체 경로를 쓴다 (`python` 은 이 호스트에서 3.13.1 이다).
+  이 경로는 `DESKTOP-HJOW` 에만 해당한다. 다른 PC의 설치 경로를 이 값으로 가정하지 않으며, 소스·시험·스크립트에서는 PC별 경로를 고정하지 않고 인자나 환경 변수로 받는다. 3.2 에는 pip·setuptools 가 없어 의존 패키지를 설치할 수 없으므로 표준 라이브러리만 쓰는 방침이 곧 필수 조건이다.
 - 프로토콜의 기준은 [rdbms/docs/protocol.md](../rdbms/docs/protocol.md)(버전 1)이다. 구현 전에 15절의 클라이언트 체크리스트와 16절의 알려진 한계를 읽는다. 필드를 더하는 것은 버전을 올리지 않으므로 모르는 필드는 무시한다.
 - 같은 프로토콜의 참고 클라이언트 : `rdbms/src/client/connection.ts`(핸드셰이크, SCRAM, 실행, 커서, `ping`, 닫기), `transports.ts`(TCP·TLS, 인증서 오류 판정과 재시도), `udpTransport.ts`(UDP 전송), `rdbms/src/net/udpReliability.ts`(패킷 코덱, 송신자·수신자, RTO), `rdbms/src/auth/scram.ts`(SCRAM 계산).
   서버 모듈을 import 하지 않는 클라이언트라서 Python 으로 옮기기 좋다. 거꾸로 이 드라이버가 서버 모듈을 참고하는 일은 없다.
@@ -251,5 +253,6 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 ## 작업 이력
 
 - 2026-10-16 : 개발 계획 작성. AGENTS.md 와 `rdbms` 프로토콜 명세, SCRAM·UDP 참고 구현, 타입 문서를 읽고 PY-1 ~ PY-6 으로 나누었다. DB-API 2.0 대응, 예외 매핑, 타입 대응, Python 3.2 범위 주의 목록, 미결 사항을 정리했다. 코드는 없다.
-- 2026-10-16 : 이 PC 의 Python 3.2 가 `C:\Python\Py302\python.exe` 에 있음을 반영했다(사용자 안내). 실제로 실행해 3.2 / OpenSSL 1.0.0a / `unicodedata` 6.0.0 / pip·setuptools 없음을 확인하고, 계획의 3.2 가정(없는 것·되는 것 목록, `match_hostname` 의 IP 주소 SAN 비교 실패)을 직접 검증했다.
-  "이 PC 의 시험 환경" 절을 더하고 PY-1(버전별 시험 실행 스크립트, `setup.py` 의 `distutils` 대비), PY-4(이 3.2 는 TLS 1.2 불가 → 서버 `TLSv1` 로 시험), PY-6(3.2·3.13 양쪽 통과, 설치 시험은 3.13 만), 미결 사항 3·5·6 을 고쳤다.
+- 2026-10-16 : Python 3.2 / OpenSSL 1.0.0a / `unicodedata` 6.0.0 / pip·setuptools 없음과 계획의 3.2 가정(없는 것·되는 것 목록, `match_hostname` 의 IP 주소 SAN 비교 실패)을 실제 실행해 검증했다.
+  시험 환경 절을 더하고 PY-1(버전별 시험 실행 스크립트, `setup.py` 의 `distutils` 대비), PY-4(이 3.2 는 TLS 1.2 불가 → 서버 `TLSv1` 로 시험), PY-6(3.2·3.13 양쪽 통과, 설치 시험은 3.13 만), 미결 사항 3·5·6 을 고쳤다.
+- 2026-10-20 : 사용자 안내에 따라 Python 3.2 설치 경로를 호스트명 `DESKTOP-HJOW` 및 설치 디렉토리 `C:\Program Files\Python\P302` 와 함께 기록했다. 다른 PC 에는 해당 호스트명과 경로를 별도로 기록하도록 시험 환경 및 인수인계 문구를 갱신했다.
