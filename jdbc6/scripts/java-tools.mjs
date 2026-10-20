@@ -86,7 +86,7 @@ export function requireCompile(result) {
 /** 명시한 환경 변수는 오타나 실행 실패를 숨기지 않는다. 없는 기본 후보만 건너뛴다. */
 export function testRuntimes(tools) {
   const homes = [
-    ["HWDB_JAVA7_HOME", process.platform === "win32" ? path.join(ROOT, ".tools", "java7", "zulu7.56.0.11-ca-jdk7.0.352-win_x64") : "", 7],
+    ["HWDB_JAVA7_HOME", process.platform === "win32" ? "C:/Program Files/Java/jdk1.7.0_80" : "", 7],
     ["HWDB_JAVA8_HOME", process.platform === "win32" ? "C:/Program Files/Java/jdk8u432-b06" : "", 8],
   ];
   const candidates = [tools.java];

@@ -88,6 +88,7 @@
 이 PC(`DESKTOP-HJOW`)에서 Python 3.2는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 Python은 `C:\Program Files\Python\P312\python.exe`(3.12.4)이다. 이전 3.13.1 경로는 현재 없어 시험하지 않았다. 다른 장비의 경로는 별도로 기록한다.
 `VM-W11-Codex` 에서는 Python 3.2가 `C:\Program Files\Python\302\python.exe`, 현재 PATH의 Python(3.12.4)이 `C:\Program Files\Python\312\python.exe` 이다. PY-2는 이 PC에서 3.2·3.12.4 각각 77개 통과로 검증했다.
 같은 PC의 Node.js 22는 `C:\Program Files\nodejs22\node.exe`(22.23.3)에 설치되어 있다. 기본 PATH의 Node.js와 구분하여 시험하며, `nodejsDriver/README.md`에 런타임 선택 명령을 기록했다.
+자바 7은 사용자 지정 경로 `C:\Program Files\Java\jdk1.7.0_80`을 사용한다. `jdbc6` 시험 실행기의 기본 후보도 이 경로로 변경했으며 Java 6·7·8·21의 14개 시험이 통과했다. 초기 시험용 Azul 디렉토리는 더 이상 사용하지 않으며 삭제 명령이 자동 승인 검토에서 차단되어 사용자에게 수동 삭제 경로를 안내했다. 상세 경로는 `jdbc6/PROGRESS.md`에 기록했다.
 
 지금 `rdbms` 와 `nodejsDriver` 에서 사용자 확인을 기다리는 것은 없다. 아래 3건은 2026-10-16 에 사용자가 정했고, 결정 내용은 "공통 인수인계 사항" 에 있다.
 
@@ -140,3 +141,4 @@ JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 202
 - 2026-10-20 : `pythonDriver` PY-3 구현·검증. DB-API 2.0 계층과 시험 47개를 추가해 Python 3.2·3.12.4 각각 124개 통과, 실패·건너뜀 0이다. Param 이중 인코딩 결함과 3.2의 `utcoffset()` 검증을 찾아 고쳤고 미결 9는 서버 동작 확인으로 닫았다. 다음은 PY-4이며 커밋·푸시는 하지 않았다.
 - 2026-10-20 : `nodejsDriver` Node.js 22.x 검증 완료(`VM-W11-Codex`, 22.23.3). 전체 116개 통과·실패와 건너뜀 0, 배포본의 Node.js·Bun TCP·TLS·UDP 접속과 타입 정의 및 CommonJS 소비자를 확인했다. 호환성 수정은 필요하지 않았으며 시험 데몬과 임시 배포본을 정리했다. README와 진행 문서를 갱신했고 커밋·푸시는 하지 않았다.
 - 2026-10-20 : `jdbc6` 착수 및 14-1 완료. JDK 6으로 빌드한 같은 JAR의 Java 6·7·8·21 실행과 API·문법 제한 등 14개 시험을 통과했다. Node.js 실행기와 README를 추가하고 AGENTS.md C절·진행 문서에 착수 순서를 반영했다. VM-W11-Codex의 JDK 8 경로를 jdbc8·jdbc6 문서에 기록했다. JDBC 접속 구현은 다음 14-2이며 커밋·푸시는 하지 않았다.
+- 2026-10-20 : 사용자 지정에 따라 자바 7 시험 경로를 `C:\Program Files\Java\jdk1.7.0_80`으로 전환했다. 같은 JAR의 Java 6·7·8·21 실행을 포함한 14개 시험이 통과했다. 사용하지 않는 Azul 배포본의 삭제는 자동 승인 검토에서 차단되어 사용자가 직접 정리할 전체 경로를 안내했다.

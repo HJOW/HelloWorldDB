@@ -14,6 +14,7 @@
 
 ```powershell
 $env:HWDB_JAVA6_HOME = "C:\Program Files\Java\jdk1.6.0_45"
+$env:HWDB_JAVA7_HOME = "C:\Program Files\Java\jdk1.7.0_80"
 npm.cmd run build
 npm.cmd test
 npm.cmd run test:matrix
@@ -37,7 +38,7 @@ npm.cmd run test:matrix
 | 환경 변수 | 용도 |
 |---|---|
 | `HWDB_JAVA6_HOME` | 빌드와 자바 6 시험에 사용하는 JDK. Windows 기본 후보는 `C:\Program Files\Java\jdk1.6.0_45` |
-| `HWDB_JAVA7_HOME` | 자바 7 시험용 JDK 또는 JRE |
+| `HWDB_JAVA7_HOME` | 자바 7 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Java\jdk1.7.0_80` |
 | `HWDB_JAVA8_HOME` | 자바 8 시험용 JDK 또는 JRE. Windows 기본 후보는 `C:\Program Files\Java\jdk8u432-b06` |
 | `HWDB_TEST_JAVA_HOMES` | 추가 시험용 JDK/JRE 목록. Windows에서는 `;`, 그 외에는 `:`로 구분 |
 
@@ -50,7 +51,5 @@ HWDB_JAVA6_HOME=/opt/jdk6 HWDB_JAVA7_HOME=/opt/jdk7 HWDB_JAVA8_HOME=/opt/jdk8 np
 시험은 기본값 PATH의 컴파일러를 사용하지 않는다. 자바 7 전용 클래스, 자바 8 전용 메서드, JDBC 4.1 전용 메서드와 자바 7 문법이 실제로 컴파일에 실패하는지도 확인한다.
 앞으로 서버 통합 시험도 같은 방식으로 별도 시험 클래스의 `main`을 해당 런타임의 `java -cp`로 호출한다.
 
-`VM-W11-Codex`에서 사용하는 자바 7의 로컬 후보 경로는 `.tools/java7/zulu7.56.0.11-ca-jdk7.0.352-win_x64`이다.
-[Azul의 공식 배포본](https://cdn.azul.com/zulu/bin/zulu7.56.0.11-ca-jdk7.0.352-win_x64.zip)을 내려받아 시스템 설정을 바꾸지 않고 압축을 푼다. 빌드·시험 명령은 JDK를 자동으로 내려받지 않는다.
-[공식 메타데이터 API](https://docs.azul.com/core/install/metadata-api)에서 확인한 ZIP의 SHA-256은 `a0255d1e29d4ab9d685b698217d9adca6a29b2e493608d4e73feda84e7759085`이다.
-`.tools/`와 생성한 빌드 결과는 Git에서 제외한다.
+`VM-W11-Codex`의 자바 7은 설치된 `C:\Program Files\Java\jdk1.7.0_80`을 사용한다.
+`java -version`과 `javac -version`에서 모두 `1.7.0_80`을 확인했다. 빌드·시험 명령은 JDK를 내려받지 않는다.
