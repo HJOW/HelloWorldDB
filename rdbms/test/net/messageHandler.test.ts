@@ -210,6 +210,34 @@ test("받을 수 있는 메시지의 최대 크기는 인증 전 64 KiB, 인증 
 // 인증
 // ---------------------------------------------------------------------------
 
+test("프로토타입 속성 이름의 미등록 사용자는 정상 SCRAM 실패로 처리한다", async (t) => {
+  const fixture = setup(t);
+  const logger = capturingLogger();
+  fixture.env.logger = logger;
+  for (const name of ["NOBODY", "constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    const driver = fixture.open();
+    const response = await driver.login(name, "wrong");
+    assert.equal(response.type, "error", name);
+    assert.equal(response["sqlState"], "28000", name);
+    assert.equal(response["code"], 7000, name);
+    assert.equal(response["message"], "Authentication failed.", name);
+    assert.equal(driver.endpoint.closed, true, name);
+  }
+  assert.equal(logger.lines.some((line) => line.startsWith("error:")), false);
+});
+
+test("프로토타입 속성 이름으로 만든 사용자는 SCRAM 인증이 된다", async (t) => {
+  const fixture = setup(t);
+  for (const name of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+    fixture.admin.execute(`CREATE USER "${name}" IDENTIFIED BY 'pw'`);
+    const driver = fixture.open();
+    const response = await driver.login(name, "pw");
+    assert.equal(response.type, "authOk", name);
+    assert.equal(response["session"].user, name);
+    await driver.request({ type: "close" });
+  }
+});
+
 test("SCRAM 인증에 성공하면 서버 서명을 검증할 수 있고 세션 정보를 받는다", async (t) => {
   const fixture = setup(t);
   const driver = fixture.open();

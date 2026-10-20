@@ -17,6 +17,20 @@ import { state } from "../exec/helpers.js";
 
 const row = (page: number, slot: number): string => rowLockKey("APP", "T", { pageId: page, slotId: slot });
 
+test("식별자 안의 구분자로 다른 테이블의 잠금 범위가 합쳐지지 않는다", () => {
+  const locks = new LockManager();
+  const id = { pageId: 1, slotId: 0 };
+  const first = rowLockKey("A", "B\u001fC", id);
+  const second = rowLockKey("A\u001fB", "C", id);
+  assert.deepEqual(locks.tryAcquireAll(1, [first]), { ok: true });
+  assert.deepEqual(locks.tryAcquireAll(2, [second]), { ok: true });
+  assert.equal(locks.tryAcquireAll(3, [objectLockKey("A", "B\u001fC")]).ok, false);
+  assert.equal(locks.tryAcquireAll(3, [objectLockKey("A\u001fB", "C")]).ok, false);
+  locks.releaseAll(1);
+  assert.deepEqual(locks.tryAcquireAll(3, [objectLockKey("A", "B\u001fC")]), { ok: true });
+  assert.equal(locks.tryAcquireAll(3, [objectLockKey("A\u001fB", "C")]).ok, false);
+});
+
 /** 약속이 이미 끝났는지 한 틱 뒤에 확인한다. */
 async function settled(promise: Promise<unknown>): Promise<"pending" | "resolved" | "rejected"> {
   let status: "pending" | "resolved" | "rejected" = "pending";

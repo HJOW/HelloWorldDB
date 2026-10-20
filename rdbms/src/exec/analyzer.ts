@@ -14,6 +14,7 @@
  */
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { SourcePosition } from "../common/errors.js";
 import { NO_TABLESPACE } from "../common/instance.js";
 import { noCurrentTablespace } from "../auth/privileges.js";
@@ -140,18 +141,19 @@ function bindView(
   viewStack: readonly string[],
   position: SourcePosition,
 ): BoundSource {
-  const key = `${tablespace}.${viewName}`;
+  const key = objectKey(tablespace, viewName);
+  const displayName = `${tablespace}.${viewName}`;
   if (viewStack.includes(key)) {
-    fail("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View depends on itself: "${key}".`, position);
+    fail("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View depends on itself: "${displayName}".`, position);
   }
   const catalog = manager.requireCatalog(tablespace);
   const def = catalog.data.views[viewName] as StoredView | undefined;
   if (def === undefined) {
-    fail("42P01", ERROR_CODES.VIEW_NOT_FOUND, `View does not exist: "${key}".`, position);
+    fail("42P01", ERROR_CODES.VIEW_NOT_FOUND, `View does not exist: "${displayName}".`, position);
   }
   const parsed = parseStatement(def.queryText);
   if (parsed.statement.kind !== "Query") {
-    fail("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View definition is not a query: "${key}".`, position);
+    fail("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View definition is not a query: "${displayName}".`, position);
   }
   return { kind: "view", tablespace, view: viewName, alias, def, query: parsed.statement };
 }
@@ -250,7 +252,7 @@ export function viewColumnMapping(
   try {
     const baseCatalog = manager.requireCatalog(baseTablespace);
     if (baseCatalog.data.views[only.name.name] !== undefined) {
-      const inner = viewColumnMapping(manager, baseTablespace, only.name.name, [...viewStack, `${tablespace}.${viewName}`]);
+      const inner = viewColumnMapping(manager, baseTablespace, only.name.name, [...viewStack, objectKey(tablespace, viewName)]);
       // 바깥 뷰의 선택 목록을 안쪽 대응에 맞춘다.
       const map = new Map<string, string | null>();
       const items = body.items;

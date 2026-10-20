@@ -21,6 +21,7 @@
  */
 
 import { DbError, ERROR_CODES, withPosition } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { SourcePosition } from "../common/errors.js";
 import type {
   Expression,
@@ -508,7 +509,7 @@ function nullScopes(source: BoundSource, ctx: QueryContext): RowScope[] {
         slots: source.def.columns.map((column) => ({ column: column.name, value: null, type: column.dataType })),
       }];
     case "view": {
-      const columns = inferOutputColumns(source.query, { ...ctx, viewStack: [...ctx.viewStack, `${source.tablespace}.${source.view}`] });
+      const columns = inferOutputColumns(source.query, { ...ctx, viewStack: [...ctx.viewStack, objectKey(source.tablespace, source.view)] });
       const names = source.def.columns.length === columns.length ? source.def.columns : columns.map((column) => column.name);
       return [{
         tablespace: source.tablespace,
@@ -713,7 +714,7 @@ function indexEntryIds(
 
 /** 뷰를 전개하여 행을 만든다. 정의 안의 생략된 이름은 뷰의 테이블스페이스에서 찾는다. */
 function scanView(bound: Extract<BoundSource, { kind: "view" }>, ctx: QueryContext): RowScope[][] {
-  const key = `${bound.tablespace}.${bound.view}`;
+  const key = objectKey(bound.tablespace, bound.view);
   const result = executeQuery(bound.query, { ...ctx, currentTablespace: bound.tablespace, viewStack: [...ctx.viewStack, key] });
   const names = bound.def.columns.length === result.columns.length ? bound.def.columns : result.columns.map((column) => column.name);
   return result.rows.map((row) => [
@@ -1150,7 +1151,7 @@ function typeScopesOf(bound: BoundSource, ctx: QueryContext): RowScope[] {
         slots: bound.def.columns.map((column) => ({ column: column.name, value: null, type: column.dataType })),
       }];
     case "view": {
-      const viewCtx = { ...ctx, currentTablespace: bound.tablespace, viewStack: [...ctx.viewStack, `${bound.tablespace}.${bound.view}`] };
+      const viewCtx = { ...ctx, currentTablespace: bound.tablespace, viewStack: [...ctx.viewStack, objectKey(bound.tablespace, bound.view)] };
       const columns = inferOutputColumns(bound.query, viewCtx);
       const names = bound.def.columns.length === columns.length ? bound.def.columns : columns.map((column) => column.name);
       return [{

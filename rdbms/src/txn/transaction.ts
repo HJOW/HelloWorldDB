@@ -29,6 +29,7 @@
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { RowId } from "../storage/format/format.js";
 import type { StoredTable } from "../catalog/catalog.js";
 import { encodeKey } from "../types/codec.js";
@@ -38,7 +39,7 @@ import type { SqlValue } from "../types/value.js";
 
 /** 오버레이 테이블을 가리키는 키이다. */
 export function overlayKey(tablespace: string, table: string): string {
-  return `${tablespace}.${table}`;
+  return objectKey(tablespace, table);
 }
 
 /** 커밋된 행의 식별 키이다. */

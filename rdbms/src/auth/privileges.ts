@@ -21,6 +21,7 @@
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { SourcePosition } from "../common/errors.js";
 import type { ObjectName, Privilege, PrivilegeGroup } from "../sql/ast.js";
 import type { SystemRegistry, StoredPrivilege } from "../catalog/catalog.js";
@@ -281,7 +282,7 @@ export class AccessControl {
     if (entry === null || entry.owner !== user) return false;
     if (entry.kind === "table") return true;
     if (privilege === "ALTER" || privilege === "DROP") return true;
-    const key = `${tablespace}.${object}`;
+    const key = objectKey(tablespace, object);
     if (visiting.has(key)) return false;
     visiting.add(key);
     const allowed = entry.dependencies.every((dependency) =>
@@ -338,8 +339,8 @@ export class AccessControl {
     const visit = (entry: ObjectEntry): void => {
       for (const dependency of entry.dependencies) {
         if (isVirtualName(dependency.tablespace, dependency.name)) continue;
-        const key = `${dependency.tablespace}.${dependency.name}`;
-        if (found.has(key) || (key === `${view.tablespace}.${view.name}`)) continue;
+        const key = objectKey(dependency.tablespace, dependency.name);
+        if (found.has(key) || key === objectKey(view.tablespace, view.name)) continue;
         const referenced = lookupObject(this.manager, dependency.tablespace, dependency.name);
         if (referenced === null) continue;
         found.set(key, referenced);

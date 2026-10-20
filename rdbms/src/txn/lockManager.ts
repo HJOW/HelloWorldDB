@@ -23,32 +23,33 @@
  */
 
 import { DbError, ERROR_CODES } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { RowId } from "../storage/format/format.js";
 
 /** 잠금의 소유자이다. 트랜잭션 번호이며, DDL 문장도 자기 번호를 받는다. */
 export type LockOwner = number;
 
-/** 키 안의 구분자이다. 식별자에 들어갈 수 없는 제어 문자(U+001F)를 쓴다. */
+/** 키 안의 구분자이다. 식별자 안의 같은 제어 문자는 objectKey에서 이스케이프한다. */
 const SEP = "\u001f";
 
 /** 행 잠금 키이다. */
 export function rowLockKey(tablespace: string, table: string, id: RowId): string {
-  return `R${SEP}${tablespace}${SEP}${table}${SEP}${id.pageId}:${id.slotId}`;
+  return `R${SEP}${objectKey(tablespace, table)}${SEP}${id.pageId}:${id.slotId}`;
 }
 
 /** PK 잠금 키이다. 같은 PK 값을 넣으려는 트랜잭션끼리 순서가 정해진다. */
 export function pkLockKey(tablespace: string, table: string, keyHex: string): string {
-  return `K${SEP}${tablespace}${SEP}${table}${SEP}${keyHex}`;
+  return `K${SEP}${objectKey(tablespace, table)}${SEP}${keyHex}`;
 }
 
 /** 객체 잠금 키이다. DDL 이 같은 객체의 행 잠금과 충돌한다. */
 export function objectLockKey(tablespace: string, table: string): string {
-  return `O${SEP}${tablespace}${SEP}${table}`;
+  return `O${SEP}${objectKey(tablespace, table)}`;
 }
 
 /** 잠금 키가 속한 객체 범위(테이블스페이스와 테이블)이다. */
 function lockScope(key: string): string {
-  return key.split(SEP).slice(1, 3).join(SEP);
+  return key.split(SEP)[1]!;
 }
 
 function isObjectKey(key: string): boolean {
@@ -58,8 +59,9 @@ function isObjectKey(key: string): boolean {
 /** 사람이 읽는 잠금 설명이다. 오류 메시지에 쓴다. */
 function describeKey(key: string): string {
   const parts = key.split(SEP);
-  const target = `${parts[1] ?? ""}.${parts[2] ?? ""}`;
-  if (parts[0] === "R") return `row ${parts[3] ?? ""} of "${target}"`;
+  const [tablespace, table] = JSON.parse(parts[1]!) as [string, string];
+  const target = `${tablespace}.${table}`;
+  if (parts[0] === "R") return `row ${parts[2] ?? ""} of "${target}"`;
   if (parts[0] === "K") return `primary key of "${target}"`;
   return `object "${target}"`;
 }

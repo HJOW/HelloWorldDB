@@ -6,14 +6,17 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-17
+- 최종 갱신 : 2026-10-20
+- 후속 수정 검증 : Windows, Node.js 24.22.0 / TypeScript 6.0.3에서 `npm test` **906개 중 905개 통과·1개 건너뜀·실패 0**(Windows의 기존 SIGTERM 시험). Bun 1.3.14는 카탈로그·계정·권한·질의·트랜잭션·잠금·메시지 처리기 관련 241개와 실제 데몬 정리 회귀 시험 1개가 모두 통과했다. Bun 전체 시험은 이번에 다시 돌리지 않았다. 회귀 시험은 총 17개를 추가했다.
+- 2026-10-20 후속 수정 : 점검 항목 P-1 ~ P-4를 모두 수정했다. 카탈로그와 SYSTEM 레지스트리의 이름 맵은 생성·재열기·레지스트리 저장 모두에서 프로토타입 없는 객체를 쓴다. 추가 점검에서 한정 이름 충돌로 인한 트랜잭션 혼선·뷰 GRANT 검사 누락(P-5), 카탈로그가 손상된 일반 테이블스페이스의 파일 핸들 누수(P-6)를 재현하고 고쳤다. 시험 도우미의 데몬 종료 요청 생략(P-7)도 고쳤다. 상세는 아래 "점검 작업 사항".
+- 최초 점검(2026-10-20)은 수정 없이 P-1 ~ P-4를 기록했다. 수정 전 재현 내용은 아래에 보존하고, 후속 조치와 추가 발견 사항은 같은 절에 함께 적었다.
 - 2026-10-17 : 11단계 뒤의 마무리와 12단계(`nodejsDriver`) 중에 한 수정 3건. (1) **bun 에서 통합 시험 뒤 데몬이 남던 문제를 재현하고 고쳤다**(시험 도우미. 제품 코드 변경 없음), (2) **드라이버의 통합 시험이 찾은 제품 결함** `CAST(? AS INTEGER)` 같은 문자열 파라미터 캐스트의 내부 오류(`XX000`)를 고쳤다, (3) 단위 시험이 쌓던 임시 디렉토리를 정리하게 했다. 내용은 "결정 사항"의 "12단계(Node.js 드라이버) 중에 한 rdbms 쪽 수정".
   전체 시험을 다시 돌렸다 : Node.js 24.21.0 에서 `npm test` 888개 → 새 회귀 시험 1개를 더해 889개 중 888개 통과, 1개 건너뜀(Windows 의 SIGTERM), 실패 0. bun 1.3.14 : 통합 시험 87개(파일마다) 85개 통과·2개 건너뜀, 단위 시험 801개(통합 제외) 799개 통과·2개 실패(둘 다 bun 1.3.14 가 `t.mock` 을 구현하지 않아서. 위 "미결 사항"). 남은 `daemon/entry` 프로세스 0.
 - 진행 단계 : 1 ~ 11단계 완료. 11단계(통합 검증)는 개요 1 ~ 15 항목마다 실제 `hwdb start` 데몬에 접속하는 시험 87개(`test/integration/`)와 이전 포맷 버전 호환성(데이터 디렉토리 단위, 버전 보호), 사용 설명서 [docs/manual.md](docs/manual.md), 검증 기록 [docs/verification.md](docs/verification.md)를 갖추었고, 그 과정에서 제품 결함 넷을 찾아 고쳤다("11단계 검증"). 10단계(데몬 제어와 CLI)는 `hwdb start`(분리된 데몬), `stop`, `status` 와 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP)을 구현했다.
   완료 기준을 채웠다 : 데몬을 띄우면 바로 돌아오고 부모와 콘솔이 끝나도 남으며, 설치 직후 SYSTEM 으로 로그인해 초기 암호를 바꿀 수 있고, TCP·UDP 를 껐거나 `maxConnections` 가 차도 로컬 접속이 된다(Windows 에서 확인).
   명령의 동작은 [docs/cli.md](docs/cli.md), 9단계(통신)의 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)이다.
 - 착수 조건 : 없음
-- 다음 작업 : 없음. 12단계(Node.js 드라이버, `nodejsDriver`)도 2026-10-17 에 끝났다. 이 프로젝트의 일은 끝났다. 인수인계는 "인수인계 사항"의 첫 항목(11단계).
+- 다음 작업 : 이번 점검의 P-1 ~ P-7 수정은 완료했다. Node.js 22.x·다른 OS 검증, 조회 스트리밍 등 기존 "미결 사항"은 남아 있다. 12단계(Node.js 드라이버, `nodejsDriver`)는 2026-10-17에 끝났다.
 - 10단계에서 서버·프로토콜에 더한 것(2026-10-16) : `bye` 응답의 `rolledBack`(세션을 닫으며 커밋하지 않은 변경을 롤백했는지. `Session.hasUncommittedChanges`, `Connection.close()` 가 `{ rolledBack }` 을 돌려줌),
   정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(`daemon/main.ts`. 클라이언트가 소켓을 읽지 않아 Windows 네임드 파이프가 닫히지 않을 때 데몬이 영원히 남아 `hwdb stop` 이 끝나지 않던 것을 고쳤다), 강제 종료로 남은 잠금 생성 가드 정리(`lockFile.ts`).
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
@@ -423,6 +426,44 @@ SQL 접속 (상세 14-2)
 - 결과 전체가 서버 메모리에 한 번 올라온다(통신 설계 5절의 한계). DML 행 단위 접근에서 검토했으나 조회 실행기·정렬·집계·커서의 스트리밍은 별도 작업으로 남긴다. DML 대상과 FK 탐색은 지연 순회하며 변경 행만 보관한다.
 
 
+## 점검 작업 사항 (2026-10-20 코드 점검)
+
+2026-10-20 최초 점검은 수정 없이 발견 사항만 기록했다. 같은 날 후속 수정 요청을 받아 P-1 ~ P-4를 고쳤고 추가 점검의 P-5, P-6도 처리했다. 아래의 재현 설명과 행 번호는 최초 점검 시점을 기준으로 보존한다.
+
+공통 조치 : `catalog.ts`의 `nameMap()`이 `Object.create(null)`로 이름 맵을 만든다. `tables`, `views`, `indexes`, `constraints`, SYSTEM의 `tablespaces`, `users`, `groups`에 생성과 JSON 역직렬화 양쪽에서 적용했다. `saveRegistry()`도 같은 맵에 기록한다. 이름을 금지하지 않으며 `"__proto__"`도 일반 키로 동작한다. 저장 JSON과 파일 포맷은 그대로이고 이전 v1 자료를 계속 읽는다.
+
+- [x] **P-1 (인증, 중간) 없는 사용자 이름이 있는 사용자처럼 응답한다.** `auth/users.ts` 의 `has`(84행)와 `verifierOf`(183~185행)가 `users[name]` 을 일반 객체에서 찾는다. `constructor`, `toString`, `hasOwnProperty`, `__proto__` 같은 `Object.prototype` 속성 이름이면 `undefined` 대신 상속된 값을 돌려준다. `net/messageHandler.ts` 의 `resolveUserName`(418행)과 `onAuthStart`(437행)가 이를 실제 사용자로 받아 `s=undefined,i=undefined` 챌린지를 보낸다. 이어서 `onAuthFinish` 의 `verifyClientProof` 가 `TypeError` 를 던져 `XX000` 내부 오류가 되고, 스택이 오류 로그에 남는다. 없는 사용자는 `28000` 이므로 사양 상세 8("없는 사용자와 틀린 비밀번호를 구분하지 않고 같은 오류")에 어긋난다. 인증 우회는 아니다(증명 검사 전에 끊긴다).
+  재현 : `authStart` 의 `clientFirst` 를 `n,,n=constructor,r=x` 로 보내고 `authFinish` 를 보낸다. `NOBODY` 와 응답을 비교한다(`NOBODY` 는 `28000`, `constructor` 는 `XX000`).
+  조치 : 사용자 이름 맵의 프로토타입을 제거했다. 미등록 이름은 같은 SCRAM 절차 뒤 `28000`/7000으로 실패하고 오류 로그가 남지 않는다. 같은 이름으로 실제 계정을 만들면 인증된다(`test/net/messageHandler.test.ts`).
+
+- [x] **P-2 (데이터 손실, 중간) `"__proto__"` 테이블스페이스가 재구동 뒤 사라진다.** `CREATE TABLESPACE "__proto__"` 는 성공하고 `SYS_TABLESPACES` 에도 보인다. 그러나 `catalog/tablespaceManager.ts` 의 `registry[name] = record`(299행)가 `Record` 에 프로토타입 설정자를 건드리므로 JSON 저장에서 빠진다. 재구동하면 목록에서 없어지고, 데이터 파일 `__proto__.hwdb` 는 고아로 남는다. 그 테이블스페이스를 기본으로 쓰던 사용자는 "기본 테이블스페이스 없음" 이 된다.
+  재현 : `CREATE TABLESPACE "__proto__"` → 닫기 → 다시 열기 → `SELECT TABLESPACE_NAME FROM SYS_TABLESPACES`. 재구동 전에는 `__proto__` 가 보이고, 재구동 뒤에는 `SYSTEM` 만 남는다. 데이터 디렉토리에는 `__proto__.hwdb` 가 그대로 있다(확인함).
+  조치 : 레지스트리 저장 때 프로토타입 없는 맵을 사용한다. 테이블스페이스 안의 행, 기본 테이블스페이스, 권한이 재구동 뒤에도 유지되는 시험을 추가했다. 이미 고아가 된 기존 파일은 자동 등록·삭제하지 않는다. 기존 데이터의 복구가 필요하면 별도 확인한다.
+
+- [x] **P-3 (기능, 낮음~중간) 객체 이름이 `Object.prototype` 속성과 같으면 존재 판정이 틀린다.** 카탈로그, 권한, 사용자 조회가 모두 `data.tables[name] !== undefined` 같은 일반 객체 인덱싱이다. 큰따옴표 식별자는 대소문자를 보존하므로 `"constructor"`, `"toString"`, `"hasOwnProperty"` 가 그대로 들어온다.
+  - `CREATE TABLE "constructor" (A INTEGER)` → 없는데도 `42P07`(4002) "Table already exists".
+  - `SELECT * FROM "hasOwnProperty"` → `XX000` 내부 오류(`Cannot read properties of undefined (reading 'map')`). 사양상 `42P01` 이어야 한다.
+  확인한 조회 지점 : `catalog/catalog.ts`(212, 375~445행), `exec/ddl.ts`(106, 227, 291, 1546~1547, 1581, 1610, 1629, 1747~1822행), `exec/analyzer.ts`(95~278행), `exec/dml.ts`(86~96, 361, 388행), `exec/rowChanges.ts`(119, 171행), `auth/privileges.ts`(76~80, 154~190, 407행), `auth/authorizer.ts`(114행), `session/session.ts`(763행). 이 밖에도 같은 형태가 있을 수 있으니 grep 으로 `[name] !== undefined` 과 `[name] =` 을 모두 찾는다.
+  조치 : 카탈로그 이름 맵과 권한 그룹 맵을 모두 같은 규칙으로 정규화했다. 네 가지 이름의 테이블·뷰·컬럼·인덱스·PK 생성, DML, 이름 변경, 삭제, 중복 PK, 재열기 및 계정·권한 부여·회수 시험을 추가했다(`test/catalog/identifierNames.test.ts`).
+
+- [x] **P-4 (일관성, 낮음) `ALTER USER` 가 없는 사용자에게 성공하고 전역 `Object` 를 바꾼다.** `ALTER USER "constructor" IDENTIFIED BY 'x'` 가 `User "constructor" altered.` 로 성공하고, 그 뒤 `Object.verifier` 가 생긴다. `auth/users.ts` 의 `require`(98행)가 `Object` 함수를 돌려주고 `setPassword` 가 그 속성을 쓰기 때문이다. `ALTER USER ... DEFAULT TABLESPACE` 도 `Object.defaultTablespace` 를 쓴다. 같은 이름의 `CREATE USER` 는 `42710` 으로 거부하므로 두 문장의 존재 판정이 서로 다르다. P-3 과 함께 고친다.
+  조치 : 공통 이름 맵 수정으로 미등록 이름에는 `42704`를 반환한다. 비밀번호·기본 테이블스페이스 변경 실패 전후에 전역 `Object`와 `Object.prototype`의 속성 설명자가 동일함을 별도 시험으로 확인했다.
+
+- [x] **최초 점검의 확인 기록 : 뷰 이름 `"__proto__"`도 기존에는 존재 검사에서 막혔다.** P-3 수정 후에는 정상 생성·교체·재열기·뷰 DML·삭제가 된다. 프로토타입을 바꾸지 않고 저장하는 것을 회귀 시험으로 확인했다.
+
+확인한 것(문제 없음) : SCRAM 계산과 상수 시간 비교, 없는 사용자의 가짜 검증 정보(솔트는 이름과 구동 비밀값으로 고정), 인증 실패 응답의 통일과 200 ms 지연(`auth/scram.ts`, `messageHandler.ts`), 제어 요청의 로컬 전용 채널 한정과 제어 토큰 상수 시간 비교, 프로토콜 입력의 타입·범위·길이 검사와 파라미터 16진 검사(`net/protocol.ts` 409~536행, `net/resultEncoder.ts` 150행), 본문을 모으기 전 프레임 길이 검사(`net/framing.ts`), 인증 전 접속 수 제한과 `maxConnections`(TCP·UDP 세션만 셈), 권한 판정(`auth/authorizer.ts`, `auth/privileges.ts`. 사양 5 와 일치, OFFICER 는 SYSTEM 제외), 프로세스를 PID 로 끊는 경로 없음(`process.kill(pid, 0)` 은 생존 확인뿐), TLS 최소 버전과 클라이언트 인증서 검증 기본값(`net/tcpServer.ts`, `client/transports.ts` 245행).
+
+후속 점검 범위 : UDP 서버·신뢰성 계층의 메시지 크기 제한과 인증 전 세션 수 제한, 저장 엔진의 체크섬·포인터·힙/오버플로/B+Tree 순환 방어, 세션의 문장 실패 되돌리기·잠금 대기·권한 재검사, CLI 인자와 설정 검증을 읽고 관련 기존 시험으로 확인했다. 이 범위에서 추가로 재현한 결함은 P-5, P-6이다. 모든 실행 환경을 증명하는 점검은 아니며, 앞의 "미결 사항"은 계속 남아 있다.
+
+- [x] **P-5 (데이터 정합성·권한, 높음) 한정 이름과 잠금 구분자의 충돌.** `A."B.C"`와 `"A.B".C`를 모두 `A.B.C`로 이어 붙여 트랜잭션 오버레이, 뷰 순환 검사, 의존 객체 중복 제거, 뷰 소유자의 GRANT 자격 검사에서 같은 객체로 취급했다. 실제로 첫 테이블만 UPDATE한 뒤 두 번째 테이블에서도 변경값이 보였고, 뷰의 두 의존 객체 중 하나가 빠졌으며, 기반 테이블을 소유하지 않은 뷰 소유자의 GRANT가 성공했다. 잠금도 식별자의 U+001F와 내부 구분자가 충돌했다.
+  조치 : `common/objectKey.ts`의 JSON 문자열 쌍을 위 경로 모두에서 사용한다. 표시용 객체명은 그대로이다. `test/catalog/qualifiedNames.test.ts` 4개와 `test/txn/lockManager.test.ts` 신규 1개는 수정 전 모두 실패, 수정 후 모두 통과했다. 정상적인 뷰 체인을 순환으로 오인하던 문제도 함께 해소했다.
+
+- [x] **P-6 (자원 정리, 중간) 일반 테이블스페이스의 카탈로그 해석 실패 뒤 파일이 열린 채 남는다.** 저장 계층이 파일을 연 다음 `parseCatalog()`가 잘못된 JSON을 거부하면 사용 불가로 표시하지만 파일을 닫지 않았다. 손상된 APP 카탈로그로 재현했고, 사용 불가 판정 뒤에도 추적한 `PageFile.readPage(0)`이 성공했다.
+  조치 : `openListed()`의 실패 경로에서 이미 연 테이블스페이스를 닫는다. `test/catalog/unavailableTablespace.test.ts`는 실제 손상 카탈로그를 만들고 APP 사용 불가·SYSTEM 정상 구동·파일 닫기를 확인한다.
+
+- [x] **P-7 (시험 도우미, 중간) 채널 경로의 파일 존재 검사 결과가 false이면 데몬 종료 요청을 생략한다.** 최초 전체 시험 뒤 이번 실행에서 만든 임시 데몬 1개가 설치 디렉토리 없이 남은 것을 확인했다. `Daemon.dispose()`는 `livePids()`가 빈 목록이면 `hwdb stop`도 생략하고 디렉토리를 지웠다. 로컬 채널에 대한 `existsSync`를 false로 만드는 회귀 시험은 실제 데몬을 남겨 수정 전 실패했다. 최초 누수 순간의 파일 검사 결과는 사후 확정하지 못했다.
+  조치 : 파일 존재 검사에 앞서 현재 설치의 실제 제어 채널로 `hwdb stop`을 항상 시도한다. 오래된 PID만 믿고 강제 종료하는 방식은 추가하지 않았다. `test/integration/cleanup.test.ts`는 실제 데몬으로 실패 조건을 주입하고 종료를 확인하며 실패해도 보관한 제어 토큰과 서버 PID로 자기 데몬만 정리한다. Node.js·Bun에서 통과했다. 최초 실행에서 남은 임시 데몬은 명령행·설치 경로·시작 시각을 다시 확인해 정리했다.
+
 ## 결정 사항
 
 ### 12단계(Node.js 드라이버) 중에 한 rdbms 쪽 수정 (2026-10-17)
@@ -790,3 +831,5 @@ SQL 접속 (상세 14-2)
   `docs/manual.md`(사용 설명서), `docs/verification.md`(검증 기록), `config.sample.json`, `docs/storage-v1.md`(빈자리 지도)를 썼다. 사양(AGENTS.md)은 바꾸지 않았다.
   `npm test` 888개 중 887개 통과·1개 건너뜀(Windows 에서 SIGTERM 시험), 실패 0 (Node.js 24.21.0 / TypeScript 6.0.3). bun 1.3.14 에서 통합 시험 87개 통과(건너뜀 2). 결함 주입 점검 모두 잡힘. 커밋은 하지 않았다.
 - 2026-10-17 : 11단계 뒤의 마무리 (12단계 `nodejsDriver` 중에 한 수정). (1) bun 으로 통합 시험을 돌린 뒤 데몬이 남던 문제를 재현하고(`overviewNetwork` 상대 경로 시험 뒤 1개) 고쳤다 — 정리 훅 순서에 기대던 `Daemon.dispose` 를 지금까지 쓴 모든 데이터 디렉토리와 `makeExtraDir` 로 바꾸고, 고치는 중에 만든 PID 재사용 결함(끝난 데몬의 PID 에 `SIGKILL`)도 함께 바로잡았다. (2) `nodejsDriver` 의 통합 시험이 찾은 `CAST(? AS INTEGER)` 의 내부 오류(`XX000`)를 고치고 회귀 시험을 더했다. (3) 단위 시험의 임시 디렉토리 정리(`test/tempDirs.ts`). 시험 : Node.js `npm test` 889개 중 888 통과·1 건너뜀, bun 통합 85 통과·2 건너뜀, bun 단위 799 통과·2 실패(`t.mock` 미구현). 커밋은 하지 않았다.
+- 2026-10-20 : `rdbms` 코드 점검(수정 없음). 인증·카탈로그·권한·프로토콜·TLS 경로를 읽고 빌드 결과물에 재현했다. 발견 사항 P-1 ~ P-4 를 "점검 작업 사항" 절에 `[ ]` 작업으로 남겼고, 고치지는 않았다. `npm run build` 는 오류 없이 통과했다(`dist` 를 새로 만들었다. git 에는 들어가지 않는다). 시험 전체는 돌리지 않았다. 커밋은 하지 않았다.
+- 2026-10-20 : 후속 수정과 추가 점검. P-1 ~ P-4를 프로토타입 없는 이름 맵으로 수정하고 P-5(한정 이름·잠금 키 충돌), P-6(사용 불가 카탈로그 파일 누수), P-7(시험 도우미의 데몬 종료 생략)을 재현·수정했다. 회귀 시험 17개를 추가했다. Node.js 24.22.0 / TypeScript 6.0.3 `npm test`는 906개 중 905개 통과·1개 건너뜀·실패 0. Bun 1.3.14 관련 시험 241개와 정리 회귀 1개 통과. 최종 시험 후 남은 HelloWorldDB 데몬은 0개이다. 사양·통신 프로토콜·파일 포맷과 고정 호환성 자료는 바꾸지 않았고, 기존 고아 파일 복구는 수행하지 않았다. 두 PROGRESS.md와 트랜잭션 문서를 갱신했다. 커밋·푸시는 하지 않았다.

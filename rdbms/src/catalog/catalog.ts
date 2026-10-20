@@ -131,18 +131,27 @@ export interface SystemRegistry {
   groups: Record<string, PrivilegeGroup[]>;
 }
 
+/**
+ * SQL 식별자를 키로 쓰는 맵이다. 상속 속성을 조회하지 않으며 __proto__도 일반 키로 저장한다.
+ * JSON을 읽으면 프로토타입이 다시 생기므로 생성 경로와 역직렬화 경로 모두에서 사용한다.
+ * 저장하는 JSON의 모양은 기존과 같다.
+ */
+export function nameMap<T>(entries?: Readonly<Record<string, T>>): Record<string, T> {
+  return Object.assign(Object.create(null) as Record<string, T>, entries);
+}
+
 /** 비어 있는 SYSTEM 레지스트리를 만든다. */
 export function emptySystemRegistry(tablespaces: Record<string, TablespaceRecord> = {}): SystemRegistry {
-  return { tablespaces, users: {}, privileges: [], groups: {} };
+  return { tablespaces: nameMap(tablespaces), users: nameMap(), privileges: [], groups: nameMap() };
 }
 
 /** 저장된 레지스트리의 빠진 항목을 빈 값으로 채운다. 앞으로 항목이 늘어나도 읽을 수 있게 하기 위함이다. */
 export function normalizeSystemRegistry(raw: Partial<SystemRegistry> | undefined): SystemRegistry {
   return {
-    tablespaces: raw?.tablespaces ?? {},
-    users: raw?.users ?? {},
+    tablespaces: nameMap(raw?.tablespaces),
+    users: nameMap(raw?.users),
     privileges: raw?.privileges ?? [],
-    groups: raw?.groups ?? {},
+    groups: nameMap(raw?.groups),
   };
 }
 
@@ -218,7 +227,7 @@ export function objectExists(data: CatalogData, name: string): boolean {
 
 /** 비어 있는 카탈로그를 만든다. */
 export function emptyCatalog(): CatalogData {
-  return { version: 1, tables: {}, views: {}, indexes: {}, constraints: {}, nextIndexSeq: 1, nextFkSeq: 1 };
+  return { version: 1, tables: nameMap(), views: nameMap(), indexes: nameMap(), constraints: nameMap(), nextIndexSeq: 1, nextFkSeq: 1 };
 }
 
 /** 비어 있는 SYSTEM 카탈로그를 만든다. 테이블스페이스 목록을 함께 가진다. */
@@ -249,10 +258,10 @@ export function parseCatalog(bytes: Buffer | null, tablespaceName: string): Cata
   // 빠진 항목은 빈 값으로 채운다. 앞으로 항목이 늘어나도 읽을 수 있게 하기 위함이다.
   return {
     version: 1,
-    tables: data.tables ?? {},
-    views: data.views ?? {},
-    indexes: data.indexes ?? {},
-    constraints: data.constraints ?? {},
+    tables: nameMap(data.tables),
+    views: nameMap(data.views),
+    indexes: nameMap(data.indexes),
+    constraints: nameMap(data.constraints),
     nextIndexSeq: data.nextIndexSeq ?? 1,
     nextFkSeq: data.nextFkSeq ?? 1,
     ...(data.system !== undefined ? { system: normalizeSystemRegistry(data.system) } : {}),

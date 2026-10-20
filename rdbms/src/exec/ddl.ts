@@ -18,6 +18,7 @@
  */
 
 import { DbError, ERROR_CODES, unsupportedFeature } from "../common/errors.js";
+import { objectKey } from "../common/objectKey.js";
 import type { SourcePosition } from "../common/errors.js";
 import { NO_TABLESPACE } from "../common/instance.js";
 import { AccessControl, noCurrentTablespace } from "../auth/privileges.js";
@@ -1559,7 +1560,7 @@ export function executeCreateView(
   const seen = new Set<string>();
   for (const ref of refs) {
     const refSpace = ref.tablespace ?? tablespace;
-    const key = `${refSpace}.${ref.name}`;
+    const key = objectKey(refSpace, ref.name);
     if (seen.has(key)) continue;
     seen.add(key);
     if (isReservedSystemName(ref.name) && refSpace === "SYSTEM") {

@@ -30,6 +30,7 @@ import {
   emptyCatalog,
   emptySystemCatalog,
   emptySystemRegistry,
+  nameMap,
   parseCatalog,
   serializeCatalog,
 } from "./catalog.js";
@@ -201,8 +202,9 @@ export class TablespaceManager {
     for (const [name, record] of this.registry) {
       if (name === "SYSTEM") continue;
       const filePath = this.fileOf(record);
+      let space: Tablespace | undefined;
       try {
-        const space = openTablespaceFile(filePath, { onWarning: this.onWarning });
+        space = openTablespaceFile(filePath, { onWarning: this.onWarning });
         if (space.header.characterSet !== "UTF8") {
           throw unsupportedFeature(`Unsupported character set in tablespace "${name}".`);
         }
@@ -210,6 +212,12 @@ export class TablespaceManager {
         this.spaces.set(name, space);
         this.catalogs.set(name, new CatalogStore(name, space, data));
       } catch (error) {
+        // 파일을 연 뒤 카탈로그 해석에 실패한 경우에도 핸들을 남기지 않는다.
+        try {
+          space?.close();
+        } catch {
+          // 사용 불가의 원인은 원래 오류로 유지한다.
+        }
         const reason = error instanceof DbError ? error.message : String(error);
         this.unavailable.set(name, reason);
         this.onWarning?.(`Tablespace "${name}" is unavailable: ${reason}`);
@@ -294,7 +302,7 @@ export class TablespaceManager {
   /** SYSTEM 레지스트리를 파일에 쓴다. */
   saveRegistry(): void {
     const system = this.systemCatalog();
-    const registry: Record<string, TablespaceRecord> = {};
+    const registry = nameMap<TablespaceRecord>();
     for (const [name, record] of this.registry) {
       registry[name] = record;
     }

@@ -356,10 +356,9 @@ export class Daemon {
     undisposedDaemons.delete(this);
     for (const connection of this.connections) connection.abort();
     this.connections.clear();
-    if (this.livePids().length > 0) {
-      this.hwdb(["stop", "--timeout", "20"]); // 지금 설정의 인스턴스를 정상 종료한다. 설정이 바뀌어 다른 인스턴스를 가리킬 수 있어 아래에서 다시 확인한다.
-      for (const pid of this.livePids()) forceKill(pid);
-    }
+    // 채널 경로의 existsSync는 구동 여부를 보장하지 않는다. 파일 검사에 앞서 실제 제어 채널로 종료를 시도한다.
+    this.hwdb(["stop", "--timeout", "20"]); // 지금 설정의 인스턴스가 대상이다. 설정이 바뀌었다면 아래에서 옛 데몬도 확인한다.
+    for (const pid of this.livePids()) forceKill(pid);
     const rmOptions = { recursive: true, force: true, maxRetries: 20, retryDelay: 100 } as const;
     for (const dir of [this.installDir, ...this.extraDirs]) {
       try {
