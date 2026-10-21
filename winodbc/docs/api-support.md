@@ -1,6 +1,14 @@
-# ODBC 지원 계약 — WO-0
+# ODBC 지원 계약 — WO-0/WO-1
 
-**이 문서의 모든 드라이버 함수·속성은 구현 예정이며 현재 구현된 export는 0개이다.** 표는 최종 목표와 검증 의무를 뜻한다. SQLGetFunctions/SQLGetInfo의 실제 지원 광고는 해당 단계의 호출 시험이 통과한 뒤에만 켠다. DLL 생성·직접 호출·Manager 경유·실제 서버·범용 앱의 증거를 합치지 않는다.
+**아래 표는 최종 목표와 검증 의무이다.** WO-1에서 6개 export의 최소 ABI 경로만 구현했다. SQLGetFunctions/SQLGetInfo의 실제 지원 광고는 해당 단계의 호출 시험이 통과한 뒤에만 켠다. DLL 생성·직접 호출·Manager 경유·실제 서버·범용 앱의 증거를 합치지 않는다.
+
+| 현재 export | WO-1에서 직접 시험한 범위 | 남은 범위 |
+|---|---|---|
+| SQLAllocHandle / SQLFreeHandle | ENV 할당·해제, 무효/종류 불일치/해제 후 핸들, NULL 출력 | DBC/STMT/DESC·부모/자식 관계·동시 수명 WO-2/7 |
+| SQLSetEnvAttr / SQLGetEnvAttr | ENV의 ODBC 버전 2/3/3.8 값·OUTPUT_NTS TRUE, 잘못된 버전 HY024 | DBC 이후 버전 변경 제한·Manager 매핑·완전한 버전 적합성 WO-4/8 |
+| SQLGetDiagRec / SQLGetDiagRecW | ENV의 고정 크기 영문 단일 레코드, W 코드 단위 길이, 잘림·NUL·canary·반복 조회 | 모든 핸들·다중 레코드·DiagField·일반 Unicode/ACP WO-2 |
+
+DBC 할당은 HY000(`Connection handles are not implemented in this prototype.`)으로 실패하며 연결 성공 스텁은 없다. 공통 예외 경계는 `bad_alloc`을 HY001, 나머지 C++ 예외를 HY000으로 매핑하고 메시지 저장에 추가 할당을 하지 않는다. ENV 자체의 할당 실패에는 진단 핸들이 없으므로 SQL_ERROR만 반환한다. 예외 주입은 같은 경계 템플릿의 네이티브 단위 시험에서 수행했으며 실제 할당기 고갈·전체 T-DIAG 완료의 증거는 아니다. SQLConnectW는 WO-2/4 이후 추가하므로 현재 DLL은 Unicode 드라이버 접속을 제공하지 않는다. [WO-1 검증](verification.md).
 
 ODBC 3.8을 목표로 하며, [Core 목록](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/core-interface-conformance?view=sql-server-ver17)과 [함수별 분류](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/function-conformance?view=sql-server-ver17)를 확인했다. 입력 배열·실행 시 데이터·descriptor·다중 스레드 취소를 완료 기준에 포함한다. 아래의 호출 형태·오류 선택은 이 프로젝트의 구현 계약이며 함수별 공식 진단표를 각 구현 단계에서 재확인한다.
 

@@ -44,7 +44,15 @@ SDK의 `sql.h`, `sqlext.h`, `sqltypes.h`, `sqlucode.h`와 x86/x64의 `odbc32.lib
 | x64 ODBC 관리자 | `C:\Windows\System32\odbcad32.exe` | 10.0.26100.8875 | 0x8664 |
 | x86 ODBC 관리자 | `C:\Windows\SysWOW64\odbcad32.exe` | 10.0.26100.7019 | 0x014C |
 
-파일 버전은 SQL_DM_VER/SQL_ODBC_VER의 반환값이 아니다. 실제 Driver Manager 경유 확인은 WO-4 이후이다.
+파일 버전은 SQL_DM_VER/SQL_ODBC_VER의 반환값이 아니다. WO-1에서 Manager의 ENV/진단 경로를 시험했으며, 드라이버 접속 경유 확인은 WO-4 이후이다.
+
+### 같은 PC의 WO-1 빌드 확인 — 2026-10-21
+
+환경 조회를 다시 수행해 위 호스트·Build Tools·MSVC·SDK·CMake/CTest·Node.js 설치와 버전을 확인했다. CMake의 `Visual Studio 17 2022` generator가 설치를 선택했으며 기존 개발자 셸이나 고정 VS 경로를 요구하지 않는다. CMakeCXXCompiler 기록의 실제 컴파일러는 위 VC 아래 `bin/Hostx64/x64/cl.exe`와 `bin/Hostx64/x86/cl.exe`, 버전은 양쪽 모두 19.44.35229.0이다.
+
+양 비트 수의 DLL·직접 로드/예외/Manager EXE가 Debug와 Release에서 빌드되었다. CTest 20개, 반대 비트 수 DLL 거부 4개, PE 정적 검사 4개, WO-0 계약 검사 10개가 통과했다. 실제 빌드·적재 성공이며 제품 하한 OS·CMake 3.25 자체의 시험은 아니다. [명령·증거·미시험 범위](verification.md)를 따른다.
+
+Manager 시험은 모듈 경로와 적재된 PE machine을 함께 확인한다. 이 PC의 x86 프로세스도 `GetModuleFileNameW`에서 `C:\Windows\SYSTEM32\ODBC32.dll`을 보고할 수 있으나 WOW64 리디렉션 후 적재된 machine은 `0x014C`이다. x64 프로세스는 `0x8664`이다. 경로 문자열만으로 비트 수를 판정하지 않는다. 드라이버 DLL을 Manager가 적재한 증거로도 사용하지 않는다.
 
 ## 제품 범위 결정
 
@@ -52,7 +60,7 @@ WO-0의 구현 기준은 Windows 11 24H2 이상 x64 OS, x64 앱과 WOW64의 x86 
 
 | 목표 앱/경로 | VM-W11-Codex 설치 확인 | 시험 계획 |
 |---|---|---|
-| 자체 네이티브 시험 EXE, x86/x64 | 아직 미구현 | WO-1 직접 로드, WO-4 이후 Driver Manager, WO-13 전체 행렬 |
+| 자체 네이티브 시험 EXE, x86/x64 | WO-1 Debug/Release 빌드·직접 로드·Manager ENV 시험 완료 | WO-4 이후 드라이버 로그인, WO-13 전체 행렬 |
 | Windows ODBC 관리자, 양 비트 수 | 위 경로·machine 확인 | WO-12 등록·DSN UI, WO-13 배포 |
 | Microsoft Excel / Access | App Paths 양 registry view, 일반 Office16 경로, 제거 등록에서 앱 미발견 | 버전·앱 PE 비트 수를 확인한 PC에서 WO-13 실제 사용 시험. 현재 미시험 |
 | 범용 ODBC 탐색 앱 | DBeaver App Paths/일반 경로와 관련 제거 등록 미발견 | WO-13에서 실제 ODBC 연결 경로를 제공하는 도구·버전 확정 후 시험 |

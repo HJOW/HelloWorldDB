@@ -7,9 +7,9 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 ## 현재 상태
 
 - 최종 갱신: 2026-10-21.
-- 진행 단계: **첫 단계 WO-0 완료**. 6개 항목의 목표·지원 계약·도구 조회를 마쳤다. 드라이버 DLL·접속·설치·ODBC 적합성 시험은 아직 미구현/미실행이다.
-- 이번 작업: API/속성/descriptor/길이·타입·서버 기능·진단·시험 대응표, 의존성과 PC별 도구 기록 규칙, 환경 조회 스크립트와 WO-0 문서 검사 코드를 추가했다. [README](README.md), [검증 기록](docs/verification.md)을 따른다.
-- 다음 작업: **WO-1 DLL·C ABI·x86/x64 시험 기반**. 실제 빌드 파일·DLL·직접 로드 EXE·별도 Driver Manager EXE를 만든다. 작업할 PC에서 도구 설치 여부를 다시 확인하고 호스트명과 함께 기록한다.
+- 진행 단계: **WO-0·WO-1 완료**. x86/x64의 Debug/Release DLL·직접 로드/예외/Manager 시험 EXE를 빌드했다. 접속·설치·ODBC 적합성은 후속이다.
+- 이번 작업: CMake 프리셋·SDK 기반 C ABI·아키텍처별 export·공통 예외 경계와 최소 ENV/진단, 재실행 빌드 스크립트·PE 검사를 추가했다. CTest 20개·교차 비트 수 거부 4개·PE 검사 4개·WO-0 10개가 통과했다. [README](README.md), [검증 기록](docs/verification.md)을 따른다.
+- 다음 작업: **WO-2 핸들·진단·문자열 공통 처리**. ENV 기반을 DBC/STMT/명시 DESC와 자동 ARD/APD/IRD/IPD로 확장하고, 다중 진단·DiagField·엄격한 UTF-8/UTF-16/ACP 변환과 길이 경계 시험을 구현한다. 현재 6개 export는 최소 경로만 구현되어 있다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
 - 사용자 지시에 따라 이번 작업의 생성·변경 파일과 조회 결과는 모두 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지하고 이 문서에 최신 요약을 기록했다. 커밋·푸시는 하지 않는다.
 - 기존 프로토콜로 TCP 시제품은 만들 수 있다. 그러나 실행 전 결과 메타데이터와 실행 중 정상 취소를 검증하기 전에는 정식 ODBC Core 적합성 완료를 선언하지 않는다.
@@ -85,7 +85,7 @@ winodbc/
 | 단계 | 산출물 | 다음 단계로 넘어갈 조건 |
 |---|---|---|
 | WO-0 | **완료**: 목표·API 지원표·서버 의존성 확정 | 문서 계약 검사 통과, ODBC 실행 시험과 구분 |
-| WO-1 | x86/x64 DLL·시험 앱 빌드 | ABI·export·비트 수 검사 통과 |
+| WO-1 | **완료**: x86/x64 Debug/Release DLL·시험 앱 | ABI·export·직접 로드·비트 수 거부 통과, 로그인 후속 |
 | WO-2 | 핸들·진단·문자열 공통 함수 | 오류 입력과 메모리 경계 시험 통과 |
 | WO-3 | TCP·JSON·SCRAM 프로토콜 코어 | 실제 서버의 저수준 왕복 성공 |
 | WO-4 | DSN 없는 접속·속성 | Driver Manager 경유 로그인·종료 성공 |
@@ -118,16 +118,18 @@ winodbc/
 
 산출물 기본 위치: CMake 파일, `src/odbc/exports.*`, architecture별 `.def`, 최소 시험 앱.
 
-- [ ] WO-1.1: x64와 Win32 빌드 프리셋·출력 디렉토리를 분리한다. 동일한 소스에서 두 DLL과 두 시험 EXE를 만든다. `/utf-8`, 경고 수준, CRT 배포 정책을 명시한다.
-- [ ] WO-1.2: Windows SDK의 `sql.h`, `sqlext.h`, `sqltypes.h`를 사용한다. ODBC 타입·구조체·함수 원형을 임의로 재정의하지 않는다.
-- [ ] WO-1.3: ODBC 진입점을 `extern "C"`와 SDK의 `SQL_API` 규약으로 export한다. x86 이름 장식과 x64 export 차이를 검사하고 Driver Manager가 찾는 이름을 제공한다.
-- [ ] WO-1.4: `SQLLEN`, `SQLULEN`, SQLPOINTER, 크기가 정해진 정수와 SQLWCHAR를 올바르게 사용한다. Windows x64에서도 `long`은 포인터 크기가 아니므로 버퍼 길이·주소를 long에 넣지 않는다. [64비트 ODBC](https://learn.microsoft.com/en-us/sql/odbc/reference/odbc-64-bit-information?view=sql-server-ver17).
-- [ ] WO-1.5: DllMain에서는 네트워크·UI·복잡한 스레드 초기화를 하지 않는다. C++ 예외가 C ABI 밖으로 나가지 않게 공통 진입점 보호 장치를 만든다. bad_alloc은 HY001 등 적절한 진단으로 바꾼다.
-- [ ] WO-1.6: LoadLibrary/GetProcAddress 시험과 `odbc32.lib`를 링크하는 별도 Driver Manager 시험 앱을 구분한다. 후자는 드라이버 구현 함수를 직접 링크하지 않는다.
+- [x] WO-1.1: x64·Win32 프리셋과 출력 경로를 분리했다. 동일한 소스의 두 DLL과 각 직접 로드/예외/Manager EXE를 Debug/Release로 빌드했다. `/utf-8 /W4 /WX`, `/MTd`·`/MT`를 적용하고 PE에서 동적 CRT import 부재를 확인했다.
+- [x] WO-1.2: `include/hwdbodbc/odbc.hpp`에서 SDK `sql.h`, `sqlext.h`, `sqltypes.h`를 사용한다. 함수 포인터도 SDK 원형에서 가져온다. 타입·구조체·원형을 재정의하지 않았다.
+- [x] WO-1.3: `extern "C"`·`SQL_API`와 아키텍처별 `.def`로 최소 6개 이름을 제공했다. x86 stdcall 장식을 외부에 노출하지 않으며 두 아키텍처의 실제 export 목록을 GetProcAddress·dumpbin·PE 독립 검사로 대조했다. SQLConnectW 등 접속 export는 WO-2/4 후속이다.
+- [x] WO-1.4: `SQLLEN`·`SQLULEN`·SQLPOINTER·정수·SQLWCHAR 및 날짜/소수 구조체 크기를 컴파일 시 검사했다. 실측 길이/주소는 x64에서 8, x86에서 4바이트이고 SQLWCHAR는 모두 2바이트이다. ENV 숫자 출력의 4바이트 폭도 canary로 검사했다. [64비트 ODBC](https://learn.microsoft.com/en-us/sql/odbc/reference/odbc-64-bit-information?view=sql-server-ver17).
+- [x] WO-1.5: DllMain은 즉시 TRUE를 반환하며 레지스트리는 최초 API 호출 때 초기화한다. 공통 C++ 예외 경계와 할당 없는 고정 진단을 만들었다. 같은 경계의 네이티브 단위 시험에서 bad_alloc→HY001·기타 예외→HY000을 확인했다. ENV 할당 자체 실패는 진단 핸들이 없어 SQL_ERROR이다. 실제 메모리 고갈·전체 진단 검증은 WO-2 후속이다.
+- [x] WO-1.6: 직접 로드 앱·Manager 앱을 분리했다. 후자만 odbc32.lib에 링크하며 hwdbodbc import가 없다. 직접 DLL/Manager ENV·진단을 각각 시험했고 적재된 Manager machine도 확인했다. Manager가 드라이버 DLL을 적재하는 로그인 시험은 WO-4 후속이다.
 
 필수 시험: `dumpbin /headers`, `/exports` 또는 동등 도구로 machine type·export를 확인한다. DLL·EXE의 x86/x64 조합이 맞는 경우와 맞지 않는 경우를 기록한다. 생성물을 지울 때는 build/dist의 절대 경로를 확인한다.
 
 완료 기준: 두 architecture의 빌드·로드·export 검사가 통과한다. 아직 로그인할 수 없으면 README에 시제품 상태를 명시한다.
+
+결과: 네 가지 구성 모두 통과했다. 반대 비트 수 DLL은 양방향·Debug/Release 모두 `ERROR_BAD_EXE_FORMAT(193)`으로 거부했다. [빌드 명령·시험 수·증거](docs/verification.md)에 경로와 한계를 기록했으며, WO-2 ~ WO-13은 완료 처리하지 않았다.
 
 ### WO-2. 핸들·진단·문자열 공통 처리
 
@@ -394,11 +396,12 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 사용자가 Windows용 ODBC 첫 단계 진행과 파일의 winodbc 내부 배치를 지시했다. 도구 기록은 해당 PC에 한정하고 다른 PC에서도 호스트명과 설치 여부를 함께 기록하도록 추가 지시했다. 아래는 WO-0에서 정한 구현 선택과 남은 사항이다.
 
 - 제품 기준은 Windows 11 24H2 이상 x64 및 WOW64 x86 앱이다. Windows Server·ARM64는 이번 범위에서 제외한다. 최소 OS 클린 환경 시험은 WO-13에 남긴다.
-- VM-W11-Codex의 도구 설치/버전/경로만 확인했다. 다른 PC는 [환경 기록 규칙](docs/environment.md)에 따라 호스트명을 포함해 재조회한다. C++17·MSVC v143·CMake 3.25 이상, 정적 CRT, JSON 3.12.0(MIT) 및 Windows API 사용을 결정했다. 실제 DLL 빌드는 WO-1부터이다.
+- VM-W11-Codex에서 도구 설치/버전/경로를 재조회하고 WO-1의 x86/x64 Debug/Release 빌드를 완료했다. 다른 PC는 [환경 기록 규칙](docs/environment.md)에 따라 호스트명을 포함해 재조회한다. C++17·MSVC v143·CMake 3.25 이상, 정적 CRT, JSON 3.12.0(MIT) 및 Windows API 정책을 유지한다. JSON 도입은 WO-3이다.
 - 네이티브 x86/x64 시험 EXE와 Windows ODBC 관리자를 필수 경로로 정했다. Excel/Access 앱·범용 ODBC 도구 버전과 비트 수의 실제 설치/사용 확인은 WO-13에 남긴다. 현재 PC 조회에서 Office 앱·범용 탐색 앱은 발견하지 못했다.
 - 서버 준비 문장/describe/cancel의 wire 규약·타입 힌트·기능 협상은 확정·구현되었다. ODBC 진단·descriptor·수명으로의 매핑과 세션 초기화의 추가 서버 지원 필요 여부는 WO-0·WO-6·WO-8에서 검토한다.
 - 배포 패키지 형식·코드 서명·설치 표시명·업그레이드 정책. 문서 기본안은 확정 배포 정책이 아니다.
 - 서버에 포괄적 reset 요청이 없으므로 WO-8은 물리 연결 재인증으로 초기화한다. 효율적인 풀 재사용을 위한 서버 확장은 별도 후속이며 성공 스텁으로 대체하지 않는다.
+- WO-1의 export 범위는 ENV와 영문 단일 진단의 최소 ABI 경로이다. 전체 목표 함수를 미리 성공 스텁으로 만들지 않는다. ENV 조회/레지스트리 잠금은 초기 기반이며 WO-2에서 자식 수명·동시 해제·주소 재사용·핸들별 진단으로 확장한다. DBC 요청 실행을 전역 mutex로 직렬화하는 설계로 이어가지 않는다.
 
 ## WO-0 완료 인수인계
 
@@ -407,7 +410,16 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - WO-0 검사는 문서·SDK·환경 대응을 확인한다. DLL/Manager/서버 왕복·적합성은 미시험이며 서버 런타임을 실행하지 않았다. 다음 WO-1에서 컴파일/링크/로드/비트 수 검사를 새로 수행한다.
 - `powershell -NoProfile -File winodbc/scripts/inspect-environment.ps1` 조회와 Node.js 24.19.0의 `node --test winodbc/tests/wo0.test.mjs` **10개 통과·실패 0·건너뜀 0**, `git diff --check -- winodbc` 통과. 명령·경로·검사 범위는 [검증 기록](docs/verification.md)에 남겼다.
 
+## WO-1 완료 인수인계
+
+- `CMakeLists.txt`·`CMakePresets.json`, SDK 기반 헤더·예외 경계, 최소 ENV 구현·x86/x64 `.def`, 직접 로드/Manager/예외 시험 EXE, PE 검사·빌드 스크립트를 추가했다. 변경·로그·생성물은 모두 winodbc 내부이며 루트/타 프로젝트는 읽기만 했다.
+- VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / 개발용 Node.js 24.19.0에서 검증했다. 서버 런타임은 실행하지 않았다.
+- `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`로 네 가지 구성 CTest **20개**, 교차 비트 수 거부 **4개**, PE 검사 **4개**, WO-0 계약 **10개** 통과·실패/건너뜀 0이다. dumpbin 헤더/export/dependents·JUnit·로그·집계는 Git 제외 `build/wo1/`에 있다. `git diff --check -- winodbc`도 통과했다.
+- 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
+
 ## 작업 이력
+
+- 2026-10-21: 다음 단계 WO-1의 6개 항목을 완료했다. x86/x64 Debug/Release DLL·시험 앱, C ABI/export·정적 CRT·예외 경계·최소 ENV/진단과 자동 검증을 추가했다. CTest 20개·비트 수 거부 4개·PE 4개·문서/환경 10개가 통과했다. WO-2 전체 핸들·진단·문자열 처리를 다음 작업으로 기록했다. 모든 변경·생성물은 winodbc 내부이며 커밋·푸시는 하지 않았다.
 
 - 2026-10-21: 사용자 지시에 따라 첫 단계 WO-0의 6개 항목을 완료했다. VM-W11-Codex에 한정한 도구 설치 조회, 호스트별 재확인 규칙, 함수·속성·descriptor·길이·타입·서버 기능·진단·시험 대응, 의존성/배포 선택과 재실행 가능한 조회·검사를 추가했다. 문서·환경 검사 10개 통과·실패/건너뜀 0이다. 드라이버 구현은 WO-1부터이며 모든 변경·생성물을 winodbc 안에 두었다. 커밋·푸시는 하지 않았다.
 

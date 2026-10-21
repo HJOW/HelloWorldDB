@@ -1,0 +1,8 @@
+LIBRARY hwdbodbc
+EXPORTS
+    SQLAllocHandle
+    SQLFreeHandle
+    SQLSetEnvAttr
+    SQLGetEnvAttr
+    SQLGetDiagRec
+    SQLGetDiagRecW

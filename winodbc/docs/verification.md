@@ -1,4 +1,4 @@
-# WO-0 검증과 후속 시험
+# WO-0·WO-1 검증과 후속 시험
 
 ## 실행 증거
 
@@ -9,7 +9,8 @@
 | 문서·서버 계약 검토 | AGENTS.md, 루트/프로젝트 PROGRESS.md, protocol.md, PREPARE.md, 타입 정책, Microsoft 공식 문서 확인 |
 | 도구 조회 | Build Tools 2022 17.14.37710.0, MSVC 19.44.35229.0, SDK 10.0.26100.0, CMake/CTest 4.4.4, 양 비트 수 도구·lib 확인 |
 | WO-0 자동 검사 | Node.js 24.19.0, **10개 통과·실패 0·건너뜀 0**. git diff --check 통과 |
-| 드라이버 빌드·LoadLibrary·export 검사 | 미실행, WO-1 |
+| 드라이버 빌드·LoadLibrary·export 검사 | WO-1 완료, x86/x64 Debug/Release·아래 상세 |
+| Driver Manager 자체 ENV/진단 | WO-1 완료, 드라이버 DLL 미적재·로그인과 구분 |
 | Driver Manager 경유 로그인·실제 서버 왕복 | 미실행, WO-4 이후 |
 | Excel/Access·범용 앱·설치 | 미실행, WO-12/13 |
 
@@ -19,11 +20,44 @@ node --test winodbc/tests/wo0.test.mjs
 git diff --check -- winodbc
 ```
 
-환경 JSON은 Git 제외인 `winodbc/build/wo0/environment.json`이다. 자동 검사는 UTF-8·로컬 문서 링크·필수 함수/속성/descriptor/C 타입 계약·시험 ID·SDK 원형과 상수·현재 호스트의 도구/PE 아키텍처 증거를 확인한다. **문서 계약 검사이며 ODBC 구현/적합성 시험으로 세지 않는다.** 서버 프로세스와 임시 DB는 이번 단계에서 실행/생성하지 않는다. CTest 테스트는 DLL 기반을 만드는 WO-1에 구성한다.
+환경 JSON은 Git 제외인 `winodbc/build/wo0/environment.json`이다. 자동 검사는 UTF-8·로컬 문서 링크·필수 함수/속성/descriptor/C 타입 계약·시험 ID·SDK 원형과 상수·현재 호스트의 도구/PE 아키텍처 증거를 확인한다. **문서 계약 검사이며 ODBC 구현/적합성 시험으로 세지 않는다.** 서버 프로세스와 임시 DB는 WO-0·WO-1에서 실행/생성하지 않았다.
+
+## WO-1 빌드·ABI 시험 — 2026-10-21
+
+동일한 VM-W11-CODEX에서 도구를 재조회했다. Windows 11 Pro x64 10.0.26300, Build Tools 2022 17.14.37710.0, MSVC 19.44.35229.0(v143), SDK 10.0.26100.0, CMake/CTest 4.4.4, 개발용 Node.js 24.19.0이다. 도구 절대 경로는 [환경 문서](environment.md)에 있다. C++17·`/W4 /WX /utf-8`·Debug `/MTd`·Release `/MT`를 사용했다. 이 단계에서 서버 런타임은 실행하지 않았다.
+
+```powershell
+# 저장소 루트에서 네 가지 구성 전체를 검증한다.
+powershell -NoProfile -File winodbc/scripts/build-and-test.ps1
+git diff --check -- winodbc
+```
+
+스크립트는 환경 재조회·WO-0 검사 → 각 아키텍처 configure → Debug/Release build·CTest → dumpbin → 양방향 비트 수 불일치 거부 → Node.js PE 검사를 실행한다. 요약은 현재 실행의 상태를 `running`/`failed`/`passed`로 기록해 이전 성공을 새 실패의 결과로 남기지 않는다. 직접 실행할 때는 `winodbc`에서 `cmake --preset x64`, `cmake --build --preset x64-debug`, `ctest --preset x64-debug`처럼 실행한다. x86 프리셋은 generator platform `Win32`이며 경로는 `build/x86`이다.
+
+| 검증 | x64 Debug | x64 Release | x86 Debug | x86 Release | 합계 |
+|---|---|---|---|---|---|
+| DLL·직접 로드/예외/Manager EXE 빌드 | 성공 | 성공 | 성공 | 성공 | 4개 구성 |
+| CTest | 5/5 | 5/5 | 5/5 | 5/5 | 20개 통과 |
+| 반대 비트 수 DLL 거부 | 193 | 193 | 193 | 193 | 4개 통과 |
+| 독립 PE 검사 | 통과 | 통과 | 통과 | 통과 | 4개 통과 |
+
+별도의 WO-0 계약 검사 10개도 통과했다. 최종 실행의 실패·건너뜀은 모두 0이다. 빌드 구성별 반복 실행을 서로 다른 기능 수로 해석하지 않는다.
+
+- `abi.exports`: SDK 함수 포인터로 GetProcAddress 결과를 읽고 6개 공개 이름을 찾는다. x86 stdcall 장식·ANSI A 전용 이름·접속 함수·Manager 열거 함수가 공개되지 않는지 확인한다. SQLLEN/SQLULEN/SQLPOINTER는 x64 8바이트·x86 4바이트, SQLWCHAR는 모두 2바이트이다.
+- `abi.lifecycle`: 직접 적재한 DLL에서 최소 ENV를 256회 할당·해제한다. 무효 주소·다른 핸들 종류·해제 후 호출·NULL 출력·버전 값과 숫자 출력 canary·미구현 DBC의 오류/NULL 출력을 확인한다.
+- `abi.diagnostics`: ENV 영문 단일 진단의 ANSI/W SQLSTATE, native 번호, 정확한/작은/0/음수 버퍼·NUL·canary·길이 조회·재조회·다음 레코드·성공 호출 후 초기화를 확인한다. W 길이는 UTF-16 코드 단위이며 일반 Unicode 변환 시험은 WO-2이다.
+- `abi.exception_boundary`: 제품과 같은 경계 템플릿 안에서 `bad_alloc`·표준 예외·비표준 예외를 주입해 HY001/HY000과 SQL_ERROR를 확인한다. 메시지에 예외 원문을 복사하지 않으며 진단 없는 ENV 할당 실패도 처리한다. 실제 할당기 고갈이나 전체 핸들 OOM 시험은 아니다.
+- `manager.environment`: `odbc32.lib`에만 링크한 별도 EXE에서 Manager ENV·버전·HY024 진단·해제를 확인한다. 모듈 경로와 **적재된 이미지**의 machine을 기록한다. x86의 System32 표시는 WOW64 경로일 수 있어 machine `0x014C`를 확인하며 x64는 `0x8664`이다. hwdbodbc.dll 미적재도 검사한다.
+- 교차 로드: 각 EXE가 같은 구성의 반대 비트 수 DLL을 절대 경로로 로드하면 `ERROR_BAD_EXE_FORMAT(193)`으로 실패해야 한다. DLL 없음 같은 다른 실패를 통과로 처리하지 않는다.
+- PE 검사: 16개 산출물의 machine/PE32·PE32+, DLL의 정확한 export 목록, 동적 CRT import 부재, DLL/직접 로드 앱의 odbc32 import 부재, Manager 앱의 odbc32 import와 hwdbodbc import 부재를 독립 파싱한다. `dumpbin /headers /exports /dependents`도 네 가지 구성의 모든 파일에서 성공했다.
+
+DLL 실제 적재 경로는 `H:\Workspace\git\HelloWorldDB\winodbc\build\<x64 또는 x86>\bin\<Debug 또는 Release>\hwdbodbc.dll`이며 요청한 파일과 같은지 검사한다. 같은 디렉토리에 `hwdb_abi_probe.exe`, `hwdb_boundary_test.exe`, `hwdb_dm_probe.exe`가 있다. 증거는 Git 제외 `build/wo1/`의 `*-configure.log`, `*-build.log`, `*-ctest.log/xml`, `*-pe.log`, `*-mismatch.log`, `pe-audit.log`, `wo0.log`, `summary.json`이다.
+
+현재 ENV/진단 구현은 WO-1 시험 기반이다. 전체 부모/자식 핸들·자동 descriptor·다중 진단·SQLGetDiagField·UTF-8/UTF-16/ACP는 WO-2, 실제 Manager 경유 드라이버 로그인은 WO-4 후속이다. 드라이버/DSN 등록·설치·서버 SQL·실제 앱·Core 적합성은 이 결과에 포함하지 않는다. DllMain은 즉시 반환하며 일반 초기화를 API 최초 호출로 미룬다. [Microsoft DLL 초기화 지침](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices), [SQLAllocHandle의 ENV 실패와 Manager 지연 할당](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlallochandle-function?view=sql-server-ver17)을 확인했다.
 
 ## 후속 시험 ID
 
-표의 ID는 지원표에서 참조할 구현 시험 묶음이다. 현재 모두 미구현/미실행이며 WO-0 검사 수에 포함하지 않는다. 각 묶음은 성공·입력 오류·호출 순서·자원 정리와 x86/x64를 다룬다.
+표의 ID는 지원표에서 참조할 구현 시험 묶음이다. **T-ABI는 WO-1에서 완료**했다. 나머지는 후속 단계이며 WO-1의 최소 ENV/진단 시험만으로 완료 처리하지 않는다. WO-0 검사 수에도 포함하지 않는다. 각 묶음은 성공·입력 오류·호출 순서·자원 정리와 x86/x64를 다룬다.
 
 | ID | 단계 | 관찰할 결과 |
 |---|---|---|

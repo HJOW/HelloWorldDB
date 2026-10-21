@@ -1,0 +1,8 @@
+LIBRARY hwdbodbc
+EXPORTS
+    SQLAllocHandle=_SQLAllocHandle@12
+    SQLFreeHandle=_SQLFreeHandle@8
+    SQLSetEnvAttr=_SQLSetEnvAttr@16
+    SQLGetEnvAttr=_SQLGetEnvAttr@20
+    SQLGetDiagRec=_SQLGetDiagRec@32
+    SQLGetDiagRecW=_SQLGetDiagRecW@32
