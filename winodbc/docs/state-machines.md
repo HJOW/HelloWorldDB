@@ -1,10 +1,10 @@
 # 핸들·진단·문자열의 현재 상태 규칙
 
-WO-2·WO-5·WO-6의 현재 구현 기준이다. 준비 문장은 [별도 규칙](prepared-statements.md)을 따르며 NEED_DATA·실행 중 취소는 WO-7/8에서 확장한다.
+WO-2·WO-5·WO-6과 진행 중인 WO-7의 현재 구현 기준이다. 준비 문장은 [준비 규칙](prepared-statements.md), descriptor/배열은 [배열 규칙](descriptors-arrays.md)을 따르며 NEED_DATA·실행 중 취소는 WO-7/8의 잔여 작업이다.
 
 ## 수명과 잠금
 
-ENV → DBC → STMT, DBC → 명시적 DESC 관계를 가진다. STMT는 자동 ARD/APD/IRD/IPD 네 개를 만들고 해제할 때 이들도 무효화한다. 자동 DESC는 직접 해제할 수 없다(HY017). ENV의 ODBC 버전은 DBC 할당 전에 지정한다. 접속하지 않은 DBC의 STMT/DESC 할당은 08003이다.
+ENV → DBC → STMT, DBC → 명시적 DESC 관계를 가진다. STMT는 자동 ARD/APD/IRD/IPD 네 개를 만들고 명시 ARD/APD로 교체해도 원래 자동 핸들을 보존한다. STMT 해제는 자신의 자동 DESC만 무효화하고 공유한 명시 DESC는 유지한다. 명시 DESC 해제는 직접 드라이버 경로에서 원래 자동 DESC를 복원하며, 해제 직후 Manager 조회의 알려진 재현 사례는 별도로 추적한다. 자동 DESC는 직접 해제할 수 없다(HY017). ENV의 ODBC 버전은 DBC 할당 전에 지정한다. 접속하지 않은 DBC의 STMT/DESC 할당은 08003이다.
 
 레지스트리는 종류와 불투명 토큰을 확인한 뒤 `shared_ptr`를 가져온다. 임의 앱 주소를 역참조하지 않는다. 토큰은 단조 증가하며 재사용하지 않는다. 토큰 공간을 소진하면 HY001로 실패한다. 객체 주소 재사용으로 이전 핸들이 새 객체에 접근하는 문제를 막는다.
 
@@ -38,7 +38,7 @@ SQLGetDiagRecW의 길이는 UTF-16 코드 단위이고 SQLGetDiagFieldW의 문�
 
 GetData는 fetch한 행·row array size 1·증가하는 unbound 열만 허용한다. CHAR/VARCHAR/BINARY/VARBINARY의 문자/이진 출력은 바이트 offset을 보관하고 마지막 성공 뒤 SQL_NO_DATA를 반환한다. indicator는 이번 호출 이전에 남은 길이이며 다음 행에서 offset을 초기화한다. 고정 C 타입은 BufferLength 대신 SDK 크기로 쓰고, NUMERIC/날짜시간의 정보 손실은 해당 진단으로 보고한다.
 
-바인딩은 ARD/APD 레코드의 앱 주소를 보관하고 fetch/execute 때 읽는다. 값과 indicator를 DLL이 해제하지 않는다. bind offset 주소 덧셈을 검사한다. 행/파라미터 배열은 아직 1이며 여러 행·descriptor 공유/필드 설정은 WO-7이다. 조회 결과는 커밋/롤백 시에도 유효하다. SQLFreeHandle(STMT)는 자신의 서버 커서와 준비 문장을 닫고 자동 descriptor를 무효화한다.
+바인딩은 ARD/APD 레코드의 앱 주소를 보관하고 fetch/execute 때 읽는다. 값과 indicator를 DLL이 해제하지 않는다. 행/파라미터 배열은 열/행 중심 배치와 부호 있는 offset을 지원하며 곱셈·덧셈·언더플로를 검사한다. 한 번의 fetch 결과는 부분 묶음·각 행 오류/경고를 보고하고, DML 파라미터 배열은 순차 실행의 실제 상태와 집계 영향 행 수를 보고한다. 조회 결과는 커밋/롤백 시에도 유효하다. SQLFreeHandle(STMT)는 자신의 서버 커서와 준비 문장을 닫고 자동 descriptor를 무효화한다.
 
 SQLDisconnect는 서버 close 후 남은 STMT와 명시/자동 DESC 토큰을 모두 무효화한다. 그 토큰에 대한 직접 드라이버 호출은 SQL_INVALID_HANDLE이다. Driver Manager가 소유한 앱 포인터도 SQLDisconnect가 해제하므로 앱은 이를 이후에 재사용하지 않는다. x86 Release의 시스템 Manager에서 이미 해제된 앱 STMT 포인터를 다시 SQLFreeHandle에 전달하면 접근 위반이 관찰되어, 해당 검증은 드라이버의 불투명 토큰을 대상으로 수행한다.
 

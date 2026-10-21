@@ -1,5 +1,13 @@
 LIBRARY hwdbodbc
 EXPORTS
+    SQLGetDescField=_SQLGetDescField@24
+    SQLGetDescFieldW=_SQLGetDescFieldW@24
+    SQLSetDescField=_SQLSetDescField@20
+    SQLSetDescFieldW=_SQLSetDescFieldW@20
+    SQLGetDescRec=_SQLGetDescRec@44
+    SQLGetDescRecW=_SQLGetDescRecW@44
+    SQLSetDescRec=_SQLSetDescRec@40
+    SQLCopyDesc=_SQLCopyDesc@8
     SQLPrepare=_SQLPrepare@12
     SQLPrepareW=_SQLPrepareW@12
     SQLExecute=_SQLExecute@4

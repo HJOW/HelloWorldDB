@@ -1,10 +1,10 @@
-# 준비 문장·단일 파라미터
+# 준비 문장과 파라미터
 
 SQLPrepare/W는 서버의 `prepareDescribe` capability를 확인하고 `prepare`를 요청한다. 기능이 없으면 HYC00이다. SQL 실행·rollback으로 메타데이터를 추정하지 않는다. 서버의 prepared/description에서 결과와 파라미터 메타데이터를 받아 SQLNumParams·SQLDescribeParam·SQLNumResultCols·SQLDescribeCol/W·SQLColAttribute/W에 사용한다.
 
 SQLNumParams는 준비한 문장의 실제 마커 수이다. 문자열, 큰따옴표 식별자와 줄/블록 주석의 `?`는 세지 않으며 서버 수와도 대조한다. SQLDescribeCol의 미정 타입은 SQL_UNKNOWN_TYPE, 크기 0이다. SQLDescribeParam은 미정이면 HYC00을 반환하며 CAST나 바인딩 타입을 요구한다. 이 구분은 [SQLDescribeCol](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function)과 [파라미터 설명의 한계](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/describing-parameters?view=sql-server-ver17)를 따른다.
 
-SQLBindParameter는 INPUT만 지원한다. APD에는 C 타입·주소·버퍼 크기·indicator, IPD에는 바인딩한 SQL 타입·길이·정밀도를 저장한다. 서버가 설명한 파라미터 메타데이터와 앱의 입력 변환 정의를 구분한다. 실행 전의 메타데이터 요청과 바인딩 변경 후의 SQLExecute는 타입 힌트로 서버 `describe`를 갱신한다. 자동 IPD·필드 API·명시 descriptor 공유는 WO-7이다.
+SQLBindParameter는 INPUT만 지원한다. APD에는 C 타입·주소·버퍼 크기·indicator, IPD에는 바인딩한 SQL 타입·길이·정밀도를 저장한다. 서버가 설명한 파라미터 메타데이터와 앱의 입력 변환 정의를 구분한다. 실행 전의 메타데이터 요청과 바인딩 변경 후의 SQLExecute는 타입 힌트로 서버 `describe`를 갱신한다. 자동 IPD·필드 API·명시 descriptor 공유와 DML 배열은 [descriptor/배열 규칙](descriptors-arrays.md)을 따른다. 실행 시 데이터는 아직 WO-7의 잔여 작업이다.
 
 ## 버퍼와 전송
 

@@ -10,7 +10,7 @@ template<class F> void rejects(F&& operation, const char* state) {
 int main() {
     return run_checks([] {
         Diagnostic diagnostic;
-        DescriptorRecord binding; binding.bound = true; SQLLEN length = SQL_NTS; binding.indicator = &length;
+        DescriptorRecord binding; binding.bound = true; SQLLEN length = SQL_NTS; binding.indicator = &length; binding.octet_length_pointer = &length;
         SQLBIGINT integer = (std::numeric_limits<SQLBIGINT>::max)(); binding.type = SQL_C_SBIGINT; binding.data = &integer;
         check(parameter_value(binding, parameter_type(SQL_BIGINT, 19, 0), diagnostic) == "9223372036854775807", "BIGINT exact string");
         integer = 7; check(parameter_value(binding, parameter_type(SQL_INTEGER, 10, 0), diagnostic) == 7, "read buffer at each execution");
@@ -22,9 +22,9 @@ int main() {
         unsigned char bytes[] = {0,255,0,1}; binding.type = SQL_C_BINARY; binding.data = bytes; length = 4;
         check(parameter_value(binding, parameter_type(SQL_VARBINARY, 4, 0), diagnostic) == Json{{"binary","00FF0001"}}, "binary wire object");
         check(parameter_value(binding, parameter_type(SQL_BINARY, 6, 0), diagnostic) == Json{{"binary","00FF00010000"}}, "fixed binary padding");
-        binding.type = SQL_C_DEFAULT; binding.indicator = nullptr; binding.capacity = 4;
+        binding.type = SQL_C_DEFAULT; binding.indicator = nullptr; binding.octet_length_pointer = nullptr; binding.capacity = 4;
         check(parameter_value(binding, parameter_type(SQL_VARBINARY, 4, 0), diagnostic) == Json{{"binary","00FF0001"}}, "default binary C type and absent indicator");
-        binding.type = SQL_C_BINARY; binding.indicator = &length;
+        binding.type = SQL_C_BINARY; binding.indicator = &length; binding.octet_length_pointer = &length;
         length = 0; check(parameter_value(binding, parameter_type(SQL_VARBINARY, 4, 0), diagnostic) == Json{{"binary",""}}, "empty binary");
         length = SQL_NULL_DATA; binding.data = nullptr; check(parameter_value(binding, parameter_type(SQL_INTEGER, 10, 0), diagnostic).is_null(), "NULL does not read data");
         length = SQL_DEFAULT_PARAM; rejects([&] { parameter_value(binding, parameter_type(SQL_INTEGER, 10, 0), diagnostic); }, "07S01");
@@ -75,7 +75,7 @@ int main() {
         binding.type = SQL_C_CHAR; char invalid_date[] = "2026-13-01"; binding.data = invalid_date; length = SQL_NTS;
         rejects([&] { parameter_value(binding,parameter_type(SQL_TYPE_DATE,10,0),diagnostic); },"22018");
         unsigned char unaligned[sizeof(SQLINTEGER) + 1]{}; SQLINTEGER unaligned_value = -123;
-        std::memcpy(unaligned + 1,&unaligned_value,sizeof(unaligned_value)); binding.type = SQL_C_SLONG; binding.data = unaligned; binding.indicator = nullptr;
+        std::memcpy(unaligned + 1,&unaligned_value,sizeof(unaligned_value)); binding.type = SQL_C_SLONG; binding.data = unaligned; binding.indicator = nullptr; binding.octet_length_pointer = nullptr;
         check(parameter_value(binding,parameter_type(SQL_INTEGER,10,0),diagnostic,1) == -123,"unaligned input and binding offset");
         rejects([&] { parameter_value(binding,parameter_type(SQL_INTEGER,10,0),diagnostic,(std::numeric_limits<SQLULEN>::max)()); },"HY090");
     });

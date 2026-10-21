@@ -1,6 +1,7 @@
 #include "hwdbodbc/statement.hpp"
 #include "hwdbodbc/parameters.hpp"
 #include "hwdbodbc/sql_text.hpp"
+#include "hwdbodbc/descriptor.hpp"
 
 using namespace hwdbodbc;
 namespace {
@@ -61,9 +62,11 @@ extern "C" SQLRETURN SQL_API SQLBindParameter(SQLHSTMT handle, SQLUSMALLINT numb
         // 바인딩은 SQLPrepare 전에도 가능하며, SQL에 없는 여분의 바인딩은 실행 시 무시한다.
         if (apd.size() < number) apd.resize(number);
         if (ipd.size() < number) ipd.resize(number);
-        auto& record = apd[number - 1]; record.bound = true; record.type = ctype; record.data = data; record.capacity = capacity;
+        auto& record = apd[number - 1]; descriptor_concise_type(record,ctype,true); record.bound = true; record.data = data; record.capacity = capacity;
         record.indicator = indicator; record.octet_length_pointer = indicator;
-        ipd[number - 1].metadata = metadata; ipd[number - 1].type = metadata.sql_type; ipd[number - 1].parameter_type = direction;
+        descriptor_sql_metadata(ipd[number - 1],metadata);
+        ipd[number - 1].type = sqltype == SQL_DATE ? SQL_TYPE_DATE : sqltype == SQL_TIME ? SQL_TYPE_TIME : sqltype == SQL_TIMESTAMP ? SQL_TYPE_TIMESTAMP : sqltype;
+        ipd[number - 1].parameter_type = direction;
         statement.parameter_metadata_dirty = true;
         return SQL_SUCCESS;
     });

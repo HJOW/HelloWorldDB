@@ -1,5 +1,6 @@
 #include "hwdbodbc/statement.hpp"
 #include "hwdbodbc/sql_text.hpp"
+#include "hwdbodbc/descriptor.hpp"
 
 using namespace hwdbodbc;
 #ifdef _WIN64
@@ -75,8 +76,12 @@ SQLRETURN column_attribute(SQLHSTMT handle, SQLUSMALLINT column, SQLUSMALLINT fi
     SQLSMALLINT capacity, SQLSMALLINT* length, SQLLEN* numeric) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
         const auto put = [&](SQLLEN value) -> SQLRETURN { if (numeric) *numeric = value; return SQL_SUCCESS; };
-        if (field == SQL_DESC_COUNT || field == SQL_COLUMN_COUNT) return put(static_cast<SQLLEN>(statement.descriptors[2]->records.size()));
-        const auto& metadata = column_record(statement, column).metadata;
+        if (field == SQL_DESC_COUNT || field == SQL_COLUMN_COUNT) {
+            if (statement.prepared && !statement.executed) describe_prepared(statement);
+            return put(static_cast<SQLLEN>(statement.descriptors[2]->records.size()));
+        }
+        const auto& record = column_record(statement, column);
+        const auto& metadata = record.metadata;
         const auto string = [&](const std::string& value) {
             const auto result = output_text(value, static_cast<Character*>(output), capacity, length, LengthUnit::bytes);
             if (result == SQL_SUCCESS_WITH_INFO) statement.diagnostic.append("01004", "Column attribute was truncated.");
@@ -95,17 +100,19 @@ SQLRETURN column_attribute(SQLHSTMT handle, SQLUSMALLINT column, SQLUSMALLINT fi
             : metadata.sql_type == SQL_TYPE_DATE ? SQL_CODE_DATE : metadata.sql_type == SQL_TYPE_TIME ? SQL_CODE_TIME : metadata.sql_type == SQL_TYPE_TIMESTAMP ? SQL_CODE_TIMESTAMP : 0);
         case SQL_DESC_LENGTH: return put(static_cast<SQLLEN>(metadata.size));
         case SQL_COLUMN_LENGTH: case SQL_DESC_OCTET_LENGTH: return put(metadata.octets);
-        case SQL_DESC_PRECISION: case SQL_COLUMN_PRECISION: return put(metadata.interval_code || metadata.sql_type == SQL_TYPE_TIMESTAMP || metadata.sql_type == SQL_TYPE_TIME ? metadata.scale : static_cast<SQLLEN>(metadata.size));
-        case SQL_DESC_SCALE: case SQL_COLUMN_SCALE: return put(metadata.scale);
+        case SQL_DESC_PRECISION: return put(record.conversion.precision);
+        case SQL_COLUMN_PRECISION: return put(static_cast<SQLLEN>(metadata.size));
+        case SQL_DESC_SCALE: return put(record.conversion.scale);
+        case SQL_COLUMN_SCALE: return put(metadata.scale);
         case SQL_DESC_NULLABLE: case SQL_COLUMN_NULLABLE: return put(metadata.nullable);
         case SQL_DESC_DISPLAY_SIZE: return put(metadata.display_size);
         case SQL_DESC_UNSIGNED: return put(SQL_FALSE);
         case SQL_DESC_UPDATABLE: return put(SQL_ATTR_READONLY);
         case SQL_DESC_AUTO_UNIQUE_VALUE: case SQL_DESC_ROWVER: return put(SQL_FALSE);
         case SQL_DESC_CASE_SENSITIVE: return put(metadata.sql_type == SQL_WCHAR || metadata.sql_type == SQL_WVARCHAR ? SQL_TRUE : SQL_FALSE);
-        case SQL_DESC_FIXED_PREC_SCALE: return put(metadata.sql_type == SQL_DECIMAL || metadata.sql_type == SQL_NUMERIC ? SQL_TRUE : SQL_FALSE);
-        case SQL_DESC_NUM_PREC_RADIX: return put(metadata.sql_type == SQL_REAL || metadata.sql_type == SQL_DOUBLE ? 2 : metadata.sql_type == SQL_DECIMAL || metadata.sql_type == SQL_NUMERIC || metadata.sql_type == SQL_SMALLINT || metadata.sql_type == SQL_INTEGER || metadata.sql_type == SQL_BIGINT ? 10 : 0);
-        case SQL_DESC_UNNAMED: return put(SQL_NAMED);
+        case SQL_DESC_FIXED_PREC_SCALE: return put(SQL_FALSE);
+        case SQL_DESC_NUM_PREC_RADIX: return put(record.radix);
+        case SQL_DESC_UNNAMED: return put(record.unnamed);
         case SQL_DESC_DATETIME_INTERVAL_PRECISION: return put(metadata.leading_precision);
         case SQL_DESC_SEARCHABLE: return put(SQL_PRED_SEARCHABLE);
         default: throw DriverError("HY091", "Invalid column attribute identifier.");
@@ -170,14 +177,15 @@ extern "C" SQLRETURN SQL_API SQLColAttribute(SQLHSTMT handle, SQLUSMALLINT colum
 extern "C" SQLRETURN SQL_API SQLColAttributeW(SQLHSTMT handle, SQLUSMALLINT column, SQLUSMALLINT field, SQLPOINTER output, SQLSMALLINT capacity, SQLSMALLINT* length, ColumnNumericArgument numeric) { return column_attribute<SQLWCHAR>(handle, column, field, output, capacity, length, static_cast<SQLLEN*>(numeric)); }
 extern "C" SQLRETURN SQL_API SQLBindCol(SQLHSTMT handle, SQLUSMALLINT column, SQLSMALLINT type, SQLPOINTER output, SQLLEN capacity, SQLLEN* indicator) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
-        if (!column) throw DriverError("07009", "Bookmarks are not supported.");
+        if (!column || column > static_cast<SQLUSMALLINT>((std::numeric_limits<SQLSMALLINT>::max)())) throw DriverError("07009", "Invalid column number.");
         if (!valid_c_type(type)) throw DriverError("HY003", "Invalid C data type.");
         if (capacity < 0) throw DriverError("HY090", "Invalid buffer length.");
         auto& records = statement.descriptors[0]->records;
         if (records.size() < column) records.resize(column);
         auto& record = records[column - 1];
-        record.type = type; record.data = output; record.capacity = capacity;
-        record.indicator = indicator; record.octet_length_pointer = indicator; record.conversion = {};
+        descriptor_concise_type(record,type,true); record.data = output; record.capacity = capacity; record.bound = output != nullptr;
+        record.indicator = indicator; record.octet_length_pointer = indicator;
+        if (!output) while (!records.empty() && !records.back().bound) records.pop_back();
         return SQL_SUCCESS;
     });
 }

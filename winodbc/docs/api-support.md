@@ -4,17 +4,18 @@
 
 | 현재 export | 구현·시험 범위 | 남은 범위 |
 |---|---|---|
-| SQLAllocHandle / SQLFreeHandle | ENV/DBC/STMT/명시 DESC·네 자동 DESC·부모/자식·무효/해제 후·동시 조회/해제 | 실행 중 해제·descriptor 공유/교체 WO-7/8 |
+| SQLAllocHandle / SQLFreeHandle | ENV/DBC/STMT/명시 DESC·네 자동 DESC·공유/교체·부모/자식·무효/해제 후·동시 조회/해제 | 연결된 DESC 해제 직후 Manager 조회 재현 사례·실행 중 해제 WO-7/8/13 |
 | SQLSetEnvAttr / SQLGetEnvAttr | ODBC 2/3/3.8·OUTPUT_NTS, DBC 할당 이후 버전 변경 거부 | 전체 버전 적합성 WO-13 |
-| SQLGetDiagRec/W·SQLGetDiagField/W | 모든 핸들·다중 Unicode 레코드·header·행/컬럼·native·서로 다른 W 길이·진단 수명 | 실제 DML 배열 진단 WO-7 |
+| SQLGetDiagRec/W·SQLGetDiagField/W | 모든 핸들·다중 Unicode 레코드·header·행/파라미터 배열의 행/컬럼·native·W 길이·진단 수명 | 취소 진단 WO-8 |
 | SQLConnect/W | 엄격한 문자열 입력, User/System DSN 로그인·명시 값 우선·원격 CONNECT 거부 | 설정 UI/등록 WO-12 |
 | SQLDriverConnect/W·SQLDisconnect | TCP·NOPROMPT·DSN 없는 로그인/종료, 엄격한 연결 문자열·암호 제거 | prompting·DSN·다른 전송 WO-10/11/12 |
 | SQLGet/SetConnectAttr/W | login/connection timeout·autocommit·metadata id·access mode·격리·dead·catalog 없음·quiet mode | reset·실행 시간 제한·풀 WO-8 |
-| SQLGet/SetStmtAttr/W | 네 자동 descriptor·전진/읽기 전용·최대 행·단일 행 바인딩/offset·상태/처리 수 | descriptor 공유/배열·실행 취소 시간 제한 WO-7/8 |
+| SQLGet/SetStmtAttr/W | 자동/명시 descriptor·공유/자동 IPD·전진/읽기 전용·최대 행·행/파라미터 배열/offset·상태/처리 수 | 실행 취소 시간 제한 WO-8 |
+| SQLGet/SetDescField/W·GetDescRec/W·SetDescRec·CopyDesc | 역할별 필드·폭·이름·일관성 검사·복사·같은 바인딩 상태·교차 연결 잠금 | Manager 해제 직후 조회 재현 사례·실행 시 데이터 연동 WO-7/13 |
 | SQLExecDirect/W·NumResultCols·RowCount·DescribeCol/W·ColAttribute/W | 조회/DML·실행 전 메타데이터·실제 타입/정밀도·한글 이름·W 길이·영향 행 수 | 전체 정보 필드 감사 WO-9 |
-| SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter | 서버 준비/설명/실행/해제·UNKNOWN/힌트·단일 INPUT·실행 시 앱 버퍼 읽기 | descriptor 자동 IPD·배열·실행 시 데이터 WO-7 |
+| SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter | 서버 준비/설명/실행/해제·UNKNOWN/힌트·INPUT 배열·실행 시 앱 버퍼 읽기 | 실행 시 데이터 WO-7 |
 | SQLNativeSql/W | 날짜시간·함수·outer join·LIKE escape의 실행 없는 변환·NOSCAN | CALL/GUID escape 미지원 |
-| SQLBindCol·Fetch·FetchScroll(NEXT)·GetData | 단일 행·실제 앱 주소·NULL·정확한 38자리 소수/64비트·날짜시간·13개 INTERVAL·문자/이진 분할 | 행 배열·추가 descriptor 연동 WO-7 |
+| SQLBindCol·Fetch·FetchScroll(NEXT)·GetData | 열/packed 행 배열·앱 주소·NULL·정확한 38자리 소수/64비트·날짜시간·13개 INTERVAL·분할 | GetData는 rowset=1, BLOCK 미지원 |
 | SQLCloseCursor·FreeStmt·MoreResults·Get/SetCursorName/W | 서버 커서/준비 자원 정리·모든 FreeStmt 옵션·단일 결과 종료·자동/명시/인용 커서 이름 | positioned DML 미지원 |
 | SQLGetInfo/W·SQLGetFunctions | 제품명·기본 문자열 정보·실제 구현 함수의 단일/배열/ODBC3 비트맵 | 전체 정보/함수 감사 WO-9/13 |
 

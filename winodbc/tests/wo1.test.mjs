@@ -16,6 +16,7 @@ const expectedExports = [
   'SQLFreeStmt', 'SQLMoreResults', 'SQLGetCursorName', 'SQLGetCursorNameW', 'SQLSetCursorName', 'SQLSetCursorNameW',
   'SQLSetStmtAttr', 'SQLSetStmtAttrW',
   'SQLPrepare', 'SQLPrepareW', 'SQLExecute', 'SQLNumParams', 'SQLDescribeParam', 'SQLBindParameter', 'SQLNativeSql', 'SQLNativeSqlW',
+  'SQLGetDescField', 'SQLGetDescFieldW', 'SQLSetDescField', 'SQLSetDescFieldW', 'SQLGetDescRec', 'SQLGetDescRecW', 'SQLSetDescRec', 'SQLCopyDesc',
 ].sort();
 
 function readPe(filename) {

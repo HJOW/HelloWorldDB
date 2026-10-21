@@ -1,6 +1,6 @@
 # 타입·버퍼 계약
 
-기준은 [서버 타입 정책](../../rdbms/docs/data-types.md), [프로토콜 8·9·17절](../../rdbms/docs/protocol.md)이다. `types/metadata.cpp`·`types/conversion.cpp`에 메타데이터/getter, `types/parameters.cpp`에 입력 변환을 구현했다. SQLGetTypeInfo·SQLColumns·배열과의 전체 일치는 WO-7/9 후속이다. [준비/입력 규칙](prepared-statements.md)은 getter와 다른 C→SQL 오류 규약을 사용한다.
+기준은 [서버 타입 정책](../../rdbms/docs/data-types.md), [프로토콜 8·9·17절](../../rdbms/docs/protocol.md)이다. `types/metadata.cpp`·`types/conversion.cpp`에 메타데이터/getter, `types/parameters.cpp`에 입력 변환을 구현했다. SQLGetTypeInfo·SQLColumns와의 전체 일치는 WO-9 후속이다. [준비/입력 규칙](prepared-statements.md)은 getter와 다른 C→SQL 오류 규약을 사용하고 [descriptor/배열](descriptors-arrays.md)은 같은 바인딩 정의를 공유한다.
 
 | DB typeName | wire 값 | ODBC SQL 타입 | 기본 C 표현·핵심 시험 | 시험 ID |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ INTERVAL은 YEAR, MONTH, YEAR_TO_MONTH, DAY, HOUR, MINUTE, SECOND, DAY_TO_HOUR, 
 
 - CHAR 1~2000, VARCHAR 기본/최대 65535의 DB 단위는 코드 포인트이다. ColumnSize는 DB의 문자 수이며, SQL_C_WCHAR 전송 최대 옥텟 길이는 보충 평면 문자까지 고려해 최대 4×문자 수이다. 실제 출력 indicator는 실제 UTF-16 바이트 수이다. SQL_C_CHAR는 ACP의 실제 변환 크기를 따로 센다. `A😀한`의 코드 포인트 3·UTF-16 단위 4·UTF-8 바이트 8을 서로 혼동하지 않는다.
 - DECIMAL 인자 생략은 (10,3), 정밀도만 있으면 (p,0), 최대 p=38이다. **메타데이터의 실제 precision/scale을 우선**한다. SQL_NUMERIC_STRUCT의 val은 16바이트 little-endian 절댓값, sign은 1=양수/0=음수이다. 앱 descriptor의 precision/scale과 값의 범위를 검사하고 double로 우회하지 않는다.
-- SQLGetData의 명시 SQL_C_NUMERIC은 ODBC 기본 precision 38·scale 0으로 반환하며, 소수 손실은 01S07이다. ARD의 별도 scale은 SQL_ARD_TYPE으로 적용한다. descriptor 필드 설정 API는 WO-7 후속이다. 숫자→문자에서 정수부 손실은 22003이고 소수부만의 잘림은 01004이다. 숫자·날짜시간 SQL 원본을 문자로 바꾼 값은 가변 SQL 타입처럼 무한 분할하지 않는다. [기본 precision/scale](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function?view=sql-server-ver17), [수치 변환](https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-to-c-numeric?view=sql-server-ver17).
+- SQLGetData의 명시 SQL_C_NUMERIC은 ODBC 기본 precision 38·scale 0으로 반환하며, 소수 손실은 01S07이다. SQLSetDescField로 지정한 ARD의 별도 precision/scale은 SQL_ARD_TYPE으로 적용한다. 숫자→문자에서 정수부 손실은 22003이고 소수부만의 잘림은 01004이다. 숫자·날짜시간 SQL 원본을 문자로 바꾼 값은 가변 SQL 타입처럼 무한 분할하지 않는다. [기본 precision/scale](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function?view=sql-server-ver17), [수치 변환](https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-to-c-numeric?view=sql-server-ver17).
 - 파라미터의 큰 정수는 문자열로 보낸다. 안전 정수 범위 ±(2^53-1) 밖을 JSON 숫자로 내보내지 않는다. DECIMAL·날짜시간·INTERVAL도 문자열이며 이진 입력은 `{binary: hex}`이다. NULL은 JSON null, 빈 문자열과 빈 이진은 별개의 값이다.
 - TIME_STRUCT에는 fraction이 없다. 소수 초가 있는 값을 그 구조체로 받을 때 실제 소수 손실은 01S07 경고로 보고하고, 문자 수신은 전 자릿수를 보존한다. TIMESTAMP_STRUCT.fraction은 나노초이며 서버의 0~6자리 소수 초와 정확히 변환한다. 입력 나노초를 μs로 줄이는 경우도 손실·범위 정책을 시험한다.
 - TIME→C TIMESTAMP의 날짜 부분은 클라이언트 OS의 현재 날짜로 채운다. 소수 초를 지원하는 서버 TIME의 정밀도는 그대로 보존한다. DATE→C TIMESTAMP의 시간은 0이고 TIMESTAMP→C DATE의 실제 시각 손실은 01S07이다. [날짜시간 변환 규약](https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-to-c-time?view=sql-server-ver17).

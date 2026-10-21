@@ -8,6 +8,7 @@
 #include <objbase.h>
 #include <cstring>
 void run_query_cases(SQLHDBC connection);
+void run_descriptor_cases(SQLHDBC connection);
 void run_prepare_cases(SQLHDBC connection, SQLHENV environment, const std::wstring& connection_string);
 
 void diagnostics(SQLHDBC connection) {
@@ -210,7 +211,19 @@ public:
         std::cout << "DSN user/system/explicit precedence PASS\n";
     }
 };
+LONG WINAPI report_unhandled_exception(EXCEPTION_POINTERS* exception) {
+        HMODULE module = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(exception->ExceptionRecord->ExceptionAddress),&module);
+        wchar_t path[32768]{}; if (module) GetModuleFileNameW(module,path,32768);
+        std::wcerr << L"UNHANDLED code=" << std::hex << exception->ExceptionRecord->ExceptionCode << L" module=" << path
+            << L" offset=" << (reinterpret_cast<std::uintptr_t>(exception->ExceptionRecord->ExceptionAddress) - reinterpret_cast<std::uintptr_t>(module)) << L'\n';
+        if (exception->ExceptionRecord->NumberParameters >= 2) std::wcerr << L"FAULT ADDRESS=" << exception->ExceptionRecord->ExceptionInformation[1] << L'\n';
+        return EXCEPTION_EXECUTE_HANDLER;
+}
 int wmain(int argc, wchar_t** argv) {
+    std::cout << std::unitbuf; std::wcout << std::unitbuf;
+    SetUnhandledExceptionFilter(report_unhandled_exception);
     return run_checks([&] {
         check(argc == 3, "usage: hwdb_dm_connection DRIVER PORT");
         NetworkBootstrap network_bootstrap;
@@ -246,6 +259,7 @@ int wmain(int argc, wchar_t** argv) {
         check(SQLFreeHandle(SQL_HANDLE_STMT, statement) == SQL_SUCCESS, "Manager STMT free");
         run_query_cases(connection);
         run_prepare_cases(connection, environment, input);
+        run_descriptor_cases(connection);
         registration.exercise_data_sources(environment, argv[2]);
         check(SQLDisconnect(connection) == SQL_SUCCESS, "Manager disconnect");
         check(SQLFreeHandle(SQL_HANDLE_DBC, connection) == SQL_SUCCESS, "Manager DBC free");

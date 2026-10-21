@@ -1,5 +1,13 @@
 LIBRARY hwdbodbc
 EXPORTS
+    SQLGetDescField
+    SQLGetDescFieldW
+    SQLSetDescField
+    SQLSetDescFieldW
+    SQLGetDescRec
+    SQLGetDescRecW
+    SQLSetDescRec
+    SQLCopyDesc
     SQLPrepare
     SQLPrepareW
     SQLExecute

@@ -7,9 +7,9 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 ## 현재 상태
 
 - 최종 갱신: 2026-10-21.
-- 진행 단계: **WO-0 ~ WO-6 완료**. 네이티브 TCP/SCRAM, User/System DSN 및 DSN 없는 접속, 직접/준비 SQL·실행 전 메타데이터·단일 파라미터·SQL escape·전진 fetch/바인딩·분할 수신·모든 DB 타입 getter를 구현했다. 전체 Core/3.8 적합성은 아직 미완료이다.
-- 이번 검증: HJOW-ATHLON / Windows 10 Pro x64 10.0.19045 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.3 / Node.js 24.21.0. x86/x64 Debug/Release **CTest 52개**, 그 안의 실제 서버/결함 주입 **19개 × 4구성 = 76개**, 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 10개 통과, 실패/건너뜀 0. 최신 증거는 `build/native/summary.json`(2026-10-21T12:52:08Z)과 구성별 로그/JUnit이다.
-- 다음 작업: **WO-7 descriptor·행/파라미터 배열·실행 시 데이터**. 자동/명시 ARD/APD/IRD/IPD의 필드/복사/공유, 단일 바인딩과 같은 내부 레코드를 쓰는 배열, NEED_DATA/ParamData/PutData/로컬 cancel을 구현한다. 이후 cancel/reset·전체 카탈로그·TLS/UDP·Setup/설치·범용 앱 인수까지 목표는 계속 활성 상태이다. WO-6의 현재 규칙과 제한은 [prepared-statements.md](docs/prepared-statements.md)에 기록했다.
+- 진행 단계: **WO-0 ~ WO-6 완료, WO-7 진행 중**. descriptor 필드/복사/공유·자동 IPD·행/파라미터 배열을 추가했다. WO-7.2/3/4는 완료했지만 연결된 명시 DESC 해제 직후 Manager 조회 재현 사례, 실행 시 데이터·로컬 cancel·전체 입력 한도 검증은 남아 있다. 전체 Core/3.8 적합성은 아직 미완료이다.
+- 이번 검증: HJOW-ATHLON / Windows 10 Pro x64 10.0.19045 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.3 / Node.js 24.21.0. x86/x64 Debug/Release의 **기본 행렬 CTest 56개**, 그 안의 실제 서버/결함 주입 **19개 × 4구성 = 76개**, 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. 최신 증거는 `build/native/summary.json`(2026-10-21T13:41:17Z)과 로그/JUnit이다. **기본 행렬 밖의 DESC 해제 직후 조회 재현은 x64 Debug에서 1개 실패**했으며 `build/native/descriptor-free-regression.log`에 보존했다. 이 실패를 전체 통과 집계로 가리지 않는다.
+- 다음 작업: **WO-7.5/6 실행 시 데이터와 WO-7.1의 Manager 재현 사례**. NEED_DATA/ParamData/PutData/로컬 cancel·예고 길이·16MiB와 타입 한도를 구현하고, 직접 드라이버에서는 통과하는 자동 복원 이후 Manager 조회를 더 조사한다. WO-7.7의 현재 배열 주소/소유권 검증도 분할 입력까지 확장한다. 이후 cancel/reset·전체 카탈로그·TLS/UDP·Setup/설치·범용 앱 인수까지 목표는 계속 활성 상태이다. 현재 [준비 규칙](docs/prepared-statements.md)과 [descriptor/배열 규칙 및 재현 방법](docs/descriptors-arrays.md)을 따른다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
 - 사용자 지시에 따라 이번 작업의 생성·변경 파일과 조회 결과는 모두 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지하고 이 문서에 최신 요약을 기록했다. 커밋·푸시는 하지 않는다.
 - TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화를 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. 정상 취소·Core 완료는 후속이다.
@@ -222,9 +222,9 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 ### WO-7. descriptor·행 배열·파라미터 배열·실행 시 데이터
 
 - [ ] WO-7.1: 자동/명시적 ARD·APD·IRD·IPD, SQLGet/SetDescField/W, SQLGet/SetDescRec/W, SQLCopyDesc를 구현한다. 읽기 전용 구현 descriptor의 변경을 거부하고 애플리케이션 descriptor의 소유·연결 교체를 처리한다.
-- [ ] WO-7.2: SQLBindCol/SQLBindParameter/SQLSetStmtAttr와 descriptor 필드가 동일한 내부 상태를 보도록 만든다. 각 API에 서로 다른 바인딩 사본을 두지 않는다. [Descriptor 필드](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/descriptor-fields?view=sql-server-ver17).
-- [ ] WO-7.3: SQL_ATTR_ROW_ARRAY_SIZE, ROW_BIND_TYPE, ROW_BIND_OFFSET_PTR, ROW_STATUS_PTR, ROWS_FETCHED_PTR를 지원한다. column-wise와 row-wise 배치, bind offset, 마지막 부분 행 묶음을 시험한다.
-- [ ] WO-7.4: PARAMSET_SIZE, PARAM_BIND_TYPE, PARAM_BIND_OFFSET_PTR, PARAM_STATUS_PTR, PARAMS_PROCESSED_PTR를 지원한다. 서버가 일괄 API를 제공하지 않으면 항목별로 순서대로 실행하고 실제 처리 수·실패/미처리 상태를 보고한다.
+- [x] WO-7.2: SQLBindCol/SQLBindParameter/SQLSetStmtAttr와 descriptor 필드가 동일한 내부 상태를 보도록 만든다. 각 API에 서로 다른 바인딩 사본을 두지 않는다. [Descriptor 필드](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/descriptor-fields?view=sql-server-ver17).
+- [x] WO-7.3: SQL_ATTR_ROW_ARRAY_SIZE, ROW_BIND_TYPE, ROW_BIND_OFFSET_PTR, ROW_STATUS_PTR, ROWS_FETCHED_PTR를 지원한다. column-wise와 row-wise 배치, bind offset, 마지막 부분 행 묶음을 시험한다.
+- [x] WO-7.4: PARAMSET_SIZE, PARAM_BIND_TYPE, PARAM_BIND_OFFSET_PTR, PARAM_STATUS_PTR, PARAMS_PROCESSED_PTR를 지원한다. 서버가 일괄 API를 제공하지 않으면 항목별로 순서대로 실행하고 실제 처리 수·실패/미처리 상태를 보고한다.
 - [ ] WO-7.5: SQL_DATA_AT_EXEC와 SQL_LEN_DATA_AT_EXEC의 입력을 SQL_NEED_DATA → SQLParamData → SQLPutData → 실행 흐름으로 처리한다. 입력받는 중에도 SQLCancel이 빠져나올 수 있게 한다.
 - [ ] WO-7.6: 분할 입력은 서버 16MiB·문자열 길이·파라미터 수 한도를 검사하며 모은다. 입력 길이가 미리 주어진 경우 실제 길이와 맞는지 확인한다. LOB가 없다는 이유로 긴 VARCHAR/VARBINARY 입력을 생략하지 않는다.
 - [ ] WO-7.7: 바인딩 버퍼는 앱 소유이고 DLL 해제 대상이 아님을 코드 구조로 보장한다. 주소 계산의 곱셈·덧셈·SQLLEN 변환 오버플로를 검사한다.
@@ -418,6 +418,8 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
 
 ## 작업 이력
+
+- 2026-10-21: WO-7의 descriptor 필드/레코드·복사·명시 공유·원래 자동 핸들 복원·자동 IPD와 열/packed 행·파라미터 배열을 구현했다. 새 8개 export로 총 59개이다. Bind/SetStmtAttr/SetDescField가 같은 레코드를 사용하며 부호 있는 SQLLEN offset·unaligned 메모리·포인터 범위를 검사한다. 부분 묶음/최대 행·NULL/분리 indicator-length·행 경고/오류·배열 중간 PK 오류·전체 실패/IGNORE·집계 row count를 실제 Manager/서버로 검증했다. 기본 네 구성 CTest 56개(내부 Node 76개), 교차 로드 4개·PE 4개·문서/환경 10개가 통과했다. 연결된 명시 DESC 해제 직후 GetStmtAttr는 Manager가 드라이버 조회에 진입하기 전 0xC0000005/fault 0x10으로 실패하며 별도 재현 로그를 남겼다. 기본 Manager 시험은 명시 분리 후 해제를 사용하고, 직접 드라이버 자동 복원은 단위 시험에서 통과한다. 자기 문장의 원래 자동 DESC 허용 검사는 수정했으나 이 재현 사례는 해결되지 않아 WO-7.1을 미완료로 남겼다. 실패로 남은 임시 HKCU 키 6개와 최종 재현의 1개는 프로세스 종료·GUID 경로·Driver가 이 build 안임을 확인하고 제거했다. WO-7.2/3/4만 완료 처리하며 NEED_DATA·분할 입력/cancel·WO-7.7 나머지를 이어서 구현해야 한다. 모든 변경·임시 자료는 winodbc 내부, 커밋·푸시 없음이다.
 
 - 2026-10-21: WO-6의 7개 항목을 완료했다. SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter·NativeSql/W의 8개 export를 추가해 총 51개가 되었다. 서버 capability·UNKNOWN/CAST/바인딩 힌트, 실행 시 앱 버퍼 읽기·정확한 38자리 소수·binary/NULL/날짜시간/offset/13개 INTERVAL, SQL escape/NOSCAN, 준비/설명의 무부작용·미커밋 변경 보존·70회 재준비/해제·권한 회수·DDL 무효화를 실제 Manager로 검증했다. C→SQL의 문자 숫자 손실 22001·날짜시간 손실 22008·INTERVAL 손실 22015와 숫자 C 입력의 선택적 01S07을 getter와 구분했다. x86 NativeSql/W의 stdcall 장식 크기 오류를 수정했다. 네 구성 CTest 52개(내부 Node 76개), 교차 로드 4개·PE 4개·문서/환경 10개가 통과했고 실패/건너뜀은 0이다. WO-7부터 전체 목표는 계속 진행하며 변경·생성물은 winodbc 안에만 두었다. 커밋·푸시는 하지 않았다.
 

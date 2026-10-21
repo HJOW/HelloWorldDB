@@ -12,4 +12,5 @@ void descriptor_read_metadata(Descriptor& descriptor);
 void associate_descriptor(Statement& statement, std::size_t index, SQLHDESC id);
 void validate_descriptor_record(const DescriptorRecord& record, bool application);
 DescriptorRecord binding_record(const Descriptor& descriptor, const DescriptorRecord& record, SQLULEN row, SQLSMALLINT default_c);
+void validate_array_address(SQLPOINTER pointer, SQLULEN count, std::size_t width);
 }

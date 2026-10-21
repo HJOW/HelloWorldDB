@@ -1,4 +1,5 @@
 #include "hwdbodbc/statement.hpp"
+#include "hwdbodbc/descriptor.hpp"
 
 namespace hwdbodbc {
 SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQLPOINTER output, SQLINTEGER* length) {
@@ -15,11 +16,13 @@ SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQ
     case SQL_ATTR_ROW_ARRAY_SIZE: return number(ard.array_size);
     case SQL_ATTR_ROW_BIND_TYPE: return number(ard.bind_type);
     case SQL_ATTR_ROW_BIND_OFFSET_PTR: return pointer(ard.bind_offset);
+    case SQL_ATTR_ROW_OPERATION_PTR: return pointer(ard.array_status);
     case SQL_ATTR_ROW_STATUS_PTR: return pointer(ird.array_status);
     case SQL_ATTR_ROWS_FETCHED_PTR: return pointer(ird.rows_processed);
     case SQL_ATTR_PARAMSET_SIZE: return number(apd.array_size);
     case SQL_ATTR_PARAM_BIND_TYPE: return number(apd.bind_type);
     case SQL_ATTR_PARAM_BIND_OFFSET_PTR: return pointer(apd.bind_offset);
+    case SQL_ATTR_PARAM_OPERATION_PTR: return pointer(apd.array_status);
     case SQL_ATTR_PARAM_STATUS_PTR: return pointer(ipd.array_status);
     case SQL_ATTR_PARAMS_PROCESSED_PTR: return pointer(ipd.rows_processed);
     case SQL_ATTR_QUERY_TIMEOUT: return number(statement.query_timeout);
@@ -36,7 +39,7 @@ SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQ
     case SQL_ATTR_USE_BOOKMARKS: return number(SQL_UB_OFF);
     case SQL_ATTR_FETCH_BOOKMARK_PTR: return pointer(nullptr);
     case SQL_ATTR_ASYNC_ENABLE: return number(SQL_ASYNC_ENABLE_OFF);
-    case SQL_ATTR_ENABLE_AUTO_IPD: return number(SQL_FALSE);
+    case SQL_ATTR_ENABLE_AUTO_IPD: return number(statement.auto_ipd ? SQL_TRUE : SQL_FALSE);
     case SQL_ATTR_KEYSET_SIZE: return number(0);
     case SQL_ATTR_SIMULATE_CURSOR: return number(SQL_SC_NON_UNIQUE);
     default: throw DriverError("HY092", "Invalid statement attribute.");
@@ -52,12 +55,15 @@ SQLRETURN set_statement_attribute(SQLHSTMT handle, SQLINTEGER attribute, SQLPOIN
         switch (attribute) {
         case SQL_ATTR_ROW_ARRAY_SIZE: case SQL_ATTR_PARAMSET_SIZE:
             if (!value) throw DriverError("HY024", "Array size must be at least one.");
-            if (value != 1) throw DriverError("HYC00", "Arrays are not implemented yet.");
+            if (value > (std::numeric_limits<SQLULEN>::max)() / sizeof(SQLUSMALLINT)) throw DriverError("HY024", "Array size exceeds the addressable range.");
             (attribute == SQL_ATTR_ROW_ARRAY_SIZE ? ard : apd).array_size = value; break;
-        case SQL_ATTR_ROW_BIND_TYPE: ard.bind_type = value; break;
-        case SQL_ATTR_PARAM_BIND_TYPE: apd.bind_type = value; break;
-        case SQL_ATTR_ROW_BIND_OFFSET_PTR: ard.bind_offset = static_cast<SQLULEN*>(input); break;
-        case SQL_ATTR_PARAM_BIND_OFFSET_PTR: apd.bind_offset = static_cast<SQLULEN*>(input); break;
+        case SQL_ATTR_ROW_BIND_TYPE: case SQL_ATTR_PARAM_BIND_TYPE:
+            if (value > (std::numeric_limits<SQLUINTEGER>::max)()) throw DriverError("HY024", "Binding type exceeds the descriptor SQLUINTEGER range.");
+            (attribute == SQL_ATTR_ROW_BIND_TYPE ? ard : apd).bind_type = value; break;
+        case SQL_ATTR_ROW_BIND_OFFSET_PTR: ard.bind_offset = static_cast<SQLLEN*>(input); break;
+        case SQL_ATTR_PARAM_BIND_OFFSET_PTR: apd.bind_offset = static_cast<SQLLEN*>(input); break;
+        case SQL_ATTR_ROW_OPERATION_PTR: ard.array_status = static_cast<SQLUSMALLINT*>(input); break;
+        case SQL_ATTR_PARAM_OPERATION_PTR: apd.array_status = static_cast<SQLUSMALLINT*>(input); break;
         case SQL_ATTR_ROW_STATUS_PTR: ird.array_status = static_cast<SQLUSMALLINT*>(input); break;
         case SQL_ATTR_PARAM_STATUS_PTR: ipd.array_status = static_cast<SQLUSMALLINT*>(input); break;
         case SQL_ATTR_ROWS_FETCHED_PTR: ird.rows_processed = static_cast<SQLULEN*>(input); break;
@@ -93,8 +99,18 @@ SQLRETURN set_statement_attribute(SQLHSTMT handle, SQLINTEGER attribute, SQLPOIN
         case SQL_ATTR_USE_BOOKMARKS: if (value != SQL_UB_OFF) throw DriverError("HYC00", "Bookmarks are not supported."); break;
         case SQL_ATTR_FETCH_BOOKMARK_PTR: if (input) throw DriverError("HYC00", "Bookmarks are not supported."); break;
         case SQL_ATTR_ASYNC_ENABLE: if (value != SQL_ASYNC_ENABLE_OFF) throw DriverError("HYC00", "Asynchronous execution is not supported."); break;
-        case SQL_ATTR_ENABLE_AUTO_IPD: if (value != SQL_FALSE) throw DriverError("HYC00", "Automatic IPD is not implemented yet."); break;
-        case SQL_ATTR_APP_ROW_DESC: case SQL_ATTR_APP_PARAM_DESC: throw DriverError("HYC00", "Explicit descriptor association is not implemented yet.");
+        case SQL_ATTR_ENABLE_AUTO_IPD:
+            if (value > SQL_TRUE) throw DriverError("HY024", "Invalid automatic IPD setting.");
+            if (value && !statement_connection(statement).session->capabilities.count("prepareDescribe")) throw DriverError("HYC00", "The server does not support automatic IPD.");
+            statement.auto_ipd = value != SQL_FALSE;
+            if (statement.auto_ipd && statement.prepared && !statement.executed) {
+                describe_prepared(statement);
+                ipd.records.resize(statement.parameter_metadata.size());
+                for (std::size_t i = 0; i < ipd.records.size(); ++i) descriptor_sql_metadata(ipd.records[i],statement.parameter_metadata[i]);
+            }
+            break;
+        case SQL_ATTR_APP_ROW_DESC: case SQL_ATTR_APP_PARAM_DESC:
+            associate_descriptor(statement,attribute == SQL_ATTR_APP_ROW_DESC ? 0U : 1U,static_cast<SQLHDESC>(input)); break;
         default: throw DriverError("HY092", "Invalid statement attribute.");
         }
         return SQL_SUCCESS;

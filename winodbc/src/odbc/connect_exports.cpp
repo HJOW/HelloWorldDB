@@ -53,7 +53,7 @@ SQLRETURN get_attribute(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER output,
         case SQL_ATTR_TXN_ISOLATION: value = SQL_TXN_READ_COMMITTED; break;
         case SQL_ATTR_CONNECTION_DEAD: value = !connection.connected || (connection.session && connection.session->dead()) ? SQL_CD_TRUE : SQL_CD_FALSE; break;
         case SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: value = SQL_ASYNC_DBC_ENABLE_OFF; break;
-        case SQL_ATTR_AUTO_IPD: value = SQL_FALSE; break;
+        case SQL_ATTR_AUTO_IPD: value = connection.session && connection.session->capabilities.count("prepareDescribe") ? SQL_TRUE : SQL_FALSE; break;
         default: throw DriverError("HY092", "Invalid attribute identifier.");
         }
         *static_cast<SQLUINTEGER*>(output) = value;

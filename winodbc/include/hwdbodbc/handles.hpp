@@ -68,6 +68,7 @@ struct Statement : Handle {
     std::array<std::shared_ptr<Descriptor>, 4> descriptors;
     std::array<std::shared_ptr<Descriptor>, 4> automatic_descriptors;
     bool auto_ipd = false;
+    bool prepared_rows = false;
     bool executed = false;
     bool cursor_open = false;
     bool current_row = false;

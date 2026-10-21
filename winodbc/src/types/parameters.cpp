@@ -178,10 +178,12 @@ SqlType parameter_type(SQLSMALLINT type, SQLULEN size, SQLSMALLINT scale, SQLINT
     if (type == SQL_CHAR || type == SQL_VARCHAR) result.default_c = SQL_C_CHAR;
     return result;
 }
-Json parameter_value(const DescriptorRecord& application, const SqlType& target, Diagnostic& diagnostic, SQLULEN offset, SQLINTEGER number) {
+Json parameter_value(const DescriptorRecord& application, const SqlType& target, Diagnostic& diagnostic, SQLULEN offset, SQLINTEGER number, SQLLEN row) {
     const auto ctype = application.type == SQL_C_DEFAULT ? target.default_c : application.type;
-    const auto indicator = shifted(application.indicator ? application.indicator : application.octet_length_pointer, offset);
-    SQLLEN length = indicator ? read<SQLLEN>(indicator) : ctype == SQL_C_BINARY ? application.capacity : SQL_NTS;
+    const auto indicator = shifted(application.indicator, offset);
+    const auto length_pointer = shifted(application.octet_length_pointer,offset);
+    if (indicator && read<SQLLEN>(indicator) == SQL_NULL_DATA) return nullptr;
+    SQLLEN length = length_pointer ? read<SQLLEN>(length_pointer) : ctype == SQL_C_BINARY ? application.capacity : SQL_NTS;
     if (length == SQL_NULL_DATA) return nullptr;
     if (length == SQL_DEFAULT_PARAM) throw DriverError("07S01", "Default parameter values are not supported.");
     if (length == SQL_DATA_AT_EXEC || length <= SQL_LEN_DATA_AT_EXEC_OFFSET) throw DriverError("HYC00", "Data-at-execution parameters are not implemented yet.");
@@ -221,7 +223,7 @@ Json parameter_value(const DescriptorRecord& application, const SqlType& target,
     SQLLEN ignored = 0;
     const auto convert = [&](SQLSMALLINT type, auto& output) {
         Diagnostic conversion;
-        try { convert_value(input.value, input.source, type, &output, sizeof(output), &ignored, conversion, nullptr, spec, 1, number); }
+        try { convert_value(input.value, input.source, type, &output, sizeof(output), &ignored, conversion, nullptr, spec, row, number); }
         catch (const DriverError& error) {
             const bool exact_target = target.sql_type == SQL_SMALLINT || target.sql_type == SQL_INTEGER || target.sql_type == SQL_BIGINT || target.sql_type == SQL_DECIMAL || target.sql_type == SQL_NUMERIC;
             if (character_input && exact_target && error.state == "22003") throw DriverError("22001", "Character parameter loses numeric digits.");
@@ -232,7 +234,7 @@ Json parameter_value(const DescriptorRecord& application, const SqlType& target,
             if (target.interval_code) throw DriverError("22015", "Interval parameter loses field precision.");
             if (target.sql_type == SQL_TYPE_DATE || target.sql_type == SQL_TYPE_TIME || target.sql_type == SQL_TYPE_TIMESTAMP) throw DriverError("22008", "Datetime parameter loses field precision.");
             if (character_input || target.sql_type == SQL_BIT) throw DriverError("22001", "Parameter loses numeric digits.");
-            diagnostic.append("01S07", "Fractional parameter data was truncated.", 0, 1, number);
+            diagnostic.append("01S07", "Fractional parameter data was truncated.", 0, row, number);
         }
     };
     switch (target.sql_type) {

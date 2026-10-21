@@ -60,6 +60,18 @@ x86 링크가 SQLNativeSql/W의 잘못된 stdcall 장식 크기를 검출했으�
 
 WO-7의 descriptor 필드/자동 IPD/공유·배열·실행 시 데이터, WO-8 정상 취소/reset, 카탈로그/전체 기능 감사·TLS·UDP·실제 설치/앱·최소 OS 인수가 남아 있다. 전체 ODBC 목표는 활성 상태이며 Core/3.8 적합성 완료를 뜻하지 않는다.
 
+## HJOW-ATHLON — WO-7 descriptor/배열 진행 검증
+
+동일 환경에서 전체 스크립트를 재실행한 기본 행렬의 최신 capturedAt은 **2026-10-21T13:41:17Z**이다. 네 구성 CTest 14개씩 **56개**, 그 안의 Node 19개씩 **76개**, 교차 비트 수 거부 4개·PE 4개·문서/환경 10개가 통과했다. 기본 행렬 실패/건너뜀 0이며 PE는 59개 export를 확인했다. SDK의 SQLGetDescRec/W는 11인자·x86 `@44`, SQLSetDescRec은 10인자·`@40`이며 W 이름을 별도로 만들지 않았다.
+
+새 `descriptors.fields_sharing_lifetime` 내부 시험은 scalar/포인터 필드 폭과 canary, W 필드 바이트/레코드 이름 코드 단위·홀수 버퍼 오류, IRD 읽기 전용/상태 포인터 예외, descriptor 복사 후 앱 주소, 타입 변경의 unbind/일관성 검사, 자동/명시 복원·같은 연결 공유·다른 연결 거부, 교차 연결 복사 경합, 부호 있는 offset/stride overflow를 확인했다. 네트워크 없는 연결 상태 주입 시험이다.
+
+실제 Manager/서버의 `descriptor_cases.cpp`는 column-wise/packed row-wise 행 배열과 NULL indicator 배열, 바인딩 offset·서로 다른 alignment·분리 indicator/length, 마지막 부분 묶음과 최대 행 제한, 일부/전체 변환 오류·경고의 상태/진단 row/column, 같은 ARD의 두 STMT 공유·복사, 자동 IPD의 실제 스키마 타입을 확인했다. DML 파라미터 배열은 열/packed 배치, 둘째 set의 PK 실패·계속 실행/IGNORE, 전체 실패/전체 무시·처리 수·영향 행 수 합계, 실행마다 바뀐 값과 NULL을 확인했다. SELECT 배열의 HYC00과 SQLGetInfo의 NO_SELECT/집계 row count가 일치한다.
+
+**기본 행렬과 별도로 알려진 실패가 있다.** `HWDB_DESC_FREE_REGRESSION=1`에서 연결된 명시 DESC를 해제한 직후 SQLGetStmtAttr(APP_ROW_DESC)를 호출하면 x64 Debug의 시스템 Manager가 드라이버 조회에 진입하기 전 ntdll.dll+0x2faad에서 0xC0000005, fault address 0x10으로 실패한다. 최종 코드로 다시 재현한 Node 시험 **1개 실패·0개 통과**를 `build/native/descriptor-free-regression.log`에 보존했다. 기본 행렬은 먼저 두 STMT에서 명시 DESC를 분리한 뒤 해제하며, 그 통과를 해제 직후 조회의 증거로 합치지 않는다. 직접 드라이버의 자동 복원은 통과한다. 자기 문장의 원래 자동 DESC를 받는 검사는 수정했지만 해당 Manager 경로의 실패는 남아 있다.
+
+크래시로 남은 고유 HKCU 키들은 해당 시험 종료와 정확한 GUID 경로·등록 Driver가 이 프로젝트 build 안임을 확인한 뒤 제거했다. 최종 재현의 키도 따로 검증해 제거했다. 복원·재현 방법과 남은 최소 OS 확인은 [descriptor/배열 문서](descriptors-arrays.md)에 있다. WO-7.1·실행 시 데이터/로컬 취소·분할 입력 한도와 WO-8 이후는 미완료이며 전체 목표는 활성 상태이다.
+
 ## 실행 증거
 
 2026-10-21, **VM-W11-Codex**(실제 호스트명 `VM-W11-CODEX`), Windows 11 Pro x64 10.0.26300. 다른 PC의 빌드 툴 설치를 보증하는 기록이 아니다. 새 PC는 [환경 확인 규칙](environment.md)에 따라 호스트명·도구 설치 여부·버전·경로를 다시 기록한다.
