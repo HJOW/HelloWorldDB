@@ -6,10 +6,12 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 
 ## 현재 상태
 
-- 최종 갱신: 2026-10-20.
-- 진행 단계: **개발 계획 작성 완료, 구현 미착수**. 이 문서의 `[ ]`는 앞으로 해야 할 일이다. 코드·DLL·설치 프로그램·ODBC 적합성 시험은 아직 없다.
-- 이번 작업: 개발 순서, 구현할 API, 상태·메모리 규칙, 시험과 완료 기준을 정리했다. 문서 작성이 드라이버 구현 착수를 뜻하지는 않는다.
-- 다음 작업: 구현 지시가 오면 **WO-0**부터 시작한다. 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀를 완료했고, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 연결·진단 매핑·적합성 시험은 이 프로젝트에서 구현한다.
+- 최종 갱신: 2026-10-21.
+- 진행 단계: **첫 단계 WO-0 완료**. 6개 항목의 목표·지원 계약·도구 조회를 마쳤다. 드라이버 DLL·접속·설치·ODBC 적합성 시험은 아직 미구현/미실행이다.
+- 이번 작업: API/속성/descriptor/길이·타입·서버 기능·진단·시험 대응표, 의존성과 PC별 도구 기록 규칙, 환경 조회 스크립트와 WO-0 문서 검사 코드를 추가했다. [README](README.md), [검증 기록](docs/verification.md)을 따른다.
+- 다음 작업: **WO-1 DLL·C ABI·x86/x64 시험 기반**. 실제 빌드 파일·DLL·직접 로드 EXE·별도 Driver Manager EXE를 만든다. 작업할 PC에서 도구 설치 여부를 다시 확인하고 호스트명과 함께 기록한다.
+- 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
+- 사용자 지시에 따라 이번 작업의 생성·변경 파일과 조회 결과는 모두 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지하고 이 문서에 최신 요약을 기록했다. 커밋·푸시는 하지 않는다.
 - 기존 프로토콜로 TCP 시제품은 만들 수 있다. 그러나 실행 전 결과 메타데이터와 실행 중 정상 취소를 검증하기 전에는 정식 ODBC Core 적합성 완료를 선언하지 않는다.
 
 ## 1. 이 문서를 따라 작업하는 방법
@@ -22,6 +24,8 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 6. 문서에 없는 선택을 했다면 "결정 사항"에 근거를 남긴다. 서버 사양·프로토콜 변경이 필요하면 AGENTS.md와 서버 문서를 먼저 고친 뒤 구현한다.
 7. 작업 종료 전 현재 상태·작업 이력·다음 작업을 갱신하고 루트 PROGRESS.md에도 요약한다. 실행한 명령·컴파일러·OS·비트 수·서버 런타임·통과/실패/건너뜀 수를 남긴다.
 8. 코드와 Markdown은 UTF-8, 주석·설명은 한국어로 작성한다. DB 오류 메시지는 영문으로 유지한다. AI는 commit·push를 하지 않는다.
+9. **PC가 바뀌면 Visual Studio/Build Tools 설치를 다시 확인한다. 설치/미설치·버전·절대 경로와 PC 호스트명을 함께 문서화한다.** VM-W11-Codex에서 확인한 설치를 다른 PC의 설치 근거로 사용하지 않는다. [호스트별 기록 규칙](docs/environment.md)을 따른다.
+10. 사용자 지정 작업 범위에 따라 winodbc 관련 새 파일·생성물·임시 자료는 모두 이 디렉토리에 둔다. 현재 작업은 루트 문서를 변경하지 않고 이 문서에서 인수인계한다.
 
 ## 2. 목표와 설계 기본안
 
@@ -30,7 +34,7 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 | 항목 | 기본안 |
 |---|---|
 | 구현 | C++17, MSVC, Windows SDK ODBC 헤더, CMake·CTest |
-| 최초 검증 OS | 이 PC의 Windows 11 x64. 제품의 최소 Windows 버전은 WO-0에서 확정 |
+| 최초 검증 OS | VM-W11-Codex의 Windows 11 Pro x64 10.0.26300. 제품 기준은 Windows 11 24H2 이상 x64, 최소 OS 실제 시험은 WO-13 |
 | 아키텍처 | x64 DLL과 x86 DLL을 각각 빌드. 64비트 OS의 32비트 앱도 시험 |
 | ODBC 목표 | ODBC 3.8, Core 인터페이스 + 실제 DB가 제공하는 트랜잭션·카탈로그 기능 |
 | 문자열 | W API의 UTF-16과 서버 UTF-8 사이를 엄격하게 변환. ANSI 경로와 SQL_C_CHAR도 별도 시험 |
@@ -43,7 +47,7 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 | 배포 이름 | 표시명 `HelloWorldDB ODBC Driver`, DLL 기본안 `hwdbodbc.dll`, Setup `hwdbodbc_setup.dll` |
 | 실행 의존성 | Windows 네이티브 DLL. Node.js·JVM·Python 프로세스를 중간 드라이버로 실행하지 않음 |
 
-CMake/MSVC 버전·설치 경로는 아직 확인하지 않았다. JSON 라이브러리 등 외부 의존성도 아직 선정하지 않았다. WO-0에서 Windows API로 처리할 부분과 검증된 소규모 라이브러리를 사용할 부분을 정하고 버전·라이선스·패키징을 기록한다. 설치되어 있다고 가정하고 빌드 성공을 기록하지 않는다.
+WO-0에서 **VM-W11-Codex에 한해 Visual Studio Build Tools 2022 설치를 확인**했다. MSVC·SDK·CMake·CTest의 버전·절대 경로와 앱 확인 범위는 [environment.md](docs/environment.md)에 기록했다. JSON 3.12.0(MIT)·Windows CNG·정확한 소수 자체 변환·정적 CRT 정책은 [dependencies.md](docs/dependencies.md)에 결정했다. 다른 PC는 도구 설치를 재조회하며, 설치 확인과 실제 빌드 성공을 구분한다.
 
 초기 제외 범위는 비동기 ODBC 실행, 스크롤·갱신 커서, 북마크, 출력 파라미터·저장 프로시저, 분산 트랜잭션, ARM64, Linux/macOS ODBC이다. **입력 파라미터 배열, data-at-execution, descriptor, SQLCancel을 단순히 선택 기능이라고 제외하지 않는다.** Core 목록과 필요한 호출 형태를 별도로 검증한다. [Core 적합성](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/core-interface-conformance?view=sql-server-ver17), [함수별 적합성](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/function-conformance?view=sql-server-ver17).
 
@@ -80,7 +84,7 @@ winodbc/
 
 | 단계 | 산출물 | 다음 단계로 넘어갈 조건 |
 |---|---|---|
-| WO-0 | 목표·API 지원표·서버 의존성 확정 | 버전/적합성/필수 기능의 누락이 없음 |
+| WO-0 | **완료**: 목표·API 지원표·서버 의존성 확정 | 문서 계약 검사 통과, ODBC 실행 시험과 구분 |
 | WO-1 | x86/x64 DLL·시험 앱 빌드 | ABI·export·비트 수 검사 통과 |
 | WO-2 | 핸들·진단·문자열 공통 함수 | 오류 입력과 메모리 경계 시험 통과 |
 | WO-3 | TCP·JSON·SCRAM 프로토콜 코어 | 실제 서버의 저수준 왕복 성공 |
@@ -101,12 +105,12 @@ winodbc/
 
 선행 조건: AGENTS.md, 서버 protocol.md, 이 문서를 읽는다.
 
-- [ ] WO-0.1: 설치된 MSVC·Windows SDK·CMake·CTest·x86/x64 도구를 조회하고 정확한 버전·실행 경로를 기록한다. 필요한 도구가 없으면 미설치로 적는다.
-- [ ] WO-0.2: 최초 검증 OS, 제품 최소 OS, x86/x64, 목표 ODBC 앱을 결정한다. Excel/Access 등은 설치 여부와 앱 자체의 비트 수를 확인하고 목표/미시험을 구분한다.
-- [ ] WO-0.3: `docs/api-support.md`에 API별 담당 계층, A/W export, 지원 호출 형태, 상태, 오류, 시험 ID를 적는다. 함수 목록과 속성/descriptor 필드 목록은 별도 표로 만든다.
-- [ ] WO-0.4: ODBC 3.8의 버전 협상·C 타입 검증·`SQL_ATTR_RESET_CONNECTION`·비동기 미지원 보고를 포함한다. `ODBCVER=0x0380`으로 컴파일했다는 이유만으로 3.8 완성을 선언하지 않는다. [3.8 드라이버 지침](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-driver/upgrading-a-3-5-driver-to-a-3-8-driver?view=sql-server-ver17).
-- [ ] WO-0.5: 서버 prepare/describe·cancel의 기능 협상과 완료 기준을 rdbms/PREPARE.md와 protocol.md 17절에 맞춘다. prepareDescribe·cancel을 광고하지 않는 서버에는 새 요청을 보내지 않는다.
-- [ ] WO-0.6: JSON·정확한 10진 변환·인증 구현의 의존성을 결정하고 버전·라이선스를 기록한다. 큰 정수와 DECIMAL을 double로 바꾸지 않는 것이 필수 조건이다.
+- [x] WO-0.1: VM-W11-Codex의 MSVC·Windows SDK·CMake·CTest·x86/x64 경로·버전을 조회했다. [환경 기록](docs/environment.md), `scripts/inspect-environment.ps1`. 다른 PC는 호스트명과 함께 설치 여부를 재기록한다.
+- [x] WO-0.2: 최초/최소 OS·아키텍처·네이티브 시험 앱·관리자·Excel/Access/범용 앱의 목표/미시험을 구분했다. Office 앱은 조회 범위에서 미발견이며 드라이버 설치와 혼동하지 않았다. [목표](docs/environment.md).
+- [x] WO-0.3: [API 지원 계약](docs/api-support.md)에 함수별 계층/단계·B/W export·상태·진단·시험 ID와 별도 속성/descriptor/길이 표를 작성했다. [타입](docs/type-mapping.md), [후속 시험](docs/verification.md)과 연결했다.
+- [x] WO-0.4: 버전 2/3/3.8 협상·C 타입 검증·reset 재인증·비동기 미지원 보고를 명시했다. ODBC 3.8 완성 광고는 실제 구현/적합성 시험 뒤로 남겼다. [API 계약](docs/api-support.md).
+- [x] WO-0.5: capabilities 없는 서버에 새 요청을 보내지 않는 규칙, UNKNOWN/힌트·준비 수명·취소 경합·HY008/HYT00 매핑을 서버 17절에 맞췄다. [서버 의존성](docs/server-dependencies.md). 서버 ODBC 시험은 미완료이다.
+- [x] WO-0.6: JSON 3.12.0/MIT·정확한 10진 자체 변환·CNG·NFKC·CRT/배포 정책을 결정했다. [의존성](docs/dependencies.md). 외부 소스 도입과 실제 인증/변환 시험은 후속이다.
 
 완료 기준: 함수·속성·descriptor·타입·서버 기능·테스트의 대응표가 있다. 서버 미구현 기능을 ODBC의 성공 스텁으로 가리지 않는다. 이 단계의 문서 검토는 드라이버 실행 시험으로 세지 않는다.
 
@@ -387,15 +391,25 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 
 ## 10. 미결 사항과 결정 기록
 
-사용자가 확정한 것은 Windows용 ODBC 프로젝트 문서 작성과 서버 prepare/describe·cancel의 후속 작업 등록이다. 아래는 구현 전에 정할 사항이다.
+사용자가 Windows용 ODBC 첫 단계 진행과 파일의 winodbc 내부 배치를 지시했다. 도구 기록은 해당 PC에 한정하고 다른 PC에서도 호스트명과 설치 여부를 함께 기록하도록 추가 지시했다. 아래는 WO-0에서 정한 구현 선택과 남은 사항이다.
 
-- 제품 최소 Windows/Windows Server 버전과 ARM64의 후속 지원 여부. 최초 구현·검증 기준은 Windows 11 x64와 x86/x64 앱이다.
-- MSVC·SDK·CMake의 실제 버전, CRT·JSON 라이브러리 등 배포 의존성.
-- 반드시 지원할 실제 앱과 그 버전·비트 수. 도구 미설치를 기능 구현 완료나 호환 성공으로 기록하지 않는다.
+- 제품 기준은 Windows 11 24H2 이상 x64 및 WOW64 x86 앱이다. Windows Server·ARM64는 이번 범위에서 제외한다. 최소 OS 클린 환경 시험은 WO-13에 남긴다.
+- VM-W11-Codex의 도구 설치/버전/경로만 확인했다. 다른 PC는 [환경 기록 규칙](docs/environment.md)에 따라 호스트명을 포함해 재조회한다. C++17·MSVC v143·CMake 3.25 이상, 정적 CRT, JSON 3.12.0(MIT) 및 Windows API 사용을 결정했다. 실제 DLL 빌드는 WO-1부터이다.
+- 네이티브 x86/x64 시험 EXE와 Windows ODBC 관리자를 필수 경로로 정했다. Excel/Access 앱·범용 ODBC 도구 버전과 비트 수의 실제 설치/사용 확인은 WO-13에 남긴다. 현재 PC 조회에서 Office 앱·범용 탐색 앱은 발견하지 못했다.
 - 서버 준비 문장/describe/cancel의 wire 규약·타입 힌트·기능 협상은 확정·구현되었다. ODBC 진단·descriptor·수명으로의 매핑과 세션 초기화의 추가 서버 지원 필요 여부는 WO-0·WO-6·WO-8에서 검토한다.
 - 배포 패키지 형식·코드 서명·설치 표시명·업그레이드 정책. 문서 기본안은 확정 배포 정책이 아니다.
+- 서버에 포괄적 reset 요청이 없으므로 WO-8은 물리 연결 재인증으로 초기화한다. 효율적인 풀 재사용을 위한 서버 확장은 별도 후속이며 성공 스텁으로 대체하지 않는다.
+
+## WO-0 완료 인수인계
+
+- 추가한 README·환경/API/타입/서버/의존성/검증 문서, 환경 조회 스크립트·문서 검사 코드는 모두 winodbc 안에 있다. 생성 JSON은 build/wo0 안의 Git 제외 파일이다. 루트/다른 프로젝트는 변경하지 않았다.
+- VM-W11-Codex, Windows 11 Pro x64 10.0.26300, MSVC 19.44.35229.0·SDK 10.0.26100.0·CMake/CTest 4.4.4를 확인했다. 이 도구 설치 기록을 다른 PC에 일반화하지 않는다.
+- WO-0 검사는 문서·SDK·환경 대응을 확인한다. DLL/Manager/서버 왕복·적합성은 미시험이며 서버 런타임을 실행하지 않았다. 다음 WO-1에서 컴파일/링크/로드/비트 수 검사를 새로 수행한다.
+- `powershell -NoProfile -File winodbc/scripts/inspect-environment.ps1` 조회와 Node.js 24.19.0의 `node --test winodbc/tests/wo0.test.mjs` **10개 통과·실패 0·건너뜀 0**, `git diff --check -- winodbc` 통과. 명령·경로·검사 범위는 [검증 기록](docs/verification.md)에 남겼다.
 
 ## 작업 이력
+
+- 2026-10-21: 사용자 지시에 따라 첫 단계 WO-0의 6개 항목을 완료했다. VM-W11-Codex에 한정한 도구 설치 조회, 호스트별 재확인 규칙, 함수·속성·descriptor·길이·타입·서버 기능·진단·시험 대응, 의존성/배포 선택과 재실행 가능한 조회·검사를 추가했다. 문서·환경 검사 10개 통과·실패/건너뜀 0이다. 드라이버 구현은 WO-1부터이며 모든 변경·생성물을 winodbc 안에 두었다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-20: 서버 PD-1 ~ PD-5·기존 드라이버 회귀와 jdbc6 새 API 연동 완료를 반영했다. 서버 규약 의존성은 해소했고 PD-6의 ODBC 시험은 남아 있다. ODBC 코드·DLL 구현과 적합성 시험은 이번 작업에 포함하지 않았다.
 
