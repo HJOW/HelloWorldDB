@@ -89,8 +89,8 @@ bun test --timeout 360000 dist/test/integration/overviewTxn.test.js   # bun 으�
 - **Node.js 22 전체 실행은 2026-10-20 완료**: Windows에서 Node.js 22.23.3으로 시험 러너와 실제 데몬을 모두 실행했다. TypeScript 6.0.3 컴파일과 전체 949개 중 948개 통과·1개 건너뜀(Windows SIGTERM)·실패 0이다. 후속 범위는 7절을 본다.
 - **bun 으로 단위 시험 전체를 돌렸다(2026-10-17).** `test/integration` 을 뺀 801개 중 799개 통과, 2개 실패이다. 실패는 둘 다 `t.mock`(`node:test` 의 mock)을 쓰는 시험(`fsync` 실패 시험, 힙 삽입 시험)으로, bun 1.3.14 가 mock 을 구현하지 않아 나는 오류이다(제품 결함이 아니다. bun 1.4.2 에서는 통과했다). 통합 시험 87개는 파일마다 따로 돌려 85개 통과, 2개 건너뜀(bun 의 TLS 최소 버전 제약, Windows 의 SIGTERM)이다.
 - **bun 으로 통합 시험을 돌린 뒤 데몬이 남던 문제는 고쳤다(2026-10-17).** 원인은 시험 도우미(`Daemon`)가 데이터 디렉토리를 바꾼 데몬의 잠금 파일을 찾지 못한 것이다(`t.after` 정리 순서가 Node.js 와 bun 에서 다르다). 고친 뒤 bun 으로 통합 시험을 세 번 돌려 남은 데몬이 없었다. 자세한 것은 [../PROGRESS.md](../PROGRESS.md)의 "결정 사항"이다.
-- **리눅스, macOS**: 모든 시험을 Windows 11 에서 돌렸다. 유닉스 도메인 소켓(권한 0600, 남은 소켓 파일 정리), `hwdb start` 의 새 세션 분리와 SIGHUP 무시, SIGTERM·SIGINT 로 정상 종료하는 시험(`overviewStorage` 의 마지막 시험, Windows 에서는 건너뜀)은 비윈도우 장비에서 확인해야 한다.
-- **실제 터미널 앱의 탭 닫기**: 새 콘솔 창의 프로세스를 강제로 끝내는 것으로 갈음했다. 데몬은 콘솔에 붙어 있지 않다.
+- **Linux 검증은 2026-10-21 완료**: Debian 13에서 유닉스 도메인 소켓(0600, 남은 파일·다른 인스턴스 보존), 별도 세션과 SIGHUP, SIGINT·SIGTERM을 실제로 확인했다. 소켓 정리·좀비 PID·빠른 비밀번호 입력의 결함을 수정했다. 런타임별 결과와 재현 명령은 [Linux 검증 기록](linux-verification.md)에 있다. macOS는 아직 확인하지 않았다.
+- **실제 터미널 앱 종료**: Linux Konsole의 창 닫기 뒤 같은 데몬 PID가 유지되고 새 SQL 접속이 성공했다. 실제 PTY의 입력·이력·오류·Ctrl-D 롤백도 확인했다. Windows의 실제 터미널 앱 탭 닫기는 미확인이다.
 - **TLS 1.0 과 자바 6**: 실제 Oracle JDK 6u45의 jdbc6 클라이언트와 Node.js 22 서버 사이의 TLSv1 접속을 확인했다. Java 7 이상은 TLSv1.2로 검증한다. bun은 구버전 TLS와 TLS 최소 버전 적용을 지원하지 않는다.
 - **동시성의 규모**: 세션 10개로 시험했다. 그 이상의 부하와 오래 도는 부하(수 시간)는 시험하지 않았다.
 - **뷰 컬럼과 인덱스 이름 생략 규칙은 구현했다**: SYS_COLUMNS는 권한으로 보이는 뷰의 컬럼을 행 없이 제공한다. `CREATE INDEX IX ON APP.T (...)`는 APP에 만들고, 한정하지 않은 DROP INDEX는 현재 테이블스페이스에서 찾는다.

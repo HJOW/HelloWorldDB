@@ -7,7 +7,8 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-20
+- 최종 갱신 : 2026-10-21
+- **Linux 검증(2026-10-21)**: Debian 13.7에서 실제 Python 3.2.6·3.13.5 각각 기존 전체 124개 통과·실패와 건너뜀 0이다. Python 3.2는 임시 디렉토리에 공식 소스를 빌드했고 최신 glibc의 내부 sinpi 이름 충돌을 임시 런타임 소스에서 해결했다. Linux 단조 시계 fallback·SCRAM·TCP·DB-API·자료형·스레드 시험을 실제 실행했다. sdist·wheel 생성 및 깨끗한 3.13 가상 환경의 네트워크 없는 wheel 설치·소스 트리 밖 Hello World 접속도 통과했다. 드라이버 소스는 변경하지 않았다. 상세 런타임·명령은 [Linux 검증 기록](../rdbms/docs/linux-verification.md)에 있다.
 - 서버 후속 구현 회귀 완료(2026-10-20): 최종 rdbms를 Node.js 22.23.3으로 실행하고 현재 장비의 Python **3.2·3.13.1 각각 124개 전부 통과·실패/건너뜀 0**이다. 실행 파일은 `C:\Program Files\Python\302\python.exe`, `C:\Program Files\Python\313\python.exe`이며 3.12는 이번 장비에 없어 이번에는 실행하지 않았다. 기존 PY-4 ~ PY-6과 새 요청 API 연동 체크리스트는 별도 후속 작업으로 유지한다. 서버 검증은 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)를 따른다.
 - 진행 단계 : **PY-3 완료** (DB-API 2.0 계층). `types.py`(값 변환·타입 객체·생성자), `cursor.py`(`Cursor`), `connection.py`(`Connection`, `connect()`), 모듈 수준(`apilevel`, `threadsafety`, `paramstyle`, 예외·생성자·타입 객체)을 구현했다. TLS와 UDP는 `NotSupportedError` 이며 PY-4·PY-5에서 둔다.
 - 이전 `DESKTOP-HJOW` 검증 환경 : 하한 **3.2**는 `C:\Program Files\Python\P302\python.exe`, 현재 PATH의 **3.12.4**는 `C:\Program Files\Python\P312\python.exe`이다. 2026-10-20 실제 실행으로 재확인했다. 이전 기록의 `C:\Python\python.exe`(3.13.1)는 현재 없어 이번에 시험하지 않았다.
@@ -87,7 +88,7 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - [x] 통합 시험 도우미 `tests/rdbms_instance.py` : 임시 설치 디렉토리에 시험용 포트의 config.json을 쓰고 `hwdb start`/`stop`으로 제어한다 (`HWDB_INSTALL_DIR`. [CLI 문서](../rdbms/docs/cli.md) 1절).
   `node` 와 빌드된 `rdbms/dist` 가 없으면 통합 시험을 건너뛰고 이유를 보여 준다. TCP·UDP 가 모두 비어 있는 포트를 고른다 (Windows 의 제외 포트 범위 때문. `rdbms/test/net/helpers.ts` 의 `freePort`)
 
-PY-1 검증 보충 : PBKDF2는 RFC 7914 11절의 두 SHA-256 벡터(다중 블록, 80,000회 반복)를 통과했다. Python 3.2의 `hmac.new`는 해시 이름 문자열 대신 해시 생성 함수를 받아야 하므로 fallback은 `hashlib.new`를 부르는 함수를 전달한다. 단조 시계는 3.3+의 표준 함수, 3.2 Windows의 `GetTickCount64`를 쓰며 벽시계로 대체하지 않는다. Linux·macOS 등 구버전 OS 시계 분기는 코드만 작성했고 실제 실행은 남아 있다.
+PY-1 검증 보충 : PBKDF2는 RFC 7914 11절의 두 SHA-256 벡터(다중 블록, 80,000회 반복)를 통과했다. Python 3.2의 `hmac.new`는 해시 이름 문자열 대신 해시 생성 함수를 받아야 하므로 fallback은 `hashlib.new`를 부르는 함수를 전달한다. 단조 시계는 3.3+의 표준 함수, 3.2 Windows의 `GetTickCount64`를 쓰며 벽시계로 대체하지 않는다. Linux의 구버전 시계 분기는 2026-10-21 실제 Python 3.2.6에서 검증했다. macOS 등 나머지 OS는 실제 실행이 남아 있다.
 
 ### PY-2. 프로토콜 코어 (TCP)
 
@@ -287,6 +288,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - `gui` 는 보류 중이며 `nodejsDriver` 를 쓴다. 이 드라이버를 쓰는 프로젝트는 아직 없다.
 
 ## 작업 이력
+
+- 2026-10-21 : Linux에서 Python 3.2.6을 임시 빌드하고 3.13.5와 각각 기존 전체 124개를 통과했다. 구버전 Linux 단조 시계 분기, sdist·wheel 생성과 별도 가상 환경의 오프라인 설치·실제 TCP 접속도 확인했다. 드라이버 소스는 바꾸지 않고 환경·진행 기록을 갱신했다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-20: rdbms 후속 구현 검증의 일부로 Node.js 22.23.3 서버에 대해 Python 3.2·3.13.1 기존 전체 회귀 각각 124개를 실행해 모두 통과했다. 이번 장비에는 3.12가 없으며 PY-4 이후와 새 요청 API는 별도 후속 작업이다. 드라이버 소스는 바꾸지 않았다.
 

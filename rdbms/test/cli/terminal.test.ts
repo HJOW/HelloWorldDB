@@ -45,6 +45,23 @@ test("비밀번호는 화면에 되울리지 않고 Enter 로 끝낸다", async 
   assert.deepEqual(input.rawCalls, [true, false], "원시 모드를 켰다가 되돌린다");
 });
 
+test("비밀번호 프롬프트를 출력하기 전에 숨김 모드와 입력 처리가 준비된다", async () => {
+  const input = new FakeTty();
+  const output = sink();
+  const answer = askSecret("Password: ", input as unknown as TerminalInput, {
+    write(text: string): void {
+      output.write(text);
+      if (text === "Password: ") {
+        assert.equal(input.isRaw, true, "프롬프트가 보일 때 터미널 되울림이 이미 꺼져 있어야 한다");
+        input.emit("data", "immediate-secret\r");
+      }
+    },
+  });
+  assert.equal(await answer, "immediate-secret");
+  assert.equal(output.text(), "Password: \n");
+  assert.deepEqual(input.rawCalls, [true, false]);
+});
+
 test("글자를 한 번에 붙여 넣거나 한 글자씩 받아도 같다", async () => {
   for (const chunks of [["abc\r"], ["a", "b", "c", "\r"], ["ab", "c\n"]]) {
     const input = new FakeTty();

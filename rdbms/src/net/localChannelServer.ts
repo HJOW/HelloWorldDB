@@ -14,7 +14,7 @@
  *  - 프레임(framing.ts)으로 메시지를 잘라 메시지 처리기(messageHandler.ts)에 넘긴다. (streamConnection.ts)
  *
  * 장비 밖으로 나가지 않으므로 암호화하지 않는다. 사용자명과 비밀번호 인증은 다른 경로와 똑같이 거친다.
- * 리눅스, macOS 의 소켓 파일 처리는 코드로만 작성되었고 Windows 개발 환경에서는 실행해 보지 못했다. (PROGRESS.md 미결 사항)
+ * Linux 소켓 권한·비정상 종료·중복 구동은 실제 프로세스 시험으로 검증한다. macOS는 추가 검증 대상이다.
  *
  * 관련 사양 : AGENTS.md 상세 6, 8, 14, 15
  * 구현 단계 : 9단계 (9-5)
@@ -58,6 +58,8 @@ export class LocalChannelServer {
   private server: net.Server | null = null;
   private readonly sockets = new Set<net.Socket>();
   private listening = false;
+  /** 이 서버가 만든 소켓의 식별자이다. 시작 실패나 주소 재사용 때 다른 서버의 파일을 지우지 않는다. */
+  private socketIdentity: { dev: number; ino: number } | null = null;
 
   constructor(
     private readonly env: HandlerEnvironment,
@@ -100,6 +102,10 @@ export class LocalChannelServer {
     server.on("error", (error) => this.env.logger.error(`Local-only channel error: ${error.message}`));
     this.server = server;
     this.listening = true;
+    if (process.platform !== "win32") {
+      const stat = fs.lstatSync(this.address);
+      this.socketIdentity = { dev: stat.dev, ino: stat.ino };
+    }
   }
 
   private inUseError(cause?: unknown): StartupError {
@@ -134,7 +140,19 @@ export class LocalChannelServer {
     }
     for (const socket of this.sockets) socket.destroy();
     this.server = null;
-    if (process.platform !== "win32") fs.rmSync(this.address, { force: true });
+    const identity = this.socketIdentity;
+    this.socketIdentity = null;
+    if (identity !== null) {
+      try {
+        const stat = fs.lstatSync(this.address);
+        if (stat.isSocket() && stat.dev === identity.dev && stat.ino === identity.ino) {
+          fs.rmSync(this.address, { force: true });
+        }
+      } catch (error) {
+        // Node.js가 close 때 이미 소켓 파일을 지웠으면 추가 정리가 필요 없다.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
   }
 
   /** 지금 이어진 접속 수이다. */

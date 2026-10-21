@@ -54,13 +54,24 @@ export function readLockFile(dataDir: string): LockFileContent | null {
   return parsed;
 }
 
-/** PID 의 프로세스가 살아 있는지 확인한다. 권한이 없어도 존재하면 참이다. */
+/** PID 의 프로세스가 살아 있는지 확인한다. Linux의 종료된 좀비는 제외하고, 권한이 없으면 보수적으로 참이다. */
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
   }
   try {
     process.kill(pid, 0);
+    if (process.platform === "linux") {
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+        // comm에는 공백과 괄호가 들어갈 수 있다. 마지막 닫는 괄호 뒤의 상태 필드만 읽는다.
+        const state = stat[stat.lastIndexOf(")") + 2];
+        if (state === "Z" || state === "X") return false;
+      } catch (error) {
+        if (isNotFoundError(error)) return false;
+        // /proc 접근이 제한된 환경에서는 kill(0)의 존재 판정을 유지한다.
+      }
+    }
     return true;
   } catch (error) {
     if (isErrnoError(error) && error.code === "EPERM") {

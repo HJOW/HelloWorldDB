@@ -22,6 +22,36 @@ function makeTempDir(): string {
   return createTempDir("hwdb-lock-");
 }
 
+test("Linux에서 부모가 아직 회수하지 않은 좀비 PID는 실행 중인 프로세스가 아니다", {
+  skip: process.platform !== "linux" ? "Linux /proc 전용 시험" : false,
+}, async () => {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => resolve());
+  });
+  const statPath = `/proc/${child.pid}/stat`;
+  const deadline = Date.now() + 10_000;
+  let zombie = false;
+  // 이벤트 루프를 잠시 멈춰 부모의 waitpid 전에 실제 좀비 상태를 관찰한다.
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    try {
+      const stat = fs.readFileSync(statPath, "utf8");
+      if (stat[stat.lastIndexOf(")") + 2] === "Z") { zombie = true; break; }
+    } catch { /* 자식이 /proc에 나타나기 전이면 다시 확인한다. */ }
+    Atomics.wait(wait, 0, 0, 10);
+  }
+  try {
+    assert.ok(zombie, "부모가 회수하기 전의 좀비를 관찰해야 한다");
+    assert.equal(isProcessAlive(child.pid as number), false);
+    assert.equal(isProcessAlive(process.pid), true);
+  } finally {
+    if (!zombie) child.kill();
+    await exited;
+  }
+});
+
 test("잠금을 잡으면 PID와 포트, 제어 토큰이 기록된다", () => {
   const dataDir = path.join(makeTempDir(), "data");
   const lock = acquireLock(dataDir, 7410);

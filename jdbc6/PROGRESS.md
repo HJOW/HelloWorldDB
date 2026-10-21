@@ -6,7 +6,8 @@ HelloWorldDB용 JDBC 4.0 드라이버를 개발하는 프로젝트이다. 자바
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-20
+- 최종 갱신 : 2026-10-21
+- **Linux 검증(2026-10-21)**: Debian 13.7 / Node.js 22.23.3 서버에서 실제 Linux Zulu JDK 6으로 빌드한 같은 JAR을 Java 6·7·8·21·25에서 실행했다. 빌드·API 15개, 기존 서버 255개, prepare·cancel 확장 85개, 독립 소비자 15개가 전부 통과·실패와 건너뜀 0이다. Java 6 TLSv1과 상위 JDK TLSv1.2·UDP 결함 주입을 포함한다. Windows 지정 경로와 기본 빌드 정책은 유지했다. 사용한 Linux 버전·환경 변수·명령은 [Linux 검증 기록](../rdbms/docs/linux-verification.md)을 따른다.
 - **Java 8 기본 후보 갱신** : 사용자 추가 지정에 따라 `C:\Program Files\Java\jdk1.8.0_202`를 사용한다. HWDB_JAVA8_HOME을 생략해도 이 경로를 찾도록 바꾸고 Java 6·7·8u202·21·25의 빌드·API 행렬 15개가 통과했다. 아래 기존 전체 서버 시험의 Java 8u504 기록은 앞선 검증이다.
 - **서버 prepare/describe·cancel 연동 완료**: 실행 전 결과·파라미터 메타데이터, UNKNOWN·바인딩 힌트, 서버 준비 문장 수명, 요청별 취소·질의 제한 시간·실행 중 close를 구현했다. 단일 수신 경로·ID별 응답 분배·UDP 송신 큐와 정상 종료 후 추가 read 제거를 jdbc8 공통 프로토콜에 동기화했다. 서버 NULL 바인딩 결함도 수정했다.
 - **사용자 지정 JDK**: Java 6 빌드·시험은 `C:\Program Files\Java\jdk1.6.0_45`, Java 7 시험은 `C:\Program Files\Java\jdk1.7.0_80`을 사용했다. 실제 버전은 1.6.0_45·1.7.0_80이다. Java 8u504·21.0.12.1은 임시 Zulu 배포본, Java 25는 기본 설치 런타임으로 시험했다.
@@ -14,7 +15,7 @@ HelloWorldDB용 JDBC 4.0 드라이버를 개발하는 프로젝트이다. 자바
 - 확정된 지원 기준 : 자바 6 이상에서 실행 가능한 JDBC 4.0. 프로젝트·폴더는 `jdbc6`, 패키지는 `org.duckdns.hjow.helloworlddb.jdbc6`이다 (AGENTS.md 상세 8-1).
 - 착수 조건 : 선행 프로젝트 완료와 사용자 작업 지시로 충족했다. 추가 지시에 따라 jdbc8 13-4와 jdbc6 14-4까지 진행했다. GUI 보류는 유지한다.
 - 최종 검증 : Windows / Node.js 22.23.3 / TypeScript 6.0.3. 기존 실제 서버 **255개**, 확장 API **85개**, 빌드·API 행렬 **15개**, 독립 소비자 **15개** 통과·실패와 건너뜀 0. Java 6 TLSv1과 Java 7 이상 TLSv1.2, TCP·UDP·유실/중복 UDP, 인증서 검증, NULL·뷰 메타데이터·배치·트랜잭션·취소·시간 제한·close를 확인했다.
-- 추가 검증 범위 : 리눅스·macOS, 실제 원격망과 장시간 부하는 아직 시험하지 않았다. 배포·릴리스 정책은 별도 작업이며 GUI 보류는 유지한다.
+- 추가 검증 범위 : Linux는 2026-10-21 완료했다. macOS, 실제 원격망과 장시간 부하는 아직 시험하지 않았다. 배포·릴리스 정책은 별도 작업이며 GUI 보류는 유지한다.
 - 구현·검증·README·진행 기록 갱신을 마쳤다. 재현 가능한 명령은 `npm run test:integration`, `test:extensions`, `test:matrix`, `test:consumer`이다.
 
 ## 서버 prepare/describe·cancel 연동
@@ -150,6 +151,8 @@ PowerShell에서 기본 PATH의 자바와 구분하여 실행한다.
 - DECIMAL/DEC/NUMERIC의 선언 인자를 모두 생략하면 (10,3), VARCHAR/NVARCHAR의 최대·기본 길이는 65,535이다. `jdbc8`과 같이 실제 컬럼 길이/정밀도/소수 자릿수는 서버 메타데이터를 따른다. [rdbms 타입 정책](../rdbms/docs/data-types.md)을 참고한다.
 
 ## 작업 이력
+
+- 2026-10-21 : Linux의 실제 JDK 6 빌드 JAR을 Java 6·7·8·21·25에서 실행했다. 빌드/API 15개·기존 서버 255개·확장 85개·독립 소비자 15개가 통과했다. TLSv1·TLSv1.2·UDP 결함 주입을 포함한다. Java 소스와 Windows 지정 경로는 바꾸지 않고 Linux 환경·결과를 기록했다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-20 : jdbc8 추가 작업에서 사용자 지정 Java 8u202를 기본 실행 후보로 반영하고 README·환경 기록을 갱신했다. Java 8 환경 변수 없이 실제 지정 경로를 찾는 빌드 행렬 15개가 모두 통과했다. JDBC6 Java 소스·공통 프로토콜은 바꾸지 않았으며 전체 네트워크 회귀는 이 경로 변경만으로 반복하지 않았다.
 

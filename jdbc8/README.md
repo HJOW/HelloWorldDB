@@ -108,7 +108,7 @@ try (PreparedStatement statement = connection.prepareStatement("SELECT ? AS CREA
 
 프로토콜 원본은 `../jdbc6/src/.../jdbc6/protocol`이며 `npm run sync:protocol`로 패키지 선언만 바꾸어 복사한다. 빌드는 두 코드의 일치를 검사한다. JDBC 계층은 각 프로젝트의 Java API 기준에 맞게 별도로 유지한다. 서버·UDP 결함 주입 시험 도우미는 `scripts/test-support.mjs`를 공유한다.
 
-2026-10-20 Windows에서 지정 Oracle JDK 8u202로 빌드한 같은 JAR을 Java 8u202·21.0.12.1에서 실행했다. Node.js 22.23.3 서버의 기존 130개·확장 50개·독립 소비자 6개가 모두 통과했다. 실제 JDK 6의 공유 코드 컴파일과 클래스 버전 52·프로토콜 동기화 검사도 통과했다. 13-5 자동 검증을 마쳤으며 DBeaver 등 범용 도구의 실제 등록·화면과 다른 OS 검증은 남아 있다. 자세한 기록은 [PROGRESS.md](PROGRESS.md)를 따른다.
+2026-10-20 Windows에서 지정 Oracle JDK 8u202로 빌드한 같은 JAR을 Java 8u202·21.0.12.1에서 실행했다. Node.js 22.23.3 서버의 기존 130개·확장 50개·독립 소비자 6개가 모두 통과했다. 실제 JDK 6의 공유 코드 컴파일과 클래스 버전 52·프로토콜 동기화 검사도 통과했다. 2026-10-21에는 Linux JDK 8 빌드의 Java 8·21에서도 같은 자동 시험을 통과했고 DBeaver 26.0.5에서 등록·접속·객체/컬럼 탐색·뷰 조회·잠금 대기 취소와 연결 재사용을 확인하여 13-5를 마쳤다. macOS·실제 원격망·장시간 부하는 추가 범위이다. 자세한 기록은 [PROGRESS.md](PROGRESS.md)와 [Linux 검증 기록](../rdbms/docs/linux-verification.md)을 따른다.
 
 `test:extensions`는 실행 없는 분석·힌트·반복 실행·해제·CPU/잠금 취소·질의 제한 시간·실행 중 close·구형 서버 호환을 TCP·TLS·UDP·유실/중복 UDP에서 시험한다. `test:consumer`는 저장소 시험 클래스를 제외하고 JAR만 복사한 앱을 실제 JDK 8로 컴파일하여 서비스 등록·접속·테이블/컬럼 메타데이터·JDBC4.2 바인딩을 확인한다.
 

@@ -71,7 +71,6 @@ export function askSecret(prompt: string, input: TerminalInput, output: TextOutp
       reject(new Error("The terminal does not support hidden input."));
       return;
     }
-    output.write(prompt);
     const wasRaw = input.isRaw === true;
     const value: string[] = [];
     let skipEscape = false;
@@ -119,6 +118,8 @@ export function askSecret(prompt: string, input: TerminalInput, output: TextOutp
     input.setRawMode(true);
     (input as { resume?: () => void }).resume?.();
     input.on("data", onData);
+    // 프롬프트를 본 즉시 붙여 넣어도 입력이 되울리지 않도록 원시 모드와 수신 처리를 먼저 준비한다.
+    output.write(prompt);
   });
 }
 

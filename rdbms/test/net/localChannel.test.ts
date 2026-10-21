@@ -3,6 +3,7 @@
  * 관련 사양 : AGENTS.md 상세 6, 8, 9, 14, 15
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import net from "node:net";
 import { test } from "node:test";
 import { Connection, connectionFailure, isConnectionRefused } from "../../src/client/connection.js";
@@ -69,6 +70,20 @@ function rowsOf(result: Awaited<ReturnType<Connection["execute"]>>): unknown[][]
   assert.equal(result.kind, "rows");
   return (result as RowsResult).rows;
 }
+
+test("옛 서버의 정리는 같은 유닉스 주소를 새로 쓰는 서버의 소켓을 지우지 않는다", {
+  skip: process.platform === "win32" ? "유닉스 소켓 파일 전용 시험" : false,
+}, async (t) => {
+  const fixture = await setup(t);
+  await fixture.server.stopAccepting();
+  const next = new LocalChannelServer(makeEnvironment(fixture.db), fixture.port);
+  await next.start();
+  t.after(() => next.closeConnections(0));
+  await fixture.server.closeConnections(0);
+  assert.ok(fs.statSync(getLocalChannelAddress(fixture.port)).isSocket());
+  const connection = await fixture.login();
+  assert.deepEqual(rowsOf(await connection.execute("SELECT 1")), [[1]]);
+});
 
 test("로컬 전용 채널로 로그인하고 Hello World 두 샘플을 실행한다", async (t) => {
   const fixture = await setup(t);

@@ -1,5 +1,7 @@
 # RDBMS·JDBC 후속 작업 인수인계 — 2026-10-20
 
+2026-10-21 추가: Linux 점검에서 소켓 정리·좀비 PID·비밀번호 입력 순서 결함을 수정하고 서버·드라이버·배포본·Konsole/PTY를 검증했다. 최신 환경·명령·결과는 [Linux 검증 기록](docs/linux-verification.md)과 각 PROGRESS.md를 따른다. 아래 Windows 지정 경로·결과는 당시 기록이다.
+
 사용자 재개 요청과 jdbc6·jdbc8 추가 작업을 완료했다. 서버 PD-1 ~ PD-5 및 PD-6의 서버·기존 드라이버 회귀, jdbc6 새 API·14-5와 jdbc8 새 API·13-5 자동 검증을 마쳤다. jdbc8 범용 DB툴의 실제 화면 검증은 남아 있다. 커밋·푸시는 하지 않았다.
 
 ## 사용자 지정 JDK와 시험 환경
@@ -43,7 +45,7 @@ Bun의 동시 UPDATE 값 보존 시험은 기본 30초 재시도 한도를 넘�
 
 1. PD-6의 ODBC 실행 전 메타데이터·SQLCancel·질의 제한 시간·진단 매핑 시험. 서버 의존성은 해소했으며 winodbc는 계획 단계이다.
 2. nodejsDriver·pythonDriver 공개 API의 prepare/describe·cancel 연동. JDBC6·JDBC8의 연동은 완료했다.
-3. Python PY-4 이후 TLS·UDP, jdbc8 13-5 범용 도구의 실제 등록·화면 검증. 자동 통합·메타데이터·독립 소비자는 완료했다.
-4. 리눅스·macOS·실제 원격망·장시간 부하. 복합 질의의 외부 정렬과 중간 메모리 제한은 별도 확장이다. GUI 보류는 유지한다.
+3. Python PY-4 이후 TLS·UDP. jdbc8 13-5는 2026-10-21 Linux DBeaver의 등록·탐색·조회·취소·재사용을 확인하여 완료했다.
+4. macOS·실제 원격망·장시간 부하. Linux는 2026-10-21 검증 기록을 따른다. 복합 질의의 외부 정렬과 중간 메모리 제한은 별도 확장이다. GUI 보류는 유지한다.
 
 재검증 때 HWDB_JAVA6_HOME·HWDB_JAVA7_HOME은 위 지정 경로, HWDB_JAVA8_HOME·HWDB_JAVA21_HOME은 임시 경로로 지정한다. HWDB_TEST_RUNTIME에 Node.js 22 경로를 넣고 jdbc6의 test:integration·test:extensions·test:matrix·test:consumer, jdbc8의 npm test·test:extensions·test:consumer를 실행한다. 서버와 각 드라이버의 PROGRESS.md에 세부 결과를 기록했다.
