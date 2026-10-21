@@ -7,12 +7,12 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 ## 현재 상태
 
 - 최종 갱신: 2026-10-21.
-- 진행 단계: **WO-0·WO-1 완료**. x86/x64의 Debug/Release DLL·직접 로드/예외/Manager 시험 EXE를 빌드했다. 접속·설치·ODBC 적합성은 후속이다.
-- 이번 작업: CMake 프리셋·SDK 기반 C ABI·아키텍처별 export·공통 예외 경계와 최소 ENV/진단, 재실행 빌드 스크립트·PE 검사를 추가했다. CTest 20개·교차 비트 수 거부 4개·PE 검사 4개·WO-0 10개가 통과했다. [README](README.md), [검증 기록](docs/verification.md)을 따른다.
-- 다음 작업: **WO-2 핸들·진단·문자열 공통 처리**. ENV 기반을 DBC/STMT/명시 DESC와 자동 ARD/APD/IRD/IPD로 확장하고, 다중 진단·DiagField·엄격한 UTF-8/UTF-16/ACP 변환과 길이 경계 시험을 구현한다. 현재 6개 export는 최소 경로만 구현되어 있다.
+- 진행 단계: **WO-0 ~ WO-6 완료**. 네이티브 TCP/SCRAM, User/System DSN 및 DSN 없는 접속, 직접/준비 SQL·실행 전 메타데이터·단일 파라미터·SQL escape·전진 fetch/바인딩·분할 수신·모든 DB 타입 getter를 구현했다. 전체 Core/3.8 적합성은 아직 미완료이다.
+- 이번 검증: HJOW-ATHLON / Windows 10 Pro x64 10.0.19045 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.3 / Node.js 24.21.0. x86/x64 Debug/Release **CTest 52개**, 그 안의 실제 서버/결함 주입 **19개 × 4구성 = 76개**, 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 10개 통과, 실패/건너뜀 0. 최신 증거는 `build/native/summary.json`(2026-10-21T12:52:08Z)과 구성별 로그/JUnit이다.
+- 다음 작업: **WO-7 descriptor·행/파라미터 배열·실행 시 데이터**. 자동/명시 ARD/APD/IRD/IPD의 필드/복사/공유, 단일 바인딩과 같은 내부 레코드를 쓰는 배열, NEED_DATA/ParamData/PutData/로컬 cancel을 구현한다. 이후 cancel/reset·전체 카탈로그·TLS/UDP·Setup/설치·범용 앱 인수까지 목표는 계속 활성 상태이다. WO-6의 현재 규칙과 제한은 [prepared-statements.md](docs/prepared-statements.md)에 기록했다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
 - 사용자 지시에 따라 이번 작업의 생성·변경 파일과 조회 결과는 모두 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지하고 이 문서에 최신 요약을 기록했다. 커밋·푸시는 하지 않는다.
-- 기존 프로토콜로 TCP 시제품은 만들 수 있다. 그러나 실행 전 결과 메타데이터와 실행 중 정상 취소를 검증하기 전에는 정식 ODBC Core 적합성 완료를 선언하지 않는다.
+- TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화를 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. 정상 취소·Core 완료는 후속이다.
 
 ## 1. 이 문서를 따라 작업하는 방법
 
@@ -86,10 +86,10 @@ winodbc/
 |---|---|---|
 | WO-0 | **완료**: 목표·API 지원표·서버 의존성 확정 | 문서 계약 검사 통과, ODBC 실행 시험과 구분 |
 | WO-1 | **완료**: x86/x64 Debug/Release DLL·시험 앱 | ABI·export·직접 로드·비트 수 거부 통과, 로그인 후속 |
-| WO-2 | 핸들·진단·문자열 공통 함수 | 오류 입력과 메모리 경계 시험 통과 |
-| WO-3 | TCP·JSON·SCRAM 프로토콜 코어 | 실제 서버의 저수준 왕복 성공 |
-| WO-4 | DSN 없는 접속·속성 | Driver Manager 경유 로그인·종료 성공 |
-| WO-5 | 직접 실행·fetch·타입 변환 | Hello World와 전 타입 왕복 성공 |
+| WO-2 | **완료**: 전체 핸들·다중 진단·문자열 | 네 구성 수명/경계/동시 해제 시험 통과 |
+| WO-3 | **완료**: TCP·JSON·SCRAM·저수준 왕복 | 네 구성 실제 서버·결함 주입·id 0·인증 경계 통과 |
+| WO-4 | **완료**: DSN/DSN 없는 접속·기본 속성 | 두 비트 수 Manager 로그인/종료·우선순위·원격 거부 통과 |
+| WO-5 | **완료**: 직접 실행·fetch·타입 변환 | Hello World·모든 타입·분할/메모리 경계·서버 커서 수명 통과 |
 | WO-6 | prepare/describe·단일 파라미터 | 실행 전 메타데이터·반복 실행 성공 |
 | WO-7 | descriptor·배열·실행 시 데이터 | 입력/출력 버퍼와 순서 상태 시험 통과 |
 | WO-8 | 트랜잭션·취소·시간 제한·초기화 | 취소 뒤 세션·트랜잭션 정합성 유지 |
@@ -133,13 +133,13 @@ winodbc/
 
 ### WO-2. 핸들·진단·문자열 공통 처리
 
-- [ ] WO-2.1: ENV → DBC → STMT와 DBC → 명시적 DESC 소유 관계를 만든다. STMT에는 자동 ARD/APD/IRD/IPD가 필요하다. 할당/해제는 SQLAllocHandle/SQLFreeHandle로 시작한다.
-- [ ] WO-2.2: 등록된 핸들의 종류·수명·부모 상태를 확인한 뒤 접근한다. 잘못된 임의 주소를 곧바로 C++ 객체로 역참조하지 않는다. 무효 핸들은 SQL_INVALID_HANDLE로 처리하고 무효 핸들에 진단을 저장하려 하지 않는다.
-- [ ] WO-2.3: 핸들마다 진단 레코드 목록을 둔다. SQLGetDiagRec/W·SQLGetDiagField/W, SQLSTATE 5자리, native error, 영문 메시지, 레코드 번호·필요 시 행/컬럼 번호를 구현한다.
-- [ ] WO-2.4: 일반 API가 이전 진단을 지우는 시점과 진단 조회 API가 지우지 않는 규칙을 표로 만든다. SQL_SUCCESS_WITH_INFO·SQL_NO_DATA·SQL_ERROR를 구분한다.
-- [ ] WO-2.5: UTF-8 ↔ UTF-16과 SQL_NTS/명시적 길이 처리를 공통 함수로 만든다. 입력에 NUL이 포함된 경우도 명시적 길이에 맞추어 다룬다. 깨진 UTF-8·짝이 없는 surrogate는 오류로 처리한다.
-- [ ] WO-2.6: W 함수의 길이를 일괄적으로 문자 수라고 가정하지 않는다. 함수/인자별 단위를 지원표에 적는다. SQLExecDirectW 텍스트 길이는 UTF-16 코드 단위, SQLGetInfoW 버퍼 길이와 SQLGetData 데이터 버퍼 길이는 바이트라는 차이를 시험한다. [Unicode 인자 규칙](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/unicode-function-arguments?view=sql-server-ver17).
-- [ ] WO-2.7: Unicode 드라이버 인식에 필요한 SQLConnectW를 포함한다. ANSI 호출은 Driver Manager의 매핑 또는 명시적 wrapper 경로를 정한다. 직접 구현할 때는 unsuffixed ANSI export도 고려하며 A 접미사만 내보내지 않는다. SQL_C_CHAR 바인딩 변환은 Unicode 드라이버가 담당한다. [Unicode 드라이버](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/unicode-drivers?view=sql-server-ver17).
+- [x] WO-2.1: ENV → DBC → STMT와 DBC → 명시적 DESC 소유 관계를 만든다. STMT에는 자동 ARD/APD/IRD/IPD가 필요하다. 할당/해제는 SQLAllocHandle/SQLFreeHandle로 시작한다.
+- [x] WO-2.2: 등록된 핸들의 종류·수명·부모 상태를 확인한 뒤 접근한다. 잘못된 임의 주소를 곧바로 C++ 객체로 역참조하지 않는다. 무효 핸들은 SQL_INVALID_HANDLE로 처리하고 무효 핸들에 진단을 저장하려 하지 않는다.
+- [x] WO-2.3: 핸들마다 진단 레코드 목록을 둔다. SQLGetDiagRec/W·SQLGetDiagField/W, SQLSTATE 5자리, native error, 영문 메시지, 레코드 번호·필요 시 행/컬럼 번호를 구현한다.
+- [x] WO-2.4: 일반 API가 이전 진단을 지우는 시점과 진단 조회 API가 지우지 않는 규칙을 표로 만든다. SQL_SUCCESS_WITH_INFO·SQL_NO_DATA·SQL_ERROR를 구분한다.
+- [x] WO-2.5: UTF-8 ↔ UTF-16과 SQL_NTS/명시적 길이 처리를 공통 함수로 만든다. 입력에 NUL이 포함된 경우도 명시적 길이에 맞추어 다룬다. 깨진 UTF-8·짝이 없는 surrogate는 오류로 처리한다.
+- [x] WO-2.6: W 함수의 길이를 일괄적으로 문자 수라고 가정하지 않는다. 함수/인자별 단위를 지원표에 적는다. SQLExecDirectW 텍스트 길이는 UTF-16 코드 단위, SQLGetInfoW 버퍼 길이와 SQLGetData 데이터 버퍼 길이는 바이트라는 차이를 시험한다. [Unicode 인자 규칙](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/unicode-function-arguments?view=sql-server-ver17).
+- [x] WO-2.7: Unicode 드라이버 인식에 필요한 SQLConnectW를 포함한다. ANSI 호출은 Driver Manager의 매핑 또는 명시적 wrapper 경로를 정한다. 직접 구현할 때는 unsuffixed ANSI export도 고려하며 A 접미사만 내보내지 않는다. SQL_C_CHAR 바인딩 변환은 Unicode 드라이버가 담당한다. [Unicode 드라이버](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/unicode-drivers?view=sql-server-ver17).
 
 필수 시험: 타입이 다른 핸들·해제 후 호출·부모보다 먼저 해제해야 하는 자식·NULL 출력 인자·음수 길이·길이 0·한글·emoji·정확히 맞는 버퍼·끝의 canary가 유지되는 버퍼. 진단 문자열이 잘릴 때에도 길이와 종료 문자가 맞아야 한다.
 
@@ -149,12 +149,12 @@ winodbc/
 
 이 단계는 ODBC 버퍼를 쓰지 않는 프로토콜 계층부터 시험한다.
 
-- [ ] WO-3.1: JSON 객체·배열·NULL·논리·문자열·숫자 코덱을 준비한다. 메시지의 타입·범위·깊이·Unicode·중복 필드 처리 정책을 검증한다. BIGINT·NUMERIC·날짜시간은 명세대로 문자열이다.
-- [ ] WO-3.2: Winsock TCP에서 4바이트 big-endian 본문 길이를 처리한다. 부분 send/recv, 여러 프레임의 합쳐진 수신, 인증 전 64KiB·후 16MiB 한도를 메모리 할당 전에 검사한다.
-- [ ] WO-3.3: hello → authStart → authFinish → READY 상태를 구현한다. 버전·메커니즘·nonce·반복수 1~10,000,000·서버 서명을 확인한다. 비밀번호 NFKC 정규화는 기존 서버와 동일하게 한다.
-- [ ] WO-3.4: 요청 id 증가와 응답 짝짓기, id 0의 서버 종료/유휴 오류, 일반 문장 오류와 연결 종료 오류를 구분한다. 서버가 모르는 선택 필드와 알려지지 않은 응답 종류를 혼동하지 않는다.
-- [ ] WO-3.5: execute/fetch/closeCursor/ping/close를 구현하고 SQLSTATE·native error를 보존한다. 오류 뒤 같은 연결을 계속 쓸 수 있는지 구분한다.
-- [ ] WO-3.6: 임시 config·data/log 디렉토리·빈 TCP/UDP 포트로 실제 서버를 띄우는 시험 도우미를 만든다. 서버를 정상 종료한 뒤 디렉토리를 지운다. PID만 보고 다른 프로세스를 종료하지 않는다.
+- [x] WO-3.1: JSON 객체·배열·NULL·논리·문자열·숫자 코덱을 준비한다. 메시지의 타입·범위·깊이·Unicode·중복 필드 처리 정책을 검증한다. BIGINT·NUMERIC·날짜시간은 명세대로 문자열이다.
+- [x] WO-3.2: Winsock TCP에서 4바이트 big-endian 본문 길이를 처리한다. 부분 send/recv, 여러 프레임의 합쳐진 수신, 인증 전 64KiB·후 16MiB 한도를 메모리 할당 전에 검사한다.
+- [x] WO-3.3: hello → authStart → authFinish → READY 상태를 구현한다. 버전·메커니즘·nonce·반복수 1~10,000,000·서버 서명을 확인한다. 비밀번호 NFKC 정규화는 기존 서버와 동일하게 한다.
+- [x] WO-3.4: 요청 id 증가와 응답 짝짓기, id 0의 서버 종료/유휴 오류, 일반 문장 오류와 연결 종료 오류를 구분한다. 서버가 모르는 선택 필드와 알려지지 않은 응답 종류를 혼동하지 않는다.
+- [x] WO-3.5: execute/fetch/closeCursor/ping/close를 구현하고 SQLSTATE·native error를 보존한다. 오류 뒤 같은 연결을 계속 쓸 수 있는지 구분한다.
+- [x] WO-3.6: 임시 config·data/log 디렉토리·빈 TCP/UDP 포트로 실제 서버를 띄우는 시험 도우미를 만든다. 서버를 정상 종료한 뒤 디렉토리를 지운다. PID만 보고 다른 프로세스를 종료하지 않는다.
 
 필수 시험: 올바른/틀린 비밀번호, 버전 불일치, 위조 서버 서명, 잘못된 UTF-8·프레임 길이·응답 id, 중간 끊김, 기본 테이블스페이스 null, fetch 여러 묶음. 비밀번호·SCRAM 비밀키가 로그에 없어야 한다.
 
@@ -162,12 +162,12 @@ winodbc/
 
 ### WO-4. Driver Manager 경유 접속과 속성
 
-- [ ] WO-4.1: SQLConnect/W, SQLDriverConnect/W, SQLDisconnect, ENV/DBC 속성 get/set을 연결한다. 우선 SQL_DRIVER_NOPROMPT의 DSN 없는 경로를 완성한다.
-- [ ] WO-4.2: 연결 문자열 파서를 만든다. 키의 대소문자·공백·중복·빈 값·중괄호로 감싼 값과 이스케이프를 ODBC 연결 문자열 규칙에 맞추어 처리한다. 단순히 세미콜론 split만 하지 않는다.
-- [ ] WO-4.3: 아래 연결 속성을 파싱·검증하고 명시 속성 > DSN > 기본값 순서를 정한다. `DSN`은 설정 이름이며 서버의 SID나 DB 이름이 아니다.
-- [ ] WO-4.4: 접속·재접속·접속 중인 핸들에 중복 로그인·연결하지 않은 핸들의 실행을 상태표대로 처리한다. SQL_ATTR_LOGIN_TIMEOUT의 단위는 초이고 내부 ms 변환의 오버플로를 검사한다.
-- [ ] WO-4.5: SQL_ATTR_CURRENT_CATALOG를 테이블스페이스 변경으로 오용하지 않는다. 테이블스페이스는 Tablespace 속성/USE로 다루고 카탈로그가 없다는 사실을 메타데이터와 일치시킨다.
-- [ ] WO-4.6: 출력 연결 문자열·진단·추적에서 PWD를 제거하거나 가린다. 지원하지 않는 UI 모드를 임의로 성공시키지 않고, WO-12에서 실제 prompting 경로를 추가한다.
+- [x] WO-4.1: SQLConnect/W, SQLDriverConnect/W, SQLDisconnect, ENV/DBC 속성 get/set을 연결한다. 우선 SQL_DRIVER_NOPROMPT의 DSN 없는 경로를 완성한다.
+- [x] WO-4.2: 연결 문자열 파서를 만든다. 키의 대소문자·공백·중복·빈 값·중괄호로 감싼 값과 이스케이프를 ODBC 연결 문자열 규칙에 맞추어 처리한다. 단순히 세미콜론 split만 하지 않는다.
+- [x] WO-4.3: 아래 연결 속성을 파싱·검증하고 명시 속성 > DSN > 기본값 순서를 정한다. `DSN`은 설정 이름이며 서버의 SID나 DB 이름이 아니다.
+- [x] WO-4.4: 접속·재접속·접속 중인 핸들에 중복 로그인·연결하지 않은 핸들의 실행을 상태표대로 처리한다. SQL_ATTR_LOGIN_TIMEOUT의 단위는 초이고 내부 ms 변환의 오버플로를 검사한다.
+- [x] WO-4.5: SQL_ATTR_CURRENT_CATALOG를 테이블스페이스 변경으로 오용하지 않는다. 테이블스페이스는 Tablespace 속성/USE로 다루고 카탈로그가 없다는 사실을 메타데이터와 일치시킨다.
+- [x] WO-4.6: 출력 연결 문자열·진단·추적에서 PWD를 제거하거나 가린다. 지원하지 않는 UI 모드를 임의로 성공시키지 않고, WO-12에서 실제 prompting 경로를 추가한다.
 
 연결 문자열 예시 기본안:
 
@@ -190,14 +190,14 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 
 ### WO-5. 직접 실행·결과·타입 변환
 
-- [ ] WO-5.1: SQLExecDirect/W, SQLNumResultCols, SQLRowCount, SQLDescribeCol/W, SQLColAttribute/W를 실행 후 결과에 연결한다. SELECT와 rows가 없는 문장을 구분한다.
-- [ ] WO-5.2: SQLFetch와 SQLFetchScroll(SQL_FETCH_NEXT), SQLCloseCursor, SQLFreeStmt의 CLOSE/UNBIND/RESET_PARAMS/DROP 의미를 구현한다. STMT 재실행·해제에서 자신의 커서를 정리한다.
-- [ ] WO-5.2a: SQLGetCursorName/W·SQLSetCursorName/W의 이름 생성·명시 이름·길이·중복·호출 상태를 구현한다. 이름을 붙이는 기능과 positioned UPDATE/DELETE 지원은 구분한다.
-- [ ] WO-5.3: 한 번에 하나의 서버 fetch 묶음을 보관하고 행 위치를 관리한다. 마지막 행, 결과 없음, fetch 후 SQL_NO_DATA, 커밋·롤백 후에도 읽을 수 있는 결과를 시험한다.
-- [ ] WO-5.4: SQLBindCol의 버퍼·타입·길이·indicator 주소를 보관하고 fetch할 때 실제 값을 쓴다. NULL은 SQL_NULL_DATA로 표시하고 indicator가 없으면 22002 같은 표준 오류를 낸다. 빈 문자열은 NULL과 다르다.
-- [ ] WO-5.5: SQLGetData의 긴 문자/이진 값을 여러 번 읽는 위치를 컬럼별로 관리한다. 중간 01004 경고, 마지막 성공, 그 다음 SQL_NO_DATA, 다음 행에서 위치 초기화를 구현한다.
-- [ ] WO-5.6: 지원하는 SQL_GETDATA_EXTENSIONS를 먼저 정한다. 초기에는 row array size 1·증가하는 unbound 컬럼 순서의 기본 규칙을 구현하고, ANY_COLUMN/ANY_ORDER/BOUND/BLOCK을 시험 없이 광고하지 않는다.
-- [ ] WO-5.7: 아래 타입 표와 공식 변환표를 따라 getter 변환을 구현한다. 데이터의 범위 초과와 앱 수신 버퍼의 잘림을 구분한다. 고정 크기 C 타입은 ODBC의 규정된 크기로 쓰며 BufferLength를 문자열처럼 해석하지 않는다. [SQLGetData](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function?view=sql-server-ver17), [SQL→C 변환](https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types?view=sql-server-ver17).
+- [x] WO-5.1: SQLExecDirect/W, SQLNumResultCols, SQLRowCount, SQLDescribeCol/W, SQLColAttribute/W를 실행 후 결과에 연결한다. SELECT와 rows가 없는 문장을 구분한다.
+- [x] WO-5.2: SQLFetch와 SQLFetchScroll(SQL_FETCH_NEXT), SQLCloseCursor, SQLFreeStmt의 CLOSE/UNBIND/RESET_PARAMS/DROP 의미를 구현한다. STMT 재실행·해제에서 자신의 커서를 정리한다.
+- [x] WO-5.2a: SQLGetCursorName/W·SQLSetCursorName/W의 이름 생성·명시 이름·길이·중복·호출 상태를 구현한다. 이름을 붙이는 기능과 positioned UPDATE/DELETE 지원은 구분한다.
+- [x] WO-5.3: 한 번에 하나의 서버 fetch 묶음을 보관하고 행 위치를 관리한다. 마지막 행, 결과 없음, fetch 후 SQL_NO_DATA, 커밋·롤백 후에도 읽을 수 있는 결과를 시험한다.
+- [x] WO-5.4: SQLBindCol의 버퍼·타입·길이·indicator 주소를 보관하고 fetch할 때 실제 값을 쓴다. NULL은 SQL_NULL_DATA로 표시하고 indicator가 없으면 22002 같은 표준 오류를 낸다. 빈 문자열은 NULL과 다르다.
+- [x] WO-5.5: SQLGetData의 긴 문자/이진 값을 여러 번 읽는 위치를 컬럼별로 관리한다. 중간 01004 경고, 마지막 성공, 그 다음 SQL_NO_DATA, 다음 행에서 위치 초기화를 구현한다.
+- [x] WO-5.6: 지원하는 SQL_GETDATA_EXTENSIONS를 먼저 정한다. 초기에는 row array size 1·증가하는 unbound 컬럼 순서의 기본 규칙을 구현하고, ANY_COLUMN/ANY_ORDER/BOUND/BLOCK을 시험 없이 광고하지 않는다.
+- [x] WO-5.7: 아래 타입 표와 공식 변환표를 따라 getter 변환을 구현한다. 데이터의 범위 초과와 앱 수신 버퍼의 잘림을 구분한다. 고정 크기 C 타입은 ODBC의 규정된 크기로 쓰며 BufferLength를 문자열처럼 해석하지 않는다. [SQLGetData](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function?view=sql-server-ver17), [SQL→C 변환](https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types?view=sql-server-ver17).
 
 필수 시험: SELECT 'Hello World', CRUD 영향 행 수, fetchSize 1/3/500, 16개 커서 한도·조기 닫기, 모든 타입·NULL·한글/emoji·긴 VARCHAR·binary 0x00, 작은 앱 버퍼에서 분할 수신 후 원문 재구성.
 
@@ -207,13 +207,13 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 
 선행 조건: WO-5와 서버 PD-1 ~ PD-3. 서버가 기능을 광고하지 않는 경우의 시제품 경로와 정식 지원 경로를 구분한다.
 
-- [ ] WO-6.1: SQLPrepare/W로 SQL을 저장·준비하고 SQLExecute로 실행한다. `?`의 개수를 문자열·큰따옴표 식별자·줄/블록 주석 안의 물음표와 구분한다. SQLNumParams를 제공한다.
-- [ ] WO-6.2: 서버가 확정한 prepare/describe/executePrepared/해제 요청을 연결한다. 실행 전 결과 컬럼·개수와 결과 없음·타입 미정을 구분한다.
-- [ ] WO-6.3: SQLBindParameter의 ParameterNumber, InputOutputType, ValueType, ParameterType, ColumnSize, DecimalDigits, BufferLength, indicator를 저장한다. SQL 타입과 C 메모리 타입을 같은 값으로 보지 않는다.
-- [ ] WO-6.4: 바인딩한 버퍼는 실행 시 읽는다. 바인딩 직후 값을 복사해 고정하면 앱이 버퍼를 바꾼 뒤 재실행할 때 틀릴 수 있다. 문자열·NULL·binary·정수·정확한 소수를 wire Param으로 변환한다.
-- [ ] WO-6.5: 타입 힌트를 필요로 하는 SELECT ?는 바인딩 정보 또는 명시적 CAST로 재분석한다. SQLDescribeParam은 확실한 정보가 있을 때만 제공하고, 모르면 미지원으로 보고한다. SQLNumParams와 SQLDescribeParam을 혼동하지 않는다. [파라미터 설명의 한계](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/describing-parameters?view=sql-server-ver17).
-- [ ] WO-6.6: 준비 문장 해제·STMT 재준비·연결 종료·권한 회수·객체 변경 뒤의 상태를 처리한다. 준비 시 허용되었다는 이유로 실행 권한 검사를 생략하지 않는다.
-- [ ] WO-6.7: SQL_ATTR_NOSCAN과 SQLNativeSql/W, 날짜/시간 escape 등 지원할 ODBC SQL escape 범위를 문서화한다. 지원하지 않는 escape를 원문 그대로 보내고 변환 완료라고 알리지 않는다.
+- [x] WO-6.1: SQLPrepare/W로 SQL을 저장·준비하고 SQLExecute로 실행한다. `?`의 개수를 문자열·큰따옴표 식별자·줄/블록 주석 안의 물음표와 구분한다. SQLNumParams를 제공한다.
+- [x] WO-6.2: 서버가 확정한 prepare/describe/executePrepared/해제 요청을 연결한다. 실행 전 결과 컬럼·개수와 결과 없음·타입 미정을 구분한다.
+- [x] WO-6.3: SQLBindParameter의 ParameterNumber, InputOutputType, ValueType, ParameterType, ColumnSize, DecimalDigits, BufferLength, indicator를 저장한다. SQL 타입과 C 메모리 타입을 같은 값으로 보지 않는다.
+- [x] WO-6.4: 바인딩한 버퍼는 실행 시 읽는다. 바인딩 직후 값을 복사해 고정하면 앱이 버퍼를 바꾼 뒤 재실행할 때 틀릴 수 있다. 문자열·NULL·binary·정수·정확한 소수를 wire Param으로 변환한다.
+- [x] WO-6.5: 타입 힌트를 필요로 하는 SELECT ?는 바인딩 정보 또는 명시적 CAST로 재분석한다. SQLDescribeParam은 확실한 정보가 있을 때만 제공하고, 모르면 미지원으로 보고한다. SQLNumParams와 SQLDescribeParam을 혼동하지 않는다. [파라미터 설명의 한계](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/describing-parameters?view=sql-server-ver17).
+- [x] WO-6.6: 준비 문장 해제·STMT 재준비·연결 종료·권한 회수·객체 변경 뒤의 상태를 처리한다. 준비 시 허용되었다는 이유로 실행 권한 검사를 생략하지 않는다.
+- [x] WO-6.7: SQL_ATTR_NOSCAN과 SQLNativeSql/W, 날짜/시간 escape 등 지원할 ODBC SQL escape 범위를 문서화한다. 지원하지 않는 escape를 원문 그대로 보내고 변환 완료라고 알리지 않는다.
 
 필수 시험: INSERT를 prepare/describe만 했을 때 데이터가 늘지 않음, 수동 트랜잭션이 commit되지 않음, 실행 전 SELECT 메타데이터, 버퍼 값 변경 후 2회 실행, 따옴표/주석의 ?, 미바인딩/범위 밖 인덱스, 한 번 준비 후 GRANT/REVOKE·ALTER.
 
@@ -418,6 +418,12 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
 
 ## 작업 이력
+
+- 2026-10-21: WO-6의 7개 항목을 완료했다. SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter·NativeSql/W의 8개 export를 추가해 총 51개가 되었다. 서버 capability·UNKNOWN/CAST/바인딩 힌트, 실행 시 앱 버퍼 읽기·정확한 38자리 소수·binary/NULL/날짜시간/offset/13개 INTERVAL, SQL escape/NOSCAN, 준비/설명의 무부작용·미커밋 변경 보존·70회 재준비/해제·권한 회수·DDL 무효화를 실제 Manager로 검증했다. C→SQL의 문자 숫자 손실 22001·날짜시간 손실 22008·INTERVAL 손실 22015와 숫자 C 입력의 선택적 01S07을 getter와 구분했다. x86 NativeSql/W의 stdcall 장식 크기 오류를 수정했다. 네 구성 CTest 52개(내부 Node 76개), 교차 로드 4개·PE 4개·문서/환경 10개가 통과했고 실패/건너뜀은 0이다. WO-7부터 전체 목표는 계속 진행하며 변경·생성물은 winodbc 안에만 두었다. 커밋·푸시는 하지 않았다.
+
+- 2026-10-21: WO-3 ~ WO-5를 완료했다. 응답 스키마/id 0/인증 후 전이, DSN 읽기와 속성 우선순위, 직접 SQL·메타데이터·기본 바인딩·분할 수신·모든 DB 타입/13개 INTERVAL·커서 이름/수명과 종료 시 자식 무효화를 추가했다. 원격 CONNECT 거부와 fetchSize 1/3/500을 실제 Manager/서버로 확인했다. 네 구성 CTest 44개(내부 Node 76개), 교차 로드 4개·PE 4개·문서/환경 10개 통과, 실패/건너뜀 0이다. SDK x86 SQLColAttribute 원형 차이를 수정했고 해제된 Manager 포인터의 재사용과 드라이버 토큰 검증을 구분했다. WO-6 SQL escape 독립 초안은 아직 미연결/미시험이며 준비 문장·파라미터 구현부터 계속해야 한다. 전체 목표는 미완료·활성 상태이고 변경/생성물은 winodbc 안에만 두었다. 커밋·푸시는 하지 않았다.
+
+- 2026-10-21: 전체 완료 목표를 시작했다. HJOW-ATHLON에서 도구를 재조회하고 다중 VS/SDK 레지스트리 조회 문제를 수정했다. WO-2의 전체 핸들·진단·엄격한 Unicode/ACP를 완료하고 WO-3 TCP/JSON/CNG SCRAM 및 WO-4 DSN 없는 ODBC 접속을 구현했다. x86/x64 Debug/Release CTest 40개(내부 Node 통합 64개), 교차 거부 4개·PE 4개·문서/환경 10개가 통과했다. 실제 서버 저수준 왕복과 격리 레지스트리의 Driver Manager 로그인을 구분해 기록했다. WO-3/4 잔여 검증과 WO-5 이후 구현은 계속 진행해야 하며 전체 완료로 표시하지 않았다. 변경·임시 서버·증거는 winodbc 안에만 두었고 커밋·푸시는 하지 않았다.
 
 - 2026-10-21: 다음 단계 WO-1의 6개 항목을 완료했다. x86/x64 Debug/Release DLL·시험 앱, C ABI/export·정적 CRT·예외 경계·최소 ENV/진단과 자동 검증을 추가했다. CTest 20개·비트 수 거부 4개·PE 4개·문서/환경 10개가 통과했다. WO-2 전체 핸들·진단·문자열 처리를 다음 작업으로 기록했다. 모든 변경·생성물은 winodbc 내부이며 커밋·푸시는 하지 않았다.
 

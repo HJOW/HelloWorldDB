@@ -1,8 +1,53 @@
 LIBRARY hwdbodbc
 EXPORTS
+    SQLPrepare
+    SQLPrepareW
+    SQLExecute
+    SQLNumParams
+    SQLDescribeParam
+    SQLBindParameter
+    SQLNativeSql
+    SQLNativeSqlW
     SQLAllocHandle
     SQLFreeHandle
     SQLSetEnvAttr
     SQLGetEnvAttr
     SQLGetDiagRec
     SQLGetDiagRecW
+    SQLGetDiagField
+    SQLGetDiagFieldW
+    SQLGetStmtAttr
+    SQLGetStmtAttrW
+    SQLConnect
+    SQLConnectW
+    SQLDriverConnect
+    SQLDriverConnectW
+    SQLGetConnectAttr
+    SQLGetConnectAttrW
+    SQLSetConnectAttr
+    SQLSetConnectAttrW
+    SQLDisconnect
+    SQLGetInfo
+    SQLGetInfoW
+    SQLGetFunctions
+    SQLExecDirect
+    SQLExecDirectW
+    SQLNumResultCols
+    SQLRowCount
+    SQLDescribeCol
+    SQLDescribeColW
+    SQLColAttribute
+    SQLColAttributeW
+    SQLBindCol
+    SQLFetch
+    SQLFetchScroll
+    SQLGetData
+    SQLCloseCursor
+    SQLFreeStmt
+    SQLMoreResults
+    SQLGetCursorName
+    SQLGetCursorNameW
+    SQLSetCursorName
+    SQLSetCursorNameW
+    SQLSetStmtAttr
+    SQLSetStmtAttrW

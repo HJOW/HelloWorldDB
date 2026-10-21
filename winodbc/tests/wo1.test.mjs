@@ -8,6 +8,14 @@ import test from 'node:test';
 const project = fileURLToPath(new URL('../', import.meta.url));
 const expectedExports = [
   'SQLAllocHandle', 'SQLFreeHandle', 'SQLGetDiagRec', 'SQLGetDiagRecW', 'SQLGetEnvAttr', 'SQLSetEnvAttr',
+  'SQLGetDiagField', 'SQLGetDiagFieldW', 'SQLGetStmtAttr', 'SQLGetStmtAttrW', 'SQLConnect', 'SQLConnectW',
+  'SQLDriverConnect', 'SQLDriverConnectW', 'SQLGetConnectAttr', 'SQLGetConnectAttrW', 'SQLSetConnectAttr', 'SQLSetConnectAttrW',
+  'SQLDisconnect', 'SQLGetInfo', 'SQLGetInfoW', 'SQLGetFunctions',
+  'SQLExecDirect', 'SQLExecDirectW', 'SQLNumResultCols', 'SQLRowCount', 'SQLDescribeCol', 'SQLDescribeColW',
+  'SQLColAttribute', 'SQLColAttributeW', 'SQLBindCol', 'SQLFetch', 'SQLFetchScroll', 'SQLGetData', 'SQLCloseCursor',
+  'SQLFreeStmt', 'SQLMoreResults', 'SQLGetCursorName', 'SQLGetCursorNameW', 'SQLSetCursorName', 'SQLSetCursorNameW',
+  'SQLSetStmtAttr', 'SQLSetStmtAttrW',
+  'SQLPrepare', 'SQLPrepareW', 'SQLExecute', 'SQLNumParams', 'SQLDescribeParam', 'SQLBindParameter', 'SQLNativeSql', 'SQLNativeSqlW',
 ].sort();
 
 function readPe(filename) {

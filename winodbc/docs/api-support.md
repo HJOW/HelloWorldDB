@@ -1,14 +1,24 @@
-# ODBC 지원 계약 — WO-0/WO-1
+# ODBC 지원 계약
 
-**아래 표는 최종 목표와 검증 의무이다.** WO-1에서 6개 export의 최소 ABI 경로만 구현했다. SQLGetFunctions/SQLGetInfo의 실제 지원 광고는 해당 단계의 호출 시험이 통과한 뒤에만 켠다. DLL 생성·직접 호출·Manager 경유·실제 서버·범용 앱의 증거를 합치지 않는다.
+**뒤의 전체 표는 최종 목표와 검증 의무이다.** 현재 구현은 다음 표와 [검증 기록](verification.md)을 따른다. DLL 생성·직접 호출·Manager 경유·실제 서버·범용 앱의 증거를 합치지 않는다. 3.8/Core 적합성은 아직 완료하지 않았다.
 
-| 현재 export | WO-1에서 직접 시험한 범위 | 남은 범위 |
+| 현재 export | 구현·시험 범위 | 남은 범위 |
 |---|---|---|
-| SQLAllocHandle / SQLFreeHandle | ENV 할당·해제, 무효/종류 불일치/해제 후 핸들, NULL 출력 | DBC/STMT/DESC·부모/자식 관계·동시 수명 WO-2/7 |
-| SQLSetEnvAttr / SQLGetEnvAttr | ENV의 ODBC 버전 2/3/3.8 값·OUTPUT_NTS TRUE, 잘못된 버전 HY024 | DBC 이후 버전 변경 제한·Manager 매핑·완전한 버전 적합성 WO-4/8 |
-| SQLGetDiagRec / SQLGetDiagRecW | ENV의 고정 크기 영문 단일 레코드, W 코드 단위 길이, 잘림·NUL·canary·반복 조회 | 모든 핸들·다중 레코드·DiagField·일반 Unicode/ACP WO-2 |
+| SQLAllocHandle / SQLFreeHandle | ENV/DBC/STMT/명시 DESC·네 자동 DESC·부모/자식·무효/해제 후·동시 조회/해제 | 실행 중 해제·descriptor 공유/교체 WO-7/8 |
+| SQLSetEnvAttr / SQLGetEnvAttr | ODBC 2/3/3.8·OUTPUT_NTS, DBC 할당 이후 버전 변경 거부 | 전체 버전 적합성 WO-13 |
+| SQLGetDiagRec/W·SQLGetDiagField/W | 모든 핸들·다중 Unicode 레코드·header·행/컬럼·native·서로 다른 W 길이·진단 수명 | 실제 DML 배열 진단 WO-7 |
+| SQLConnect/W | 엄격한 문자열 입력, User/System DSN 로그인·명시 값 우선·원격 CONNECT 거부 | 설정 UI/등록 WO-12 |
+| SQLDriverConnect/W·SQLDisconnect | TCP·NOPROMPT·DSN 없는 로그인/종료, 엄격한 연결 문자열·암호 제거 | prompting·DSN·다른 전송 WO-10/11/12 |
+| SQLGet/SetConnectAttr/W | login/connection timeout·autocommit·metadata id·access mode·격리·dead·catalog 없음·quiet mode | reset·실행 시간 제한·풀 WO-8 |
+| SQLGet/SetStmtAttr/W | 네 자동 descriptor·전진/읽기 전용·최대 행·단일 행 바인딩/offset·상태/처리 수 | descriptor 공유/배열·실행 취소 시간 제한 WO-7/8 |
+| SQLExecDirect/W·NumResultCols·RowCount·DescribeCol/W·ColAttribute/W | 조회/DML·실행 전 메타데이터·실제 타입/정밀도·한글 이름·W 길이·영향 행 수 | 전체 정보 필드 감사 WO-9 |
+| SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter | 서버 준비/설명/실행/해제·UNKNOWN/힌트·단일 INPUT·실행 시 앱 버퍼 읽기 | descriptor 자동 IPD·배열·실행 시 데이터 WO-7 |
+| SQLNativeSql/W | 날짜시간·함수·outer join·LIKE escape의 실행 없는 변환·NOSCAN | CALL/GUID escape 미지원 |
+| SQLBindCol·Fetch·FetchScroll(NEXT)·GetData | 단일 행·실제 앱 주소·NULL·정확한 38자리 소수/64비트·날짜시간·13개 INTERVAL·문자/이진 분할 | 행 배열·추가 descriptor 연동 WO-7 |
+| SQLCloseCursor·FreeStmt·MoreResults·Get/SetCursorName/W | 서버 커서/준비 자원 정리·모든 FreeStmt 옵션·단일 결과 종료·자동/명시/인용 커서 이름 | positioned DML 미지원 |
+| SQLGetInfo/W·SQLGetFunctions | 제품명·기본 문자열 정보·실제 구현 함수의 단일/배열/ODBC3 비트맵 | 전체 정보/함수 감사 WO-9/13 |
 
-DBC 할당은 HY000(`Connection handles are not implemented in this prototype.`)으로 실패하며 연결 성공 스텁은 없다. 공통 예외 경계는 `bad_alloc`을 HY001, 나머지 C++ 예외를 HY000으로 매핑하고 메시지 저장에 추가 할당을 하지 않는다. ENV 자체의 할당 실패에는 진단 핸들이 없으므로 SQL_ERROR만 반환한다. 예외 주입은 같은 경계 템플릿의 네이티브 단위 시험에서 수행했으며 실제 할당기 고갈·전체 T-DIAG 완료의 증거는 아니다. SQLConnectW는 WO-2/4 이후 추가하므로 현재 DLL은 Unicode 드라이버 접속을 제공하지 않는다. [WO-1 검증](verification.md).
+고정 비상 진단으로 bad_alloc→HY001, 예상 밖 예외→HY000을 처리한다. 정상 레코드는 가변 길이 목록을 사용한다. ENV 할당 자체의 실패는 진단 핸들이 없어 SQL_ERROR이다. [상태·잠금·문자열 구현](state-machines.md)을 따른다. SQL_DRIVER_ODBC_VER는 현재 `03.00`으로 유지하며, 3.8 앱의 Manager 경로에서 버전 경고가 붙을 수 있다. 속성 미지원은 성공으로 무시하지 않는다.
 
 ODBC 3.8을 목표로 하며, [Core 목록](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/core-interface-conformance?view=sql-server-ver17)과 [함수별 분류](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/function-conformance?view=sql-server-ver17)를 확인했다. 입력 배열·실행 시 데이터·descriptor·다중 스레드 취소를 완료 기준에 포함한다. 아래의 호출 형태·오류 선택은 이 프로젝트의 구현 계약이며 함수별 공식 진단표를 각 구현 단계에서 재확인한다.
 
@@ -45,7 +55,7 @@ ODBC 3.8을 목표로 하며, [Core 목록](https://learn.microsoft.com/en-us/sq
 | SQLNativeSql | B/W | SQL escape WO-6 | 지원 escape만 변환, SQL 실행 안 함 | 01004, HYC00 | T-ESCAPE |
 | SQLNumResultCols | B | 메타데이터 WO-5/6 | P/R/U, 결과 없음은 0 | HY010 | T-META |
 | SQLRowCount | B | 결과 WO-5 | DML 영향 수, 조회 미확정은 -1 | HY010 | T-EXEC |
-| SQLDescribeCol | B/W | 메타데이터 WO-5/6 | 결과 컬럼 1부터, 준비 후 실행 전도 동일 | 07009, HYC00(UNKNOWN), 01004 | T-META |
+| SQLDescribeCol | B/W | 메타데이터 WO-5/6 | 결과 컬럼 1부터, 준비 후 실행 전도 동일; 미정은 SQL_UNKNOWN_TYPE | 07009, 01004 | T-META |
 | SQLColAttribute | B/W | 메타데이터 WO-5/6/9 | IRD 필드; 수치와 문자열 출력 구분 | HY091, 07009, 01004 | T-META |
 | SQLBindCol | B | 바인딩 WO-5/7 | ARD 바인딩/해제, 열·행 중심 배열 | HY003, 07009 | T-ROWSET |
 | SQLFetch | B | 커서 WO-5/7 | R/F→F/Z, 전진 행 묶음 | 24000, 01004, SQL_NO_DATA | T-ROWSET |

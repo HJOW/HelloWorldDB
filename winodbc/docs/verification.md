@@ -1,4 +1,64 @@
-# WO-0·WO-1 검증과 후속 시험
+# 검증 기록과 후속 시험
+
+## HJOW-ATHLON — WO-2·TCP·ODBC 접속 구현 검증
+
+2026-10-21, Windows 10 Pro x64 10.0.19045, MSVC 19.44.35229.0/v143, Windows SDK 10.0.26100.0, CMake/CTest 4.4.3, 개발용/실제 시험 서버 Node.js 24.21.0. 설치 조회의 절대 경로와 이전 호스트와의 차이는 [환경](environment.md)에 기록했다.
+
+실행 명령은 저장소 루트의 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`이다. 최신 로그·JUnit·dumpbin·요약은 `build/native/`, 환경은 `build/wo0/environment.json`이다.
+
+| 구성 | CTest | 그 안의 Node 통합 시험 | Manager → 드라이버 → 서버 |
+|---|---|---|---|
+| x64 Debug | 10 통과 | 16 통과 | DLL 절대 경로·로그인·STMT/자동 DESC·종료 통과 |
+| x64 Release | 10 통과 | 16 통과 | 통과 |
+| x86 Debug | 10 통과 | 16 통과 | 통과 |
+| x86 Release | 10 통과 | 16 통과 | 통과 |
+
+모두 실패/건너뜀 0이다. CTest 40개에는 통합 시험 실행 4개가 포함되어 있으므로 Node 64개를 독립 CTest 수로 합산하지 않는다. 별도로 교차 비트 수 DLL 거부 4개, PE machine/export/정적 CRT/Manager 분리 4개, 문서·환경 계약 10개가 통과했다.
+
+직접 DLL 시험은 무효/종류 불일치/해제 후 핸들, 부모보다 먼저 자식 해제, 버전 설정 순서, ANSI/W 진단 잘림·canary를 확인한다. 내부 시험은 명시/자동 DESC 수명, 재사용하지 않는 토큰 2,000회, 조회/해제 경합 100회, 여러 진단·행/컬럼/native/header, NTS·명시 NUL·한글·emoji·잘못된 UTF-8/surrogate·ACP·길이 단위를 확인한다. 내부 STMT 수명 시험의 연결 상태 주입은 서버 로그인 증거로 세지 않는다.
+
+네이티브 TCP 앱은 실제 서버의 정상/틀린 암호, SQL 오류 뒤 재사용, 기본 테이블스페이스 null, execute/fetch 여러 묶음/조기 closeCursor/ping/close를 확인한다. 결함 주입은 응답 id·알 수 없는 type·중복 키·잘못된 UTF-8/JSON·과도한 깊이·0/초과 프레임 길이·분할 전송·도중 끊김·NFKC 증명·위조 서명·nonce·반복 수·버전 실패를 확인한다.
+
+Manager 시험은 실제 OS odbc32.dll을 사용하고 DLL 절대 경로를 출력한다. `RegOverridePredefKey`가 **해당 시험 프로세스에서만** HKLM을 고유한 HKCU 임시 키로 연결한다. Winsock의 시스템 TCP 공급자를 먼저 초기화한 뒤 격리하며, installer API의 등록/제거·usage count와 실제 DLL 경로를 확인한다. 관리자 권한의 시스템 설치, Windows ODBC 관리자 UI, 일반 앱의 영구 등록 인수를 대신하지 않는다. 기존 드라이버/DSN/서버 데이터는 변경하지 않는다. [RegOverridePredefKey 공식 규약](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regoverridepredefkey)을 따른다.
+
+남은 범위: WO-3 응답 필드 검증/id 0 보강, WO-4의 전체 경계, ODBC SQL 실행·변환·prepare·descriptor 필드/배열·취소/시간 제한/reset·카탈로그·TLS·UDP·Setup/설치·Windows 11 최소 OS·범용 앱·메모리 도구 인수. 전체 ODBC 구현 완료나 Core 적합성의 증거가 아니다.
+
+## HJOW-ATHLON — WO-3 ~ WO-5 완료 검증
+
+위 기록의 후속이다. 같은 호스트/컴파일러/SDK/런타임에서 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`을 재실행했다. 최신 `build/native/summary.json`의 capturedAt은 **2026-10-21T12:18:10Z**이며, 네 구성 CTest **11개씩 44개**, 그 안의 Node 통합 **19개씩 76개**, 교차 비트 수 거부 **4개**, PE 감사 **4개**, 문서/환경 **10개**가 통과했다. 실패/건너뜀 0이다.
+
+추가한 단위 시험은 정확한 38자리 NUMERIC·음수/0/scale 38/음수 scale·signed/unsigned 64비트·고정 C 크기·numeric 문자 출력의 정수부 손실·작은 W/이진 버퍼·NULL indicator·μs→ns·날짜/INTERVAL 범위를 검사한다. 응답 스키마는 알려진 필드 타입/범위·준비/취소·오류 position·id 0를 검사하고, authOk 뒤에도 서버 서명을 확인하기 전에는 수신을 멈추어 인증 전 크기 한도를 유지한다.
+
+네 구성의 Manager 시험에서 다음을 실제 서버와 확인했다.
+
+- User/System DSN 및 DSN 없는 로그인, 명시 값 우선, 기본 tablespace null, 중복 로그인 오류, 루프백 이외 주소의 CONNECT 7006 거부, 종료 후 자식 정리.
+- Hello World·CRUD 영향 행 수·실행 후 메타데이터·한글/emoji 컬럼과 커서 이름의 서로 다른 W 길이·인용 커서 이름의 대소문자 구별.
+- CHAR/VARCHAR/NVARCHAR·BINARY/VARBINARY·정수 3종·REAL/DOUBLE·DECIMAL/NUMERIC·BOOLEAN·DATE/TIME/TIMESTAMP·timezone 문자열 및 INTERVAL 한정자 13개를 C 기본 타입/명시 타입으로 조회.
+- VARCHAR 65535/DECIMAL (10,3)/NUMERIC(p,0) 메타데이터, 38자리 값, 고정 공백/0, 소수 초와 offset 보존, NULL/빈 문자열/빈 이진 구별, bound truncation의 01004·행/컬럼 진단.
+- 60,000 UTF-16 단위의 긴 Unicode 결과(인증 전 한도보다 큰 프레임) 재구성, 조각별 남은 바이트 indicator, 마지막 성공 뒤 SQL_NO_DATA.
+- fetchSize 1/3/500, bound 열 이후 unbound GetData, 역순/바인딩된 열 거부, 행 상태/처리 수, 서버 커서 16개·17번째 53400, STMT 해제의 조기 정리, commit/rollback 뒤 서버 fetch 지속.
+
+x86에서 SQLColAttribute/W의 마지막 인자가 SDK상 SQLPOINTER인 점을 빌드가 검출하여 수정했다. 시스템 Manager가 SQLDisconnect로 이미 해제한 앱 STMT 포인터를 다시 SQLFreeHandle에 주면 x86 Release에서 접근 위반이 발생했다. 최종 시험은 해당 포인터를 재사용하지 않고, **직접 드라이버 토큰**에 대해 종료 후 SQL_INVALID_HANDLE·부모 자식 수 정리를 검사한다. 그 실패로 남았던 두 개의 고유 HKCU 시험 키는 경로/드라이버 DLL이 이 작업의 build 디렉토리임을 확인한 뒤 제거했으며, 최신 성공 시험 후 임시 키가 없음을 확인했다.
+
+후속은 WO-6부터이다. 시간 제한/취소·풀 reset·배열·완전한 descriptor·전체 카탈로그/기능 감사·TLS·UDP·실제 설치/앱/최소 OS 인수는 아직 남아 있다. SQL escape 초안은 미연결·미시험이므로 이 결과에 포함하지 않는다.
+
+## HJOW-ATHLON — WO-6 완료 검증
+
+동일 호스트·도구·런타임에서 전체 빌드 스크립트를 다시 실행했다. 최신 `build/native/summary.json`의 capturedAt은 **2026-10-21T12:52:08Z**이다. x86/x64 Debug/Release에서 CTest 13개씩 **52개**, 내부 Node 통합 19개씩 **76개**, 교차 비트 수 거부 4개·PE 감사 4개·문서/환경 10개가 통과했다. 실패/건너뜀 0이다. Node 76개는 CTest의 통합 실행 4개 안의 세부 시험이므로 CTest 수와 더하지 않는다.
+
+새 단위 시험 `sql.odbc_escapes_parameters`는 따옴표/주석의 ?와 중첩 escape·날짜시간·CONVERT/EXTRACT·outer join/LIKE·미지원/오류 문법을 확인한다. `types.input_parameters`는 실시간 앱 주소 읽기, 64비트/38자리 NUMERIC의 정확성, NULL/빈 이진/내장 NUL·W 바이트 길이·정밀도/범위·unaligned/offset 오버플로를 확인한다. C→SQL의 입력 손실 진단은 getter와 구분해 문자 숫자 손실 22001·날짜시간 손실 22008·INTERVAL 손실 22015·숫자 C 소수 손실의 선택적 01S07을 사용한다.
+
+실제 Driver Manager → DLL → 서버의 `prepare_cases.cpp`는 다음을 검증했다.
+
+- INSERT·DDL의 prepare/describe만으로 데이터/객체를 만들지 않음, 미커밋 INSERT 뒤 DDL prepare가 commit하지 않음, autocommit 설정 보존.
+- 실행 전 결과/파라미터 개수·CAST 메타데이터, UNKNOWN 결과의 SQL_UNKNOWN_TYPE·크기 0과 미정 DescribeParam HYC00, 바인딩 힌트 이후 재설명.
+- 같은 준비 ID·앱 버퍼의 값 변경 후 반복 실행, CloseCursor 뒤 재실행, parameterized ExecDirect, ANSI/W Prepare·NativeSql의 길이/잘림/canary·NOSCAN.
+- 따옴표·주석처럼 보이는 문자열이 SQL이 아닌 입력 데이터로 보존됨, 정확한 DECIMAL(38,6)·binary 0·NULL·timestamp·timezone offset·13개 native INTERVAL 왕복.
+- 70회 재준비와 별도 STMT 준비/해제, 권한 회수 후 42501, ALTER 뒤 0A000/native 8009, 재준비 후 정상 실행, 바인딩/방향/정밀도 오류.
+
+x86 링크가 SQLNativeSql/W의 잘못된 stdcall 장식 크기를 검출했으며 SDK의 6인자 원형에 맞게 `@24`로 수정했다. 최종 네 구성의 PE는 51개 export와 정적 CRT·Manager import 분리를 통과했다. 증거는 구성별 build/CTest 로그·JUnit·dumpbin과 `verification-console.log`에 있다. 격리 레지스트리는 정상 정리했고 영구 드라이버 등록은 하지 않았다.
+
+WO-7의 descriptor 필드/자동 IPD/공유·배열·실행 시 데이터, WO-8 정상 취소/reset, 카탈로그/전체 기능 감사·TLS·UDP·실제 설치/앱·최소 OS 인수가 남아 있다. 전체 ODBC 목표는 활성 상태이며 Core/3.8 적합성 완료를 뜻하지 않는다.
 
 ## 실행 증거
 

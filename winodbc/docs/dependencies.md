@@ -6,7 +6,7 @@
 |---|---|---|---|
 | C++ 빌드 | C++17, MSVC v143 / Windows SDK | Microsoft 도구·SDK 약관. SDK 헤더나 import lib를 제품 패키지에 복사하지 않음 | WO-1 |
 | CRT | Release `/MT`, Debug `/MTd`, DLL 경계에서 메모리 할당·해제 쌍 유지 | Microsoft 정적 런타임 재배포 조건 준수. Debug 런타임 배포 안 함. 별도 VC Redistributable 설치를 기본 요구하지 않음 | WO-1/12 |
-| JSON | **nlohmann/json 3.12.0** 단일 헤더, `nlohmann::json`, 기본 예외 켬 | MIT. WO-3에 `third_party/nlohmann/`로 원본 헤더·LICENSE.MIT 및 SHA-256을 함께 보관. 빌드 중 자동 다운로드 안 함 | WO-3, 현재 미도입 |
+| JSON | **nlohmann/json 3.12.0** 단일 헤더, `nlohmann::json`, 기본 예외 켬 | MIT. `third_party/nlohmann/`에 원본·LICENSE.MIT·SHA-256 보관, 빌드 중 다운로드 없음 | 도입·네이티브 빌드·파서 시험 완료 |
 | 정수·정확한 소수 | 외부 라이브러리 없음. int64, 부호·scale·10진 숫자열과 16바이트 정수 변환 | 이 프로젝트 구현. MSVC에 없는 `__int128`을 요구하지 않음 | WO-5/6 |
 | 네트워크 | Winsock 2, `ws2_32.lib` | Windows OS 제공, DLL 동봉 안 함 | WO-3/11 |
 | SCRAM 암호 연산 | Windows CNG, `bcrypt.lib` | Windows OS 제공 | WO-3 |

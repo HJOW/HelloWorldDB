@@ -46,10 +46,11 @@ private:
 
 void exports(const Module& module) {
     for (const char* name : {"SQLAllocHandle", "SQLFreeHandle", "SQLSetEnvAttr",
-        "SQLGetEnvAttr", "SQLGetDiagRec", "SQLGetDiagRecW"})
+        "SQLGetEnvAttr", "SQLGetDiagRec", "SQLGetDiagRecW", "SQLGetDiagField", "SQLGetDiagFieldW",
+        "SQLConnect", "SQLConnectW", "SQLGetStmtAttr", "SQLGetStmtAttrW"})
         check(module.has(name), name);
-    for (const char* name : {"_SQLAllocHandle@12", "SQLGetDiagRecA", "SQLConnect",
-        "SQLConnectW", "SQLDrivers", "SQLDataSources"})
+    for (const char* name : {"_SQLAllocHandle@12", "SQLGetDiagRecA", "SQLConnectA",
+        "SQLDrivers", "SQLDataSources"})
         check(!module.has(name), "unexpected export");
     std::cout << "SQLLEN=" << sizeof(SQLLEN) << " SQLULEN=" << sizeof(SQLULEN)
         << " SQLPOINTER=" << sizeof(SQLPOINTER) << " SQLWCHAR=" << sizeof(SQLWCHAR) << '\n';
@@ -80,8 +81,9 @@ void lifecycle(const Module& module) {
             check(length == sizeof(SQLUINTEGER), "numeric output length");
         }
         SQLHANDLE connection = invalid;
-        check(allocate(SQL_HANDLE_DBC, environment, &connection) == SQL_ERROR, "prototype must reject DBC");
-        check(connection == SQL_NULL_HANDLE, "failed allocation output");
+        check(allocate(SQL_HANDLE_DBC, environment, &connection) == SQL_SUCCESS, "DBC allocation");
+        check(release(SQL_HANDLE_ENV, environment) == SQL_ERROR, "live child prevents ENV release");
+        check(release(SQL_HANDLE_DBC, connection) == SQL_SUCCESS, "DBC release");
         check(release(SQL_HANDLE_ENV, environment) == SQL_SUCCESS, "ENV release");
         check(set(environment, SQL_ATTR_ODBC_VERSION, nullptr, 0) == SQL_INVALID_HANDLE, "freed ENV");
         check(release(SQL_HANDLE_ENV, environment) == SQL_INVALID_HANDLE, "double release");

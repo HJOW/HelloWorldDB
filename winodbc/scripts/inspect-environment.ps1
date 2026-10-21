@@ -31,7 +31,7 @@ function Get-FileEvidence([string] $LiteralPath) {
 }
 
 function Get-CommandEvidence([string] $Name, [string[]] $Arguments) {
-    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    $command = Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { return [pscustomobject]@{ name = $Name; exists = $false } }
     $lines = @(& $command.Source @Arguments 2>&1 | ForEach-Object { "$_" })
     $code = $LASTEXITCODE
@@ -41,7 +41,9 @@ function Get-CommandEvidence([string] $Name, [string[]] $Arguments) {
 $vswherePath = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $instances = @()
 if (Test-Path -LiteralPath $vswherePath) {
-    $instances = @((& $vswherePath -all -products '*' -format json -utf8 | Out-String) | ConvertFrom-Json)
+    # Windows PowerShell 5.1의 ConvertFrom-Json은 최상위 배열을 하나의 값으로 낸다.
+    # @()로 다시 감싸면 foreach가 인스턴스 배열 전체를 한 설치로 오인한다.
+    $instances = (& $vswherePath -all -products '*' -format json -utf8 | Out-String) | ConvertFrom-Json
 }
 $visualStudio = @()
 foreach ($instance in $instances) {
@@ -73,7 +75,11 @@ foreach ($instance in $instances) {
     }
 }
 
-$kits = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue
+$kits = @('HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots') |
+    ForEach-Object { Get-ItemProperty -LiteralPath $_ -ErrorAction SilentlyContinue } |
+    Where-Object { $_.KitsRoot10 -and (Test-Path -LiteralPath (Join-Path $_.KitsRoot10 'Include')) } |
+    Select-Object -First 1
 $sdks = @()
 if ($kits -and $kits.KitsRoot10) {
     $includeDir = Join-Path $kits.KitsRoot10 'Include'

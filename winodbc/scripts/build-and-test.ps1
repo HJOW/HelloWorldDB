@@ -4,7 +4,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $projectDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$evidenceDir = Join-Path $projectDir 'build\wo1'
+$evidenceDir = Join-Path $projectDir 'build\native'
 [void][IO.Directory]::CreateDirectory($evidenceDir)
 $summaryPath = Join-Path $evidenceDir 'summary.json'
 [IO.File]::WriteAllText($summaryPath,
@@ -12,8 +12,13 @@ $summaryPath = Join-Path $evidenceDir 'summary.json'
     (New-Object Text.UTF8Encoding($false)))
 
 function Invoke-Checked([string] $Executable, [string[]] $Arguments, [string] $LogName, [switch] $Quiet) {
-    $lines = @(& $Executable @Arguments 2>&1 | ForEach-Object { "$_" })
-    $code = $LASTEXITCODE
+    # Windows PowerShell 5.1의 stderr ErrorRecord가 종료 코드/로그 수집을 중단하지 않게 한다.
+    $nativePreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $lines = @(& $Executable @Arguments 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $nativePreference }
     [IO.File]::WriteAllLines((Join-Path $evidenceDir $LogName), $lines, (New-Object Text.UTF8Encoding($false)))
     if (-not $Quiet) { $lines | Write-Output }
     if ($code -ne 0) { throw "$Executable failed: exit $code ($LogName)" }
@@ -70,8 +75,9 @@ try {
         wo0Passed = [int]((Get-Content -LiteralPath (Join-Path $evidenceDir 'wo0.log') -Encoding UTF8 | Select-String '^# pass (\d+)$').Matches.Groups[1].Value)
         failed = 0
         skipped = 0
-        serverRuntime = $null
+        serverRuntime = @($environment.tools | Where-Object name -eq 'node')[0].output
         driverRegistered = $false
+        driverManagerRegistry = 'process-private HKLM mapping under HKCU; removed after test'
     }
     [IO.File]::WriteAllText($summaryPath,
         ($report | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding($false)))

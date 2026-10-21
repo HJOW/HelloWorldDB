@@ -1,10 +1,11 @@
 # HelloWorldDB Windows ODBC
 
-Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **WO-1(x86/x64 DLL·C ABI·시험 기반) 완료** 상태인 시제품이다. DLL 직접 로드와 최소 ENV/진단 호출을 검증했다. 접속·SQL 실행·설치·ODBC Core 적합성은 후속 단계이며, 다음은 [WO-2](PROGRESS.md)의 전체 핸들·진단·문자열 처리이다.
+Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, 실행 전 메타데이터, 단일 파라미터, fetch·바인딩·분할 수신과 모든 DB 타입 getter**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함한다. descriptor 필드/배열·취소·TLS·UDP·설치·Core 적합성은 [PROGRESS.md](PROGRESS.md)의 후속이다.
 
 - [개발 환경과 목표 앱](docs/environment.md)
 - [API·속성·descriptor·길이 단위 지원 계획](docs/api-support.md)
 - [타입 대응](docs/type-mapping.md)
+- [준비 문장·파라미터·SQL escape](docs/prepared-statements.md)
 - [서버 기능 협상과 진단 매핑](docs/server-dependencies.md)
 - [의존성과 배포 정책](docs/dependencies.md)
 - [검증 기록과 시험 ID](docs/verification.md)
@@ -25,11 +26,21 @@ ctest --preset x64-debug
 
 DLL과 시험 EXE는 `build/<x86 또는 x64>/bin/<Debug 또는 Release>/`에 생성된다. 빌드는 C++17, SDK ODBC 헤더, `/W4 /WX /utf-8`, Debug `/MTd`·Release `/MT`를 사용한다. DLL은 ODBC Manager에 링크하지 않으며, 정적 CRT의 메모리를 앱에 해제하도록 넘기지 않는다. Debug 산출물은 배포하지 않는다.
 
-`hwdb_abi_probe.exe`는 DLL을 직접 적재해 장식 없는 export·호출 규약·최소 ENV 수명·진단 버퍼를 검사한다. `hwdb_boundary_test.exe`는 공통 예외 경계의 `bad_alloc`→HY001과 기타 예외→HY000을 검사한다. `hwdb_dm_probe.exe`는 `odbc32.lib`만 링크해 시스템 Manager의 ENV와 진단을 검사한다. **현재 Manager 시험은 hwdbodbc.dll을 적재하거나 로그인하지 않는다.** 드라이버 등록·DSN 변경·서버 실행은 하지 않는다.
+`hwdb_abi_probe.exe`는 DLL 직접 로드·export·호출 규약·수명·진단 버퍼를 검사한다. `hwdb_handles_test.exe`, `hwdb_text_test.exe`, `hwdb_connection_test.exe`, `hwdb_protocol_test.exe`는 네트워크 없는 내부 시험이다. 자동 STMT/DESC 수명의 내부 시험은 연결 상태를 주입하며 실제 로그인 증거와 구분한다. `hwdb_protocol_probe.exe`는 중간 런타임 없이 TCP·CNG 인증·실제 서버의 execute/fetch/closeCursor/ping/close를 수행한다.
 
-현재 DLL의 6개 export는 `SQLAllocHandle`(ENV만), `SQLFreeHandle`(ENV만), `SQLSetEnvAttr`, `SQLGetEnvAttr`(버전·OUTPUT_NTS만), `SQLGetDiagRec`, `SQLGetDiagRecW`(ENV의 영문 단일 레코드만)이다. DBC 할당은 SQL_ERROR/HY000으로 시제품 미구현 상태를 알린다. ENV 할당 자체가 실패하면 진단을 저장할 핸들이 없으므로 SQL_ERROR만 반환한다. 이 목록은 최종 지원표의 완료를 뜻하지 않는다.
+`hwdb_dm_probe.exe`는 Manager 자체의 ENV를, `hwdb_dm_connection.exe`는 Manager → 드라이버 DLL → 실제 서버의 로그인·STMT/DESC·종료를 시험한다. 후자는 `RegOverridePredefKey`로 **시험 프로세스의 HKLM만 고유한 HKCU 임시 키에 연결**하고 installer API로 등록/제거한다. 실제 시스템 드라이버와 기존 DSN을 수정하지 않으며, 관리자 권한의 시스템 설치 시험을 대신하지 않는다. Node.js는 격리된 서버를 구동하고 결함을 주입하는 시험 도우미이며 DLL은 Node.js·JVM·Python을 실행하지 않는다.
 
-전체 스크립트는 환경 JSON을 `build/wo0/`, 빌드·CTest/JUnit·dumpbin·교차 로드·PE 검사 로그와 `summary.json`을 `build/wo1/`에 남긴다. PE 검사는 실제 machine, export 목록, 정적 CRT와 Manager import 분리를 확인한다. Node.js는 개발용 검사에만 쓰며 제품 실행 의존성이 아니다.
+SQLConnect/W는 User/System DSN을 읽고 SQLDriverConnect/W는 명시 속성 > DSN > 기본값으로 접속한다. DSN에는 비밀번호를 기본 저장하지 않는다. SQLExecDirect/W·SQLPrepare/W·SQLExecute·SQLNumParams·SQLDescribeParam·SQLBindParameter·SQLNativeSql/W와 결과 메타데이터·fetch·커서 수명을 제공한다. SQLGetInfo/W·SQLGetFunctions는 현재 구현한 기능만 보고하며 ODBC Core·3.8 완성은 광고하지 않는다. 전체 목표와 현재 범위는 [API 계약](docs/api-support.md)을 따른다.
+
+전체 스크립트는 환경 JSON을 `build/wo0/`, 빌드·CTest/JUnit·dumpbin·교차 로드·PE 검사와 `summary.json`을 `build/native/`에 남긴다. 실제 서버 config/data/log는 `build/integration/` 아래 고유 임시 디렉토리를 사용하고 정상 종료 후 제거한다. 서버 빌드 `../rdbms/dist/`가 먼저 존재해야 한다.
+
+접속 문자열은 다음 형식이다. 이 단계에서는 DLL을 직접 호출하거나 격리 Manager 시험 앱에서 사용한다. 일반 앱용 설치는 WO-12의 후속이다.
+
+```text
+DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=HelloWorldDB;Tablespace=SYSTEM;
+```
+
+비밀번호 기본값은 없다. 연결 문자열은 중괄호와 `}}` 이스케이프를 지원하며 중복 키는 첫 값을 사용한다. 출력 연결 문자열에서는 비밀번호를 제거한다. 미지원 TLS/UDP를 지정하면 HYC00으로 거부한다.
 
 문서와 환경만 검사할 때는 다음 명령을 사용한다.
 

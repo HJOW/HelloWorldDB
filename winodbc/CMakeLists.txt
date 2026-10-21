@@ -28,9 +28,16 @@ else()
     set(HWDB_ARCH x86)
 endif()
 
-add_library(hwdbodbc SHARED src/odbc/exports.cpp src/odbc/dllmain.cpp
+add_library(hwdb_core STATIC src/odbc/handles.cpp src/odbc/connection.cpp src/odbc/statement.cpp src/types/text.cpp
+    src/odbc/statement_attributes.cpp src/odbc/sql_text.cpp src/types/parameters.cpp src/types/metadata.cpp src/types/conversion.cpp
+    src/protocol/json.cpp src/protocol/scram.cpp src/protocol/session.cpp src/transport/tcp.cpp)
+target_include_directories(hwdb_core SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+target_link_libraries(hwdb_core PUBLIC hwdb_build_options ws2_32 bcrypt crypt32 normaliz advapi32)
+
+add_library(hwdbodbc SHARED src/odbc/exports.cpp src/odbc/connect_exports.cpp src/odbc/info_exports.cpp
+    src/odbc/statement_exports.cpp src/odbc/prepare_exports.cpp src/odbc/dllmain.cpp
     "src/odbc/exports_${HWDB_ARCH}.def")
-target_link_libraries(hwdbodbc PRIVATE hwdb_build_options)
+target_link_libraries(hwdbodbc PRIVATE hwdb_core)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -38,16 +45,51 @@ if(BUILD_TESTING)
     target_link_libraries(hwdb_abi_probe PRIVATE hwdb_build_options)
     add_executable(hwdb_boundary_test tests/unit/entry_point_test.cpp)
     target_link_libraries(hwdb_boundary_test PRIVATE hwdb_build_options)
+    add_executable(hwdb_handles_test tests/unit/handles_test.cpp src/odbc/exports.cpp src/odbc/connect_exports.cpp)
+    target_link_libraries(hwdb_handles_test PRIVATE hwdb_core)
+    add_executable(hwdb_text_test tests/unit/text_test.cpp)
+    target_link_libraries(hwdb_text_test PRIVATE hwdb_core)
+    add_executable(hwdb_protocol_probe tests/integration/protocol_probe.cpp)
+    target_link_libraries(hwdb_protocol_probe PRIVATE hwdb_core)
+    add_executable(hwdb_protocol_test tests/unit/protocol_test.cpp)
+    target_link_libraries(hwdb_protocol_test PRIVATE hwdb_core)
+    add_executable(hwdb_conversion_test tests/unit/conversion_test.cpp)
+    target_link_libraries(hwdb_conversion_test PRIVATE hwdb_core)
+    add_executable(hwdb_sql_text_test tests/unit/sql_text_test.cpp)
+    target_link_libraries(hwdb_sql_text_test PRIVATE hwdb_core)
+    add_executable(hwdb_parameters_test tests/unit/parameters_test.cpp)
+    target_link_libraries(hwdb_parameters_test PRIVATE hwdb_core)
+    add_executable(hwdb_connection_test tests/unit/connection_test.cpp src/odbc/connect_exports.cpp src/odbc/exports.cpp)
+    target_link_libraries(hwdb_connection_test PRIVATE hwdb_core)
     # Manager용 EXE는 드라이버 타깃이나 import lib에 링크하지 않는다.
     add_executable(hwdb_dm_probe tests/driver_manager/manager_probe.cpp)
     target_link_libraries(hwdb_dm_probe PRIVATE hwdb_build_options odbc32)
+    add_executable(hwdb_dm_connection tests/driver_manager/connection_probe.cpp tests/driver_manager/query_cases.cpp tests/driver_manager/prepare_cases.cpp)
+    target_link_libraries(hwdb_dm_connection PRIVATE hwdb_build_options odbc32 ole32 advapi32 ws2_32)
 
     foreach(scenario exports lifecycle diagnostics)
         add_test(NAME "abi.${scenario}"
             COMMAND hwdb_abi_probe "${scenario}" "$<TARGET_FILE:hwdbodbc>")
     endforeach()
     add_test(NAME abi.exception_boundary COMMAND hwdb_boundary_test)
+    add_test(NAME handles.lifecycle_diagnostics_concurrency COMMAND hwdb_handles_test)
+    add_test(NAME text.unicode_lengths_acp COMMAND hwdb_text_test)
+    add_test(NAME protocol.strict_json COMMAND hwdb_protocol_test)
+    add_test(NAME types.exact_numeric_unicode_temporal COMMAND hwdb_conversion_test)
+    add_test(NAME sql.odbc_escapes_parameters COMMAND hwdb_sql_text_test)
+    add_test(NAME types.input_parameters COMMAND hwdb_parameters_test)
+    add_test(NAME connection.options_attributes COMMAND hwdb_connection_test)
+    find_program(HWDB_NODE_EXECUTABLE node REQUIRED)
+    add_test(NAME integration.protocol_manager
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "HWDB_PROTOCOL_PROBE=$<TARGET_FILE:hwdb_protocol_probe>"
+            "HWDB_DM_CONNECTION=$<TARGET_FILE:hwdb_dm_connection>"
+            "HWDB_ODBC_DLL=$<TARGET_FILE:hwdbodbc>"
+            "${HWDB_NODE_EXECUTABLE}" --test --test-reporter=tap "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/protocol.test.mjs")
+    set_tests_properties(integration.protocol_manager PROPERTIES TIMEOUT 90)
     add_test(NAME manager.environment COMMAND hwdb_dm_probe)
     set_tests_properties(abi.exports abi.lifecycle abi.diagnostics
-        abi.exception_boundary manager.environment PROPERTIES TIMEOUT 20)
+        abi.exception_boundary manager.environment handles.lifecycle_diagnostics_concurrency
+        text.unicode_lengths_acp protocol.strict_json connection.options_attributes types.exact_numeric_unicode_temporal
+        sql.odbc_escapes_parameters types.input_parameters PROPERTIES TIMEOUT 20)
 endif()

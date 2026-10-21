@@ -14,7 +14,27 @@ x86·x64 도구/라이브러리: 확인/미확인
 실제로 실행한 빌드·시험과 미시험 범위
 ```
 
+## HJOW-ATHLON — 2026-10-21 확인
+
+현재 호스트는 **Windows 10 Pro x64 10.0.19045**, 관리자 권한 없는 토큰이다. 제품 최소 OS인 Windows 11 24H2의 인수 결과로 사용하지 않는다.
+
+| 도구 | 설치 확인·실제 사용 버전 | 절대 경로 |
+|---|---|---|
+| Build Tools 2022 | 설치, 17.14.37806.7 | `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools` |
+| MSVC v143 x86/x64 | 설치·양 아키텍처 빌드 성공, 19.44.35229.0 | 위 경로의 `VC\Tools\MSVC\14.44.35207\bin\Hostx64\{x86,x64}\cl.exe` |
+| Windows SDK | 설치·실제 빌드 10.0.26100.0, 10.0.10240.0/10.0.19041.0도 조회됨 | `C:\Program Files (x86)\Windows Kits\10` |
+| CMake/CTest | 설치·실행 4.4.3 | `C:\Program Files\CMake\bin\cmake.exe`, `ctest.exe` |
+| Node.js | 설치·실제 시험 서버 24.21.0 | `C:\Program Files\nodejs\node.exe` |
+| Desktop Express 2017 | 설치, 15.9.37627.17, 이번 빌드에서 사용 안 함 | `C:\Program Files (x86)\Microsoft Visual Studio\2017\WDExpress` |
+| Community 2026 | 설치, 18.11.12306.390, 이번 빌드에서 사용 안 함 | `C:\Program Files\Microsoft Visual Studio\18\Community` |
+
+현재 x64 Manager는 `C:\Windows\System32\odbc32.dll` 10.0.19041.7802, x86은 `C:\Windows\SysWOW64\odbc32.dll` 10.0.19041.6280이다. 각 PE machine은 0x8664/0x014C로 확인했다. Office 2007 x86 Excel 12.0.6787.5000/Access 12.0.6735.5000 실행 파일이 조회되었지만 앱 인수는 아직 하지 않았다.
+
+Windows PowerShell 5.1의 ConvertFrom-Json 최상위 배열을 중첩해 여러 VS 설치를 한 경로로 오인하던 문제를 수정했다. 64비트 Windows Kits 레지스트리가 실행 도구 경로만 가리키는 이 PC에서 실제 헤더가 있는 32비트 레지스트리 뷰도 확인하도록 고쳤다. 환경 원본은 `build/wo0/environment.json`이다. 두 아키텍처·Debug/Release의 실행 결과는 [검증 기록](verification.md)을 따른다.
+
 ## VM-W11-Codex — 2026-10-21 확인
+
+아래는 이전 호스트의 기록이며, 현재 작업 호스트의 기록은 문서 끝에 따로 남겼다.
 
 Windows 11 Pro x64, 버전 `10.0.26300`, 빌드 `26300`. Windows PowerShell로 CIM·레지스트리·vswhere·파일 버전을 조회하고 CMake/CTest/MSVC/Linker/Dumpbin/MSBuild의 버전 명령을 직접 실행했다. 아래 표의 경로 별칭은 이 PC의 기록을 줄여 적은 것이며 빌드 스크립트의 고정 경로가 아니다.
 
