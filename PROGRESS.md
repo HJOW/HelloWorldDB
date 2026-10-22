@@ -6,6 +6,7 @@
 ## 현재 상태
 
 - 최종 갱신 : 2026-10-22
+- **2026-10-22 : `unixodbc` 프로젝트 환경 구축·개발 계획 작성.** Debian 13.7에서 unixODBC 2.3.12 헤더·라이브러리를 `.deps/`에 두고 CMake·CTest(dev/release/asan) 기반과 `libhwdbodbc.so.0` 골격, ABI·환경·문서 계약·실제 서버 연기 시험을 만들었다. 세 프리셋 각 4개, 합계 12개 시험이 통과했다(실패·건너뜀 0). ODBC 함수는 아직 구현하지 않았고 UO-1의 나머지가 다음 작업이다. 계획·계약은 [unixodbc/PROGRESS.md](unixodbc/PROGRESS.md)와 `unixodbc/docs/`에 있다. 커밋·푸시는 하지 않았다.
 - **2026-10-22 : 점검 취약점 수정 완료.** `rdbms` R-1 ~ R-6, `nodejsDriver` N-1 ~ N-5(와 P-6 의 Node 쪽 빈 묶음 검사), `pythonDriver` P-1 ~ P-6, `jdbc6`·`jdbc8` J-1 ~ J-6을 고치고 회귀 시험을 더했다. 사양은 AGENTS.md 상세 1-3(DEFAULT 상수 식, 테이블 이름 변경과 뷰)만 보충했다. 검증 : rdbms Node.js 24.22.0 `npm test` 963개 중 956 통과·실패 0·건너뜀 7(Windows 플랫폼 전용). nodejsDriver Node.js 24.22.0 125개 통과. pythonDriver Python 3.2·3.12.4 각 137개 통과(실제 데몬 시험 포함). jdbc8 Java 8·21 `test.mjs` 160개 통과. jdbc6 Java 6·7·8·21 실제 서버 224개, 확장 68개, 독립 소비자 12개 통과. 미결 : jdbc8·jdbc6 의 손실 UDP 시험에서 `UDP peer reset the session` 이 간헐적으로 났다(전체 행렬 3회 중 2회, 수정 전 기준선 1회 통과). 격리 재실행은 모두 통과했고 원인은 확정하지 못했다. 커밋·푸시는 하지 않았다.
 - **2026-10-22 : rdbms·nodejsDriver·pythonDriver·jdbc6·jdbc8 코드 점검.** 기존 시험 기준선(rdbms 956개, nodejsDriver 116개, pythonDriver 124개)은 모두 통과했지만, 기존 시험이 다루지 않는 권한·DML·의존성·드라이버 상태 경로에서 결함을 재현했다. rdbms의 뷰 DML 조건 무시, DEFAULT 서브쿼리 권한 우회, 테이블 이름 변경 뒤 뷰 의존성, `ADD COLUMN REFERENCES` 검사 누락, nodejsDriver의 풀 트랜잭션 상태 누수, pythonDriver의 RST 예외·이전 결과 잔존·커서 누적, jdbc6/jdbc8의 `setNull(int, SQLType)`·문자 컬럼 `getBytes` 결함을 각 프로젝트 PROGRESS.md의 "다음 작업: 2026-10-22 점검 취약점 수정"에 기록했다. winodbc는 완료 프로젝트가 아니므로 제외했다. 소스는 아직 수정하지 않았고 커밋·푸시도 하지 않았다.
 - **jdbc8 13-5 범용 도구 확인도 완료했다.** Linux DBeaver 26.0.5의 별도 작업공간에 배포 JAR을 등록해 접속·객체와 컬럼 탐색·뷰 조회·잠금 대기 취소·같은 편집기의 연결 재사용을 확인했다. [Linux 검증 기록](rdbms/docs/linux-verification.md)에 실제 화면 검증과 GTK 자동 조작의 한계, 대형 조인 중간 결과의 기존 메모리 한계를 함께 기록했다.
@@ -29,7 +30,7 @@
   구현 범위는 다음과 같다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사, **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 접속과 접속용 클라이언트 라이브러리(`rdbms/src/client`)에 더해,
   10단계에서 **`hwdb` 명령**을 완성했다 : `hwdb start`(분리된 데몬), `hwdb stop`, `hwdb status`, 그리고 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 화면에 보이지 않는 비밀번호 입력, 한글 폭을 맞춘 표 출력, 초기 암호 변경 안내, 종료 때 롤백 안내). 동작은 [rdbms/docs/cli.md](rdbms/docs/cli.md)에 있다.
 - 이번 `rdbms`·`jdbc6` 및 추가 `jdbc8` 서버 확장 연동·자동 검증을 완료했다. GUI DB툴(`gui`)의 보류는 유지한다. 아래 이전 날짜의 구현·검증 내용은 누적 기록이며 최신 결과는 위 두 항목과 프로젝트별 상태표를 따른다.
-- 다음 작업 : 2026-10-22 점검의 취약점 수정은 끝났다(각 프로젝트 PROGRESS.md 의 "2026-10-22 점검 취약점 수정 (완료)"). 그 뒤는 나머지 드라이버의 prepare/describe·cancel 공개 API, `pythonDriver` PY-4(TLS), ODBC WO-0 이후 구현이다. 미결은 위 손실 UDP 간헐 실패 조사다. 각 프로젝트의 PROGRESS.md 와 [통신 규약](rdbms/docs/protocol.md)을 따른다.
+- 다음 작업 : 2026-10-22 점검의 취약점 수정은 끝났다(각 프로젝트 PROGRESS.md 의 "2026-10-22 점검 취약점 수정 (완료)"). 그 뒤는 나머지 드라이버의 prepare/describe·cancel 공개 API, `pythonDriver` PY-4(TLS), `unixodbc` UO-1 이후 구현, winodbc WO-9 이후 구현이다. 미결은 위 손실 UDP 간헐 실패 조사다. 각 프로젝트의 PROGRESS.md 와 [통신 규약](rdbms/docs/protocol.md)을 따른다.
 - 11단계 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 888개 중 887개 통과, 1개 건너뜀(Windows에서 SIGTERM을 받을 수 없는 유닉스 전용 시험), 실패 0. bun 1.3.14에서는 통합 시험 87개를 시험 러너와 데몬 모두 bun으로 돌려 85개 통과, 2개 건너뜀(bun의 TLS 최소 버전 제약, SIGTERM)이다. 결함을 일부러 주입한 빌드에서 새 시험이 실패하는지 확인했다(모두 잡힘).
   당시 미확인 항목 중 Node.js 22, 실제 Java 6 TLSv1, 뷰 컬럼·인덱스 이름 생략은 이번 후속 작업에서 해소했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 미검증이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
@@ -50,6 +51,8 @@
 | `pythonDriver` | `org.duckdns.hjow.helloworlddb.pythondriver` (import `helloworlddb`) | PY-1 ~ PY-6 | PY-3 완료. 최신 회귀 Python 3.2·3.13.1 각 124개 통과. TLS·UDP는 PY-4·PY-5 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [pythonDriver/PROGRESS.md](pythonDriver/PROGRESS.md) |
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 13-1 ~ 13-5 | 13-1 ~ 13-5·새 API 완료. 기존 130·확장 50·소비자 6개 및 Linux DBeaver 확인 통과 | 선행 조건 충족 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 14-1 ~ 14-5 | 14-1 ~ 14-5·prepare/describe·cancel 완료. Java 6·7·8·21·25 검증 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
+| `unixodbc` | C++ (패키지명 규칙 대상 아님) | UO-0 ~ UO-13 | UO-0 완료, UO-1 빌드 골격. ODBC 함수 미구현 | 사용자 작업 지시 (환경·계획까지) | [unixodbc/PROGRESS.md](unixodbc/PROGRESS.md) |
+| `winodbc` | C++ (패키지명 규칙 대상 아님) | WO-0 ~ WO-13 | WO-8까지 구현, WO-9 이후 일시 중지 | 사용자 재개 지시 | [winodbc/PROGRESS.md](winodbc/PROGRESS.md) |
 | `gui` | `org.duckdns.hjow.helloworlddb.gui` | 없음 | 보류 | 계획부터 다시 정한다 | [gui/PROGRESS.md](gui/PROGRESS.md) |
 
 ## 공통 인수인계 사항
@@ -109,6 +112,8 @@ Java 6·7은 사용자가 지정한 `C:\Program Files\Java\jdk1.6.0_45`·`C:\Pro
 JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-5와 서버 확장 연동을 완료했고 jdbc8은 13-4 및 공통 통신 회귀까지 마쳤다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
 
 ## 작업 이력
+
+- 2026-10-22 : 사용자 요청으로 `unixodbc` 프로젝트 환경과 개발 계획을 만들었다. AGENTS.md·루트 PROGRESS.md·winodbc 계획·서버 프로토콜을 참고해 UO-0 ~ UO-13 단계와 API·타입·서버 의존성·설계·의존성·환경·검증 문서를 작성했다. CMake·CTest(dev/release/asan), `libhwdbodbc.so.0` 골격과 version script, ABI·환경 probe, 문서 계약 시험, 실제 `rdbms` 연기 시험을 만들었고 세 프리셋 각 4개(합계 12개)가 통과했다. root 권한이 없어 `.deps/`에 unixODBC 2.3.12와 CMake 4.4.4를 준비하는 스크립트를 넣었다. ODBC 함수는 아직 구현하지 않았다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-22 : 사용자 요청으로 `rdbms`와 `nodejsDriver`·`pythonDriver`·`jdbc6`·`jdbc8`를 점검했다. 기준선은 rdbms 956개, nodejsDriver 116개, pythonDriver 124개 모두 통과(각 환경은 프로젝트 문서 참고)였다. 기존 시험이 다루지 않는 경로를 실제 실행으로 재현해 rdbms 6건, nodejsDriver 5건, pythonDriver 6건, jdbc6·jdbc8 공통 6건을 찾고 각 프로젝트 PROGRESS.md의 "다음 작업: 2026-10-22 점검 취약점 수정"에 심각도·위치·재현·수정 방향·회귀 시험으로 기록했다. winodbc는 완료 프로젝트가 아니므로 제외했다. 소스와 시험은 바꾸지 않았고 커밋·푸시는 하지 않았다.
 

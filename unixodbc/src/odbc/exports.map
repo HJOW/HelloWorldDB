@@ -1,0 +1,6 @@
+{
+  global:
+    hwdb_odbc_build_id;
+  local:
+    *;
+};
