@@ -7,14 +7,14 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-21
+- 최종 갱신 : 2026-10-22
 - **Linux 검증(2026-10-21)**: Debian 13.7 / Node.js 24.16.0·22.23.3에서 각각 기존 전체 116개 통과·실패와 건너뜀 0이다. Bun 1.4.0 시험 러너·서버에서는 115개 통과·기존 구버전 TLS 1개 건너뜀·실패 0이다. tgz를 별도 소비자에 설치해 TypeScript 6 엄격 검사, Node.js 22·Bun 각각의 TCP·TLS·UDP·정밀 타입과 Node.js CommonJS 접속을 확인했다. 제품 소스는 변경하지 않았다. [공통 Linux 검증 기록](../rdbms/docs/linux-verification.md)을 따른다.
 - 서버 후속 구현 회귀 완료(2026-10-20): 최종 rdbms와 시험 러너를 Node.js 22.23.3으로 실행해 기존 **116개 전부 통과·실패/건너뜀 0**이다. 이번 장비는 Node.js 24.21.0·Bun 1.4.2가 기본이며 Node.js 22는 체크섬을 확인한 임시 실행 파일을 사용했다. prepare/describe·cancel 공개 API는 아래 체크리스트의 별도 후속 작업으로 유지한다. 서버 검증은 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)를 따른다.
 - 앞선 배포본 검증(2026-10-20, Windows / `VM-W11-Codex`, Node.js 22.23.3 / TypeScript 6.0.3) : 드라이버와 실제 서버를 모두 Node.js 22로 실행하여 `npm test` **116개 모두 통과**, 건너뜀·실패 0(단위 33 + 실제 서버 통합 83, 약 47초). `npm pack`으로 만든 배포본을 임시 소비자 프로젝트에 설치해 Node.js 22.23.3·Bun 1.4.2 각각의 TCP·TLS·UDP 접속과 TypeScript 타입 정의를 검증했다. 아래 "Node.js 22 호환성 및 배포본 검증" 참고. npm 레지스트리 공개와 다른 OS 검증은 하지 않았다.
 - 이전 검증(Windows, Node.js 24.22.0 / TypeScript 6.0.3) : `npm test` 116개 모두 통과. Bun 1.3.14는 최종 116개 시나리오 중 115개 통과·1개 건너뜀(기존 구버전 TLS)·실패 0이었다(전체 114개 실행 후 초기화 경계 2개를 포함한 `review.test.ts` 재실행).
 - 2026-10-20 점검 및 수정 : 결과 객체의 특수 컬럼 이름, 풀 생성·종료 경쟁과 초기화, 주석이 든 트랜잭션 문장, 인증 제한 시간, 응답 검증, 소켓 조기 종료, 시험 서버 정리 문제를 재현하고 수정했다. 회귀 시험 16개를 추가했다. 상세는 아래 "코드 점검 및 수정".
 - 진행 단계 : **12단계 완료** (12-1 ~ 12-5). 완료 기준 "실제 `rdbms` 를 띄워 수행하는 통합 테스트 통과"를 채웠다.
-- 다음 작업 : 필수 구현과 Node.js 22.x 후속 검증은 완료했다. 다른 OS의 시험과 선택 기능은 아래 "미결 사항"에 남긴다.
+- 다음 작업 : **2026-10-22 점검에서 확인한 결함 N-1 ~ N-5의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). N-1은 풀에서 미커밋 트랜잭션이 다음 대여자에게 넘어가는 문제이므로 가장 먼저 고친다. 필수 구현과 Node.js 22.x 후속 검증은 완료했고, 다른 OS의 시험과 선택 기능은 아래 "미결 사항"에 남긴다.
 - 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)의 서버 작업을 선행 조건으로 하며, 아래 체크리스트는 아직 미구현이다.
 - 구현한 것 : TCP(SSL 포함)와 UDP 접속, 호스트와 포트 번호만으로 대상 지정(생략하면 `127.0.0.1:7410`), SCRAM-SHA-256 인증(서버 nonce·반복 횟수·서버 서명 검증), 문장 실행과 `?` 파라미터 바인딩,
   결과 나누어 받기(`cursor`, 비동기 반복자 `stream`), 트랜잭션 API(`begin`·`commit`·`rollback`·`setAutoCommit`·`transaction`), 접속 종료와 끊김 감지(`close` 이벤트), `DbError`(SQLSTATE·내부 번호·위치), 커넥션 풀, TypeScript 타입 정의, README.
@@ -39,6 +39,39 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 - [ ] 준비 문장·커서·대기 요청을 해제하고, 풀 반납·연결 종료 시 리소스가 다음 사용자에게 남지 않게 한다. USE·DDL·권한 변경에 따른 무효화와 재분석은 서버 규약대로 처리한다.
 - [ ] Node.js 22 이상과 Bun에서 TCP·TLS·UDP 실제 서버 시험을 추가한다. 실행 없는 describe, 반복 바인딩, 잠금 대기·CPU 질의 취소, 취소 후 연결 재사용과 앞선 트랜잭션 변경 보존, UDP 유실·중복, 구형 서버 호환을 검증한다.
 - [ ] 기존 전체 시험과 풀·스트림 회귀 시험을 통과시킨 뒤 README·타입 사용 예제·이 문서의 완료 상태를 갱신한다. 기능 없는 서버의 동작과 취소·제한 시간의 보장 범위를 명시한다.
+
+## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+
+2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 다음 수행할 작업으로 등록한다. 점검 기준선은 Node.js 24.16.0에서 전체 **116/116 통과**이다. 아래 N-1은 실제 서버와 풀로 재현했고, 나머지는 코드 경로를 확인했다.
+
+- [ ] **N-1 (높음, 확인됨) `SET AUTOCOMMIT`의 다른 문법과 `ROLLBACK WORK TO`에서 상태를 잘못 추적해 풀이 미커밋 세션을 넘긴다.**
+  - 위치 : `src/connection.ts:309-327`(`trackStatement`), `:405-408`(`_needsReset`), `src/pool.ts:216-232`.
+  - 원인 : SQL 앞 세 낱말만 본다. `SET AUTOCOMMIT OFF`는 맞게 추적하지만 `SET AUTOCOMMIT = OFF`·`TO OFF`·`FALSE`·`0`은 autocommit = true로 기록하고, `ROLLBACK WORK TO SAVEPOINT s`는 전체 롤백으로 오인해 inTxn = false로 만든다. 그러면 `_needsReset`이 false가 되어 반납 시 `_reset()`을 건너뛴다.
+  - 재현(실제 서버·풀) : 첫 대여자가 `SET AUTOCOMMIT = OFF` 후 `INSERT INTO LEAK VALUES (42)`를 하고 반납하면 `autocommit`은 true, `_needsReset`은 false였다. 두 번째 대여자가 같은 세션에서 `SELECT ID FROM LEAK`을 하면 `[["42"]]`를 읽는다. 서버는 autocommit OFF·열린 트랜잭션 상태로 남아 있어 이후 대여자의 `BEGIN`이 25001로 실패하거나 첫 대여자의 변경이 함께 커밋·롤백될 수 있다.
+  - 수정 : `SET AUTOCOMMIT`의 `ON/OFF/TRUE/FALSE/1/0`과 선택적 `TO`/`=`를 정확히 파싱하고, `ROLLBACK [WORK] TO [SAVEPOINT]`를 구분한다. 더 안전하게는 추정을 버리고 **반납 시 항상 `ROLLBACK`과 초기 autocommit 복원을 수행**한다. 결정 사항의 "트랜잭션 상태는 성공한 문장에서 가늠한다"(아래 "결정 사항")와 README의 관련 설명도 함께 고친다.
+  - 시험 : 위 모든 문법, `ROLLBACK WORK TO`, `COMMIT WORK`, 주석이 섞인 문장, autocommit OFF 뒤 INSERT/DML, 풀 `max: 1`에서 두 대여자 사이의 격리(두 번째가 첫 번째의 미커밋 행을 보지 않아야 함), 반납 뒤 서버 상태를 `SYS_SESSIONS`로 확인하는 시험을 넣는다.
+
+- [ ] **N-2 (중간, 코드 확인) 풀 `_reset()`에 응답 제한 시간이 없어 반열림 연결이 슬롯을 영구 점유할 수 있다.**
+  - 위치 : `src/pool.ts:216-232`, `src/connection.ts:411-426`, `src/protocol/protocolConnection.ts:222`.
+  - 원인 : `_reset()`의 `rollback()`·`closeCursor()`·`USE`·`SET TIME ZONE`·`SET AUTOCOMMIT` 요청이 `requestTimeoutMs`를 넘기지 않아 기본값이 없다. 서버가 RST 없이 사라진 반열림 TCP에서는 `_reset()`이 끝나지 않고, 그 접속이 `releasing`에 남아 `total()`에 계속 계산된다. 반복되면 `acquire()`가 전부 실패하고 `pool.close()`도 끝나지 않는다.
+  - 수정 : 내부 정리 요청에 짧은 고정 제한 시간(예 : 잠금 제한 시간 + 여유)을 적용하고, 초과 시 접속을 폐기한다. `releasing`도 유휴 정리 대상에 넣고 경고를 남긴다.
+  - 시험 : 응답하지 않는 가짜 전송으로 `_reset()` 시간 초과 → 접속 폐기 → 슬롯 반환을 확인하고, `pool.close()`가 제한 시간 안에 끝나는지 넣는다.
+
+- [ ] **N-3 (낮음) 인증 전 프레임 한도가 16MiB다.**
+  - 위치 : `src/transport/tcpTransport.ts:104-105`. 프로토콜은 인증 전 64KiB, 인증 후 16MiB를 요구한다(Python 드라이버는 지킨다).
+  - 수정 : `hello`/로그인 완료 시점에 프레임 해석기 한도를 바꾸는 콜백을 넘긴다. UDP도 인증 전 한도를 64KiB로 둔다(`src/transport/udpTransport.ts`의 `RECEIVE_LIMIT`).
+  - 시험 : 인증 전 64KiB 초과 프레임이 접속 종료로 이어지고, 인증 후 큰 결과는 정상인지 확인한다.
+
+- [ ] **N-4 (낮음) `Cursor.fetch(size)`가 크기를 검증하지 않는다.**
+  - 위치 : `src/connection.ts:470-483`. `query()`의 `fetchSize`는 `checkFetchSize`로 검증하지만 `cursor.fetch(size)`는 음수·소수·NaN을 그대로 보낸다. 서버가 22023으로 거절하므로 크래시는 아니지만 API 계약이 비대칭이다.
+  - 수정 : `Cursor.fetch()`에서도 `checkFetchSize(size, "size")`를 호출한다.
+  - 시험 : `-1`, `0`, `1.5`, `NaN`이 `RangeError`가 되고 정상 값은 그대로인지 넣는다.
+
+- [ ] **N-5 (낮음) 요청 시간 초과 뒤 서버 커서 번호를 잃어 풀 접속이 16개 한도에 막힐 수 있다.**
+  - 위치 : `src/protocol/protocolConnection.ts:231-238`, `src/connection.ts:241-262`.
+  - 원인 : 타임아웃되면 대기 항목을 지우고 늦은 응답을 버린다. 서버에는 커서가 남지만 번호를 몰라 `closeCursor`를 보낼 수 없고, `_reset()`도 추적된 커서만 닫는다. 같은 풀 접속에서 16번 쌓이면 이후 커서 있는 질의가 53400으로 실패한다.
+  - 수정 : `execute`/`fetch` 타임아웃 시 접속을 폐기하고 풀에서 교체하거나, 서버에 커서 전체 정리 요청을 추가한다. 최소한 "커서 번호 불명" 상태를 표시해 반납 시 접속을 버린다.
+  - 시험 : 가짜 서버가 응답을 늦게 보내는 상황에서 타임아웃 후 풀 접속이 교체되고, 다음 대여자가 정상 질의를 하는지 확인한다.
 
 ## 작업 규칙
 
@@ -213,6 +246,8 @@ AGENTS.md 지켜야 할 사항 5의 Node.js 22.x 후속 검증을 `VM-W11-Codex`
 - 타입스크립트 6 에서 컴파일되어야 한다(지켜야 할 사항 7). 개발 의존성을 6 으로 묶어 두었다. 7 로 올리지 않는다.
 
 ## 작업 이력
+
+- 2026-10-22 : 사용자 요청으로 코드를 점검하고, Node.js 24.16.0에서 기존 116개가 통과하는 기준선을 확인했다. N-1(autocommit/`ROLLBACK WORK TO` 상태 추적 → 풀 미커밋 세션 전달)을 실제 서버·풀로 재현했고, N-2(풀 정리 시간 초과 없음), N-3(인증 전 프레임 한도), N-4(커서 fetch 검증), N-5(타임아웃 뒤 서버 커서 잔류)를 코드로 확인해 "다음 작업: 2026-10-22 점검 취약점 수정"에 기록했다. 소스와 README는 바꾸지 않았고 커밋·푸시는 하지 않았다.
 
 - 2026-10-21 : Linux Node.js 24·22 전체 각 116개와 Bun 115개(구버전 TLS 1개 건너뜀)를 통과했다. 새 소비자에 tgz를 설치해 엄격한 TypeScript 검사, Node.js·Bun TCP·TLS·UDP와 CommonJS 접속을 확인했다. 제품 소스는 바꾸지 않고 진행 문서를 갱신했다. 커밋·푸시는 하지 않았다.
 

@@ -7,7 +7,7 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 
 ## 현재 상태
 
-- 최종 갱신 : 2026-10-21
+- 최종 갱신 : 2026-10-22
 - **Linux 검증(2026-10-21)**: Debian 13.7에서 실제 Python 3.2.6·3.13.5 각각 기존 전체 124개 통과·실패와 건너뜀 0이다. Python 3.2는 임시 디렉토리에 공식 소스를 빌드했고 최신 glibc의 내부 sinpi 이름 충돌을 임시 런타임 소스에서 해결했다. Linux 단조 시계 fallback·SCRAM·TCP·DB-API·자료형·스레드 시험을 실제 실행했다. sdist·wheel 생성 및 깨끗한 3.13 가상 환경의 네트워크 없는 wheel 설치·소스 트리 밖 Hello World 접속도 통과했다. 드라이버 소스는 변경하지 않았다. 상세 런타임·명령은 [Linux 검증 기록](../rdbms/docs/linux-verification.md)에 있다.
 - 서버 후속 구현 회귀 완료(2026-10-20): 최종 rdbms를 Node.js 22.23.3으로 실행하고 현재 장비의 Python **3.2·3.13.1 각각 124개 전부 통과·실패/건너뜀 0**이다. 실행 파일은 `C:\Program Files\Python\302\python.exe`, `C:\Program Files\Python\313\python.exe`이며 3.12는 이번 장비에 없어 이번에는 실행하지 않았다. 기존 PY-4 ~ PY-6과 새 요청 API 연동 체크리스트는 별도 후속 작업으로 유지한다. 서버 검증은 [rdbms/HANDOFF.md](../rdbms/HANDOFF.md)를 따른다.
 - 진행 단계 : **PY-3 완료** (DB-API 2.0 계층). `types.py`(값 변환·타입 객체·생성자), `cursor.py`(`Cursor`), `connection.py`(`Connection`, `connect()`), 모듈 수준(`apilevel`, `threadsafety`, `paramstyle`, 예외·생성자·타입 객체)을 구현했다. TLS와 UDP는 `NotSupportedError` 이며 PY-4·PY-5에서 둔다.
@@ -16,7 +16,7 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - 착수 조건 : `rdbms` 11단계와 `nodejsDriver` 12단계 완료로 충족. 사용자의 작업 진행 지시에 따라 기존 설계 기본안의 배포 이름과 import 이름을 적용하고 AGENTS.md D절에 계획을 반영했다.
 - 최초 PY-3 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 124개 통과**, 실패·건너뜀 0. 기존 77개에 PY-3 신규 47개(`test_types` 23개, `test_dbapi` 24개. 모듈 규약·접속 검증·Hello World·자동 커밋·트랜잭션·fetch·description·타입 왕복·스레드 공유)를 더했다.
 - 배포 구성 : Python 3.12.4에서 소스 배포본과 `py3-none-any` 휠을 생성했다. 휠의 `Requires-Python: >=3.2`와 실행 의존 없음도 확인하고, 깨끗한 임시 가상 환경에 `pip --no-index --no-deps`로 설치해 소스 트리 밖 import와 PBKDF2 실행을 검증했다. 빌드 도구는 setuptools를 사용한다.
-- 다음 작업 : **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
+- 다음 작업 : **2026-10-22 점검에서 확인한 결함 P-1 ~ P-6의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). 그 뒤 **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
 - 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)를 선행 조건으로 하며, 기존 PY-4 ~ PY-6과 별도로 아래 미완료 작업을 추적한다.
 
 ## 다음 작업: 서버 prepare/describe·cancel 연동
@@ -30,6 +30,49 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - [ ] 사용자 취소·질의 제한 시간·통신 단절의 예외 매핑을 확정하고 SQLSTATE·내부 번호·위치를 보존한다. 취소 접수만으로 실행 성공/실패를 확정하지 않는다. 늦은 취소와 정상 완료의 경합, 응답 정리, 연결 재사용을 처리하고 결과 불명 DML을 자동 재실행하지 않는다.
 - [ ] Cursor·Connection 종료 시 준비 문장과 커서를 해제한다. USE·DDL·권한 변경에 따른 무효화를 처리하고, 취소된 문장 이전의 수동 트랜잭션 변경이 보존되는지 확인한다.
 - [ ] Python 3.2와 당시 사용 가능한 상위 Python에서 실제 서버 회귀 시험을 수행한다. TCP와 PY-4·PY-5에서 구현한 TLS·UDP, 실행 없는 describe·타입 미정·반복 바인딩·잠금 대기/CPU 질의 취소·UDP 유실/중복·구형 서버를 검증한 뒤 README와 진행 기록을 갱신한다.
+
+## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+
+2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 다음 수행할 작업으로 등록한다. 점검 기준선은 Python 3.13.5에서 전체 **124/124 통과**이다. P-2·P-3은 실제 `rdbms` 데몬으로, P-1은 RST를 보내는 가짜 TCP 서버로 재현했다. Python 3.2에서도 같은 시험을 다시 수행한다.
+
+- [ ] **P-1 (중간, 확인됨) TCP RST 등 소켓 오류가 DB-API 예외로 변환되지 않는다.**
+  - 위치 : `helloworlddb/_tcp.py:66-75`(`_recv_chunk`), `:120-151`(`_recv_one`).
+  - 원인 : `_recv_chunk`는 EINTR만 재시도하고 나머지 `socket.error`는 그대로 올린다. `_recv_one`은 `socket.timeout`만 변환하므로 `ECONNRESET`·`ECONNABORTED`·`EPIPE`가 원시 예외로 빠져나간다. 접속도 닫히지 않는다.
+  - 재현 : `SO_LINGER(0)`으로 RST를 보내는 가짜 서버에 `helloworlddb.connect()`를 하면 `ConnectionResetError(104, 'Connection reset by peer')`가 나고, `isinstance(error, errors.Error)`는 False였다.
+  - 수정 : `_recv_chunk`·`_send_all`·`_recv_one`의 모든 `socket.error`를 `connection_failure()`와 `_fail_closed()`로 감싸 `OperationalError`(또는 PEP 249에 맞는 하위 예외)로 바꾸고, `connect()`와 Cursor 경로에서도 소켓을 닫는다.
+  - 시험 : hello 전·로그인 후·질의 중 RST/EOF/송신 오류 각각에서 DB-API 예외, 접속 닫힘, 자원 정리를 확인한다.
+
+- [ ] **P-2 (중간, 확인됨) 실패한 `execute()` 뒤 이전 결과가 남아 `fetch*`가 옛 행을 돌려준다.**
+  - 위치 : `helloworlddb/cursor.py:72-108`(`execute`), `:110-122`(`_close_server_cursor`).
+  - 원인 : `execute()`가 서버 커서만 닫고 `_buffer`·`description`·`rowcount`를 초기화하지 않는다. 새 문장이 실패하면 이전 결과가 그대로 남는다.
+  - 재현(실제 서버) : `SELECT 1 UNION ALL SELECT 2`에서 `fetchone()`이 `[1]`을 돌려준 뒤 `SELECT no_such_column_xyz FROM DUAL`이 ProgrammingError로 실패했다. 이어 `fetchone()`이 `[2]`를, `description`이 이전 컬럼 1개를 그대로 돌려주었다.
+  - 수정 : `execute()`·`executemany()` 진입 시 문장을 보내기 전에 `_buffer=[]`·`description=None`·`rowcount=-1`·`_server_cursor=None`·`_has_more=False`로 초기화한다. 실패 시에도 같은 상태를 유지한다.
+  - 시험 : 성공 → 실패 → `fetchone/fetchmany/fetchall`이 PEP 249대로 예외 또는 빈 결과가 되는지, `description`·`rowcount`가 새 문장 기준인지 확인한다.
+
+- [ ] **P-3 (중간, 확인됨) 닫은 커서가 `Connection._cursors`에서 빠지지 않아 커밋마다 누적된다.**
+  - 위치 : `helloworlddb/connection.py:89-97`(`cursor()`가 목록에 추가), `:120-130`(`close()`에서만 비움), `helloworlddb/cursor.py:207-214`(`Cursor.close()`가 목록에서 제거하지 않음).
+  - 원인 : `commit()`·`rollback()`·`set_autocommit()`이 내부 `_run()`에서 매번 새 커서를 만들고 닫지만, 닫아도 `Connection._cursors`에 남는다. 장기 실행 프로그램에서 커밋 횟수만큼 메모리가 증가하고 `Connection.close()`가 O(n)이 된다.
+  - 재현(실제 서버) : 커밋 20회 뒤 `len(conn._cursors)`가 1에서 21로 늘었다.
+  - 수정 : `Cursor.close()`에서 `Connection`의 등록을 해제하거나 `WeakSet`을 쓴다. `_run()`은 커서를 만들지 말고 와이어를 직접 사용한다. `Connection.close()`의 순회도 함께 정리한다.
+  - 시험 : 커밋·롤백·autocommit 변경을 반복해도 커서 수가 늘지 않는지, 사용자 커서는 `close()` 전까지 유지되는지 확인한다.
+
+- [ ] **P-4 (낮음) `rows` 응답의 `columns`/행 모양 검증이 부족하다.**
+  - 위치 : `helloworlddb/_protocol.py:101-104`, `helloworlddb/cursor.py:11-25`·`:72-79`·`:152-170`.
+  - 문제 : `columns`가 문자열이거나 원소가 dict가 아니면 `_describe()`에서 `AttributeError`가 나고 접속이 abort되지 않는다. 행 폭이 컬럼 수와 달라도 초과 값을 원시 JSON으로 반환하거나 문자열을 문자 단위로 쪼갠다.
+  - 수정 : `decode_response()`에서 `columns` 배열/각 필드 타입과 행 길이 일치를 검사하고, 위반 시 `protocol_violation()`과 접속 종료로 처리한다. Node 드라이버의 엄격한 검증과 계약을 맞춘다.
+  - 시험 : `columns: "AB"`, `columns: [1]`, 행 폭 불일치, 문자열 행을 넣어 모두 DB-API 오류로 끝나는지 확인한다.
+
+- [ ] **P-5 (낮음) 결과 집합 없이 `fetch*`를 호출하면 PEP 249와 달리 `None`/`[]`을 돌려준다.**
+  - 위치 : `helloworlddb/cursor.py:172-198`.
+  - 문제 : `description is None`이면 `fetchone`은 None, `fetchmany`/`fetchall`은 []을 돌려준다. PEP 249는 이전 `execute*()`가 결과 집합을 만들지 않았거나 호출 자체가 없었으면 `Error`(보통 `ProgrammingError`)를 요구한다.
+  - 수정 : `ProgrammingError("No result set ...")`를 던지고 기존 시험 기대값을 함께 조정한다.
+  - 시험 : DML 직후, `execute` 없이, `executemany` 뒤의 fetch를 확인한다.
+
+- [ ] **P-6 (낮음) 서버가 `hasMore: true`에 빈 묶음을 계속 보내면 `fetchall`/`_fill`이 무한 루프한다.**
+  - 위치 : `helloworlddb/cursor.py:152-170`·`:195-205`. Node 드라이버도 같은 형태다(`nodejsDriver/src/connection.ts:249-254`).
+  - 문제 : 빈 묶음을 받아도 진행 조건이 없어 다시 `fetch`를 보낸다. 프로토콜은 묶음에 항상 행이 하나 이상이라고 보장하지만, 버그 서버·중간자 조작 시 클라이언트가 CPU·네트워크를 무한히 쓴다.
+  - 수정 : 빈 묶음 + `hasMore: true`를 프로토콜 위반으로 처리하거나, 총 수신 행·묶음 수 상한을 둔다.
+  - 시험 : 가짜 서버로 빈 묶음을 반복해 `OperationalError`와 접속 종료로 끝나는지 확인한다. Node 드라이버에도 같은 시험을 둔다.
 
 ## 작업 규칙
 
@@ -288,6 +331,8 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - `gui` 는 보류 중이며 `nodejsDriver` 를 쓴다. 이 드라이버를 쓰는 프로젝트는 아직 없다.
 
 ## 작업 이력
+
+- 2026-10-22 : 사용자 요청으로 코드를 점검하고 Python 3.13.5에서 기존 124개가 통과하는 기준선을 확인했다. P-2(실패한 execute 뒤 이전 결과), P-3(커서 누적)을 실제 `rdbms` 데몬으로 재현하고, P-1(RST 원시 예외), P-4(응답 모양 검증), P-5(PEP 249 fetch), P-6(빈 묶음 무한 루프)을 코드·가짜 서버로 확인해 "다음 작업: 2026-10-22 점검 취약점 수정"에 기록했다. 소스는 바꾸지 않았고 커밋·푸시는 하지 않았다.
 
 - 2026-10-21 : Linux에서 Python 3.2.6을 임시 빌드하고 3.13.5와 각각 기존 전체 124개를 통과했다. 구버전 Linux 단조 시계 분기, sdist·wheel 생성과 별도 가상 환경의 오프라인 설치·실제 TCP 접속도 확인했다. 드라이버 소스는 바꾸지 않고 환경·진행 기록을 갱신했다. 커밋·푸시는 하지 않았다.
 
