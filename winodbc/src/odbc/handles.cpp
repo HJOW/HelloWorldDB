@@ -42,6 +42,7 @@ void publish_handles(const std::vector<std::shared_ptr<Handle>>& handles) {
                 auto& name = static_cast<Statement&>(*handle).cursor_name;
                 name.assign("SQL_CUR");
                 while (count) name += digits[--count];
+                static_cast<Statement&>(*handle).automatic_cursor_name = name;
             }
             registry_value.handles.emplace(handle->id, handle);
             ++published;
@@ -74,6 +75,24 @@ std::vector<std::shared_ptr<Statement>> connection_statements(const Connection& 
     for (const auto& item : registry_value.handles)
         if (item.second->type == SQL_HANDLE_STMT && item.second->parent.get() == &connection)
             result.push_back(std::static_pointer_cast<Statement>(item.second));
+    return result;
+}
+std::vector<std::shared_ptr<Connection>> environment_connections(const Environment& environment) {
+    auto& registry_value = registry();
+    std::lock_guard<std::mutex> lock(registry_value.mutex);
+    std::vector<std::shared_ptr<Connection>> result;
+    for (const auto& item : registry_value.handles)
+        if (item.second->type == SQL_HANDLE_DBC && item.second->parent.get() == &environment)
+            result.push_back(std::static_pointer_cast<Connection>(item.second));
+    return result;
+}
+std::vector<std::shared_ptr<Descriptor>> connection_descriptors(const Connection& connection) {
+    auto& registry_value = registry();
+    std::lock_guard<std::mutex> lock(registry_value.mutex);
+    std::vector<std::shared_ptr<Descriptor>> result;
+    for (const auto& item : registry_value.handles)
+        if (item.second->type == SQL_HANDLE_DESC && item.second->parent.get() == &connection)
+            result.push_back(std::static_pointer_cast<Descriptor>(item.second));
     return result;
 }
 

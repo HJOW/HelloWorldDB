@@ -10,4 +10,5 @@ std::string connection_string(const Options& options);
 unsigned option_integer(const Options& options, const char* name, unsigned fallback, unsigned minimum, unsigned maximum);
 bool option_boolean(const Options& options, const char* name, bool fallback);
 void open_connection(Connection& connection, Options& options);
+void reset_connection(Connection& connection);
 }

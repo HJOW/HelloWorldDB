@@ -72,8 +72,8 @@ SQLRETURN set_statement_attribute(SQLHSTMT handle, SQLINTEGER attribute, SQLPOIN
         case SQL_ATTR_MAX_ROWS: statement.max_rows = value; break;
         case SQL_ATTR_MAX_LENGTH: if (value) return changed(); break;
         case SQL_ATTR_QUERY_TIMEOUT:
-            if (value) throw DriverError("HYC00", "Query timeout cancellation is not implemented yet.");
-            statement.query_timeout = 0; break;
+            if (value > UINT_MAX / 1000U) throw DriverError("HY024", "Query timeout exceeds the supported range.");
+            statement.query_timeout = static_cast<SQLUINTEGER>(value); break;
         case SQL_ATTR_METADATA_ID:
             if (value > SQL_TRUE) throw DriverError("HY024", "Invalid metadata identifier mode.");
             statement.metadata_id = static_cast<SQLUINTEGER>(value); break;

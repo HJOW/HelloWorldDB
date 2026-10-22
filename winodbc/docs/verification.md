@@ -1,5 +1,17 @@
 # 검증 기록과 후속 시험
 
+## VM-W11-CODEX — WO-8 트랜잭션·취소·시간 제한·초기화
+
+2026-10-22, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. [호스트 환경](environment.md)의 같은 설치 경로를 재조회했다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다.
+
+저장소 루트에서 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`을 실행했다. x64 Debug/Release·x86 Debug/Release 각각 **CTest 15개, 합계 60개 통과**이다. 그 안의 Node 실제 서버/결함 주입은 구성당 24개, 총 96개이며 CTest 수에 중복 합산하지 않는다. 별도 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 검사 10개도 통과했다. 기본 행렬 실패·건너뜀은 0이며 63개 export·정적 CRT·직접 시험과 Manager 링크 분리를 확인했다. 최종 `build/native/summary.json`의 status는 `passed`, capturedAt은 `2026-10-22T00:36:10.4970455+00:00`이다. 로그는 같은 디렉토리의 `*-ctest.log`, `*-ctest.xml`, `*-build.log`, `pe-audit.log`, `wo8-matrix.log`에 있다.
+
+- **실제 Manager → DLL → 서버**: `transaction_cases.cpp`의 커밋 가시성·롤백·DDL 자동 커밋·ENV의 두 연결 처리·연결 종료 롤백·커서 보존, 잠금/CPU 취소·앞선 미커밋 변경 보존·다음 SELECT, 같은 DBC 대기 요청과 별도 DBC 진행, query/connection timeout·늦은 취소를 통과했다.
+- **직접 DLL → 서버**: `reset_probe.cpp`의 바인딩·준비·커서·명시/자동 descriptor 초기화, 앱 메모리 유지, NULL 기본 테이블스페이스·타임존 복원·미커밋 변경 롤백·기본 속성, 서버에서 암호가 바뀐 뒤 reset 실패/연결 dead·재사용 거부를 통과했다. 실제 Manager 풀 반환/재인수는 이 결과에 포함하지 않는다.
+- **저수준 결함 주입**: 누적 로그인 deadline, 취소 ACK와 원래 57014 응답의 분리/HYT00, ACK 뒤 원래 응답 유실의 dead 처리, tooLate 뒤 실제 정상 완료 보존·다음 요청 정합성, 12MiB 송신 정체의 제한 시간·재실행 부재를 통과했다.
+
+상세 계약은 [트랜잭션·취소·초기화](transactions-cancel-reset.md)에 있다. WO-8.7의 실제 Manager 풀 검증과 아래 WO-7.1 공유 DESC의 별도 실패는 남아 있다. 사용자 요청에 따라 WO-8 변경의 문서 반영·커밋 후 목표를 일시 중지하며 WO-9 이후는 착수하지 않는다. 전체 Core/ODBC 3.8 적합성을 선언하지 않는다.
+
 ## VM-W11-CODEX — WO-7 분할 입력과 배열 검증
 
 2026-10-22 Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. 현재 PC의 설치 경로를 다시 조회했고 현재 서버 소스를 `build/server/`에 빌드했다. 오래된 `rdbms/dist/`에서는 준비 INSERT가 42804였으며 현재 소스에서는 통과했다. 서버 소스와 기존 dist는 바꾸지 않았다.

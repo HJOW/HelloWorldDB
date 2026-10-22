@@ -13,6 +13,8 @@ public:
     SQLINTEGER native;
     DriverError(const char* code, const char* message, SQLINTEGER number = 0)
         : std::runtime_error(message), state(code), native(number) {}
+    DriverError(const char* code, const std::string& message, SQLINTEGER number = 0)
+        : std::runtime_error(message), state(code), native(number) {}
 };
 
 std::wstring utf16(std::string_view input);

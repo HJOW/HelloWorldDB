@@ -71,6 +71,59 @@ async function fake(t, onMessage) {
 }
 const hello = id => ({ id, type: 'helloOk', version: 1, mechanism: 'SCRAM-SHA-256', maxMessageBytes: 16777216, server: 'test', defaultFetchSize: 500 });
 
+test('LOGIN_TIMEOUT은 hello·인증 단계에 누적 적용된다', async t => {
+  const port = await fake(t, (socket, message) => {
+    if (message.type === 'hello') setTimeout(() => socket.write(frame(hello(message.id))), 700);
+    if (message.type === 'authStart') {
+      const nonce = message.clientFirst.split(',r=')[1];
+      setTimeout(() => socket.write(frame({ id: message.id, type: 'authChallenge', serverFirst: `r=${nonce}SERVER,s=c2FsdA==,i=4096` })), 700);
+    }
+  });
+  const started = Date.now(), result = await probe(port, 'login-budget');
+  assert.equal(result.status, 2, result.stderr); assert.match(result.stderr, /STATE=HYT01/);
+  assert.ok(Date.now() - started < 4000, '단계별 timeout을 새로 시작하지 않아야 한다.');
+});
+
+for (const scenario of ['query-timeout', 'cancel-desync', 'timeout-completed', 'send-timeout']) {
+  test(`취소 응답 분배·시간 제한 결함 주입: ${scenario}`, async t => {
+    let first, serverFirst, executionId, executions = 0;
+    const port = await fake(t, (socket, message) => {
+      if (message.type === 'hello') return socket.write(frame({ ...hello(message.id), capabilities: ['cancel'] }));
+      if (message.type === 'authStart') {
+        first = message.clientFirst.slice(3);
+        serverFirst = `r=${first.split(',r=')[1]}SERVER,s=c2FsdA==,i=4096`;
+        return socket.write(frame({ id: message.id, type: 'authChallenge', serverFirst }));
+      }
+      if (message.type === 'authFinish') {
+        const auth = `${first},${serverFirst},${message.clientFinal.split(',p=')[0]}`;
+        const salted = pbkdf2Sync('HelloWorldDB', 'salt', 4096, 32, 'sha256');
+        const hmac = (key, text) => createHmac('sha256', key).update(text).digest();
+        const signature = hmac(hmac(salted, 'Server Key'), auth).toString('base64');
+        socket.write(frame({ id: message.id, type: 'authOk', serverFinal: `v=${signature}`,
+          session: { id: 1, user: 'SYSTEM', tablespace: 'SYSTEM', timeZone: '+00:00', autocommit: true } }));
+        if (scenario === 'send-timeout') socket.pause();
+        return;
+      }
+      const rows = (id, value) => ({ id, type: 'rows', columns: [{ name: 'N', typeName: 'INTEGER', declared: 'INTEGER' }], rows: [[value]], hasMore: false });
+      if (message.type === 'execute') {
+        ++executions;
+        if (executions === 1) executionId = message.id;
+        else socket.write(frame(rows(message.id, 2)));
+      }
+      if (message.type === 'cancel') {
+        assert.equal(message.targetId, executionId);
+        socket.write(frame({ id: message.id, type: 'cancelAck', targetId: executionId, status: scenario === 'timeout-completed' ? 'tooLate' : 'accepted' }));
+        if (scenario === 'query-timeout') socket.write(frame({ id: executionId, type: 'error', sqlState: '57014', code: 8010, message: 'Statement was cancelled.' }));
+        if (scenario === 'timeout-completed') setTimeout(() => socket.write(frame(rows(executionId, 1))), 100);
+      }
+      if (message.type === 'close') socket.end(frame({ id: message.id, type: 'bye' }));
+    });
+    const result = await probe(port, scenario);
+    assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, new RegExp(`PASS ${scenario}`));
+    assert.equal(executions, scenario === 'send-timeout' ? 0 : scenario === 'cancel-desync' ? 1 : 2, '원래 DML/질의를 자동 재실행하지 않는다.');
+  });
+}
+
 test('실제 서버: SCRAM·fetch·오류 후 재사용·기본 tablespace NULL', async t => {
   const port = await freeTcpUdpPort();
   const parent = path.join(project, 'build/integration'); fs.mkdirSync(parent, { recursive: true });
@@ -93,7 +146,7 @@ test('실제 서버: SCRAM·fetch·오류 후 재사용·기본 tablespace NULL'
       const remote = Object.values(os.networkInterfaces()).flat().find(address => address && !address.internal && address.family === 'IPv4');
       assert.ok(remote, '원격 CONNECT 시험에 사용할 비루프백 IPv4 주소가 필요하다.');
       const child = spawn(process.env.HWDB_DM_CONNECTION, [driver, String(port)], {
-        windowsHide: true, timeout: 20000, env: { ...process.env, HWDB_TEST_REMOTE_HOST: remote.address },
+        windowsHide: true, timeout: 60000, env: { ...process.env, HWDB_TEST_REMOTE_HOST: remote.address },
       });
       let output = '';
       child.stdout.on('data', value => output += value);
@@ -104,7 +157,17 @@ test('실제 서버: SCRAM·fetch·오류 후 재사용·기본 tablespace NULL'
     assert.match(result.output, /MANAGER DLL:/);
     console.log(result.output.trim());
   }
-  assert.ok(logs.every(message => !message.includes('wrong-test-password') && !message.includes('no-default-test')));
+  if (process.env.HWDB_RESET_PROBE) {
+    const result = await new Promise((resolve, reject) => {
+      const driver = process.env.HWDB_ODBC_DLL ?? path.join(path.dirname(executable), 'hwdbodbc.dll');
+      const child = spawn(process.env.HWDB_RESET_PROBE, [driver, String(port)], { windowsHide: true, timeout: 20000 });
+      let output = '';
+      child.stdout.on('data', value => output += value); child.stderr.on('data', value => output += value);
+      child.on('error', reject); child.on('close', status => resolve({ status, output }));
+    });
+    assert.equal(result.status, 0, result.output); console.log(result.output.trim());
+  }
+  assert.ok(logs.every(message => ['wrong-test-password','no-default-test','null-reset-test','changed-reset-test'].every(secret => !message.includes(secret))));
 });
 
 for (const [name, response, state] of [

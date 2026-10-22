@@ -51,7 +51,7 @@ SQLRETURN execute_direct(SQLHSTMT handle, Character* input, SQLINTEGER length) {
         statement.executed = false; statement.row_count = 0;
         statement.diagnostic.row_count = 0; statement.diagnostic.cursor_row_count = 0;
         statement.descriptors[2]->records.clear();
-        const auto response = connection.session->request({{"type", "execute"}, {"sql", sql}, {"fetchSize", connection.fetch_size}}, "result", connection.connection_timeout);
+        const auto response = statement_request(statement,{{"type", "execute"}, {"sql", sql}, {"fetchSize", connection.fetch_size}});
         accept_result(statement, response);
         return SQL_SUCCESS;
     });

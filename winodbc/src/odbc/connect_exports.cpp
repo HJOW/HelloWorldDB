@@ -105,7 +105,10 @@ SQLRETURN set_attribute(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER input, 
             if (value == SQL_ASYNC_DBC_ENABLE_OFF) return SQL_SUCCESS;
             throw DriverError("HYC00", "Asynchronous execution is not supported.");
         }
-        if (attribute == SQL_ATTR_RESET_CONNECTION) throw DriverError("HYC00", "Connection reset is not implemented yet.");
+        if (attribute == SQL_ATTR_RESET_CONNECTION) {
+            if (value != SQL_RESET_CONNECTION_YES) throw DriverError("HY024", "Invalid reset connection value.");
+            reset_connection(connection); return SQL_SUCCESS;
+        }
         throw DriverError("HY092", "Invalid attribute identifier.");
     });
 }
@@ -141,6 +144,7 @@ extern "C" SQLRETURN SQL_API SQLDisconnect(SQLHDBC handle) {
             warning = true;
         }
         connection.session.reset();
+        connection.reconnect.reset();
         connection.connected = false;
         invalidate_connection_children(connection);
         return warning ? SQL_SUCCESS_WITH_INFO : SQL_SUCCESS;

@@ -6,21 +6,22 @@
 |---|---|---|
 | SQLAllocHandle / SQLFreeHandle | ENV/DBC/STMT/명시 DESC·네 자동 DESC·공유/교체·부모/자식·무효/해제 후·동시 조회/해제 | 연결된 DESC 해제 직후 Manager 조회 재현 사례·실행 중 해제 WO-7/8/13 |
 | SQLSetEnvAttr / SQLGetEnvAttr | ODBC 2/3/3.8·OUTPUT_NTS, DBC 할당 이후 버전 변경 거부 | 전체 버전 적합성 WO-13 |
-| SQLGetDiagRec/W·SQLGetDiagField/W | 모든 핸들·다중 Unicode 레코드·header·행/파라미터 배열의 행/컬럼·native·W 길이·진단 수명 | 취소 진단 WO-8 |
+| SQLGetDiagRec/W·SQLGetDiagField/W | 모든 핸들·다중 Unicode 레코드·header·행/파라미터 배열의 행/컬럼·native·W 길이·취소/시간 초과 진단 | 전체 적합성 WO-13 |
 | SQLConnect/W | 엄격한 문자열 입력, User/System DSN 로그인·명시 값 우선·원격 CONNECT 거부 | 설정 UI/등록 WO-12 |
 | SQLDriverConnect/W·SQLDisconnect | TCP·NOPROMPT·DSN 없는 로그인/종료, 엄격한 연결 문자열·암호 제거 | prompting·DSN·다른 전송 WO-10/11/12 |
-| SQLGet/SetConnectAttr/W | login/connection timeout·autocommit·metadata id·access mode·격리·dead·catalog 없음·quiet mode | reset·실행 시간 제한·풀 WO-8 |
-| SQLGet/SetStmtAttr/W | 자동/명시 descriptor·공유/자동 IPD·전진/읽기 전용·최대 행·행/파라미터 배열/offset·상태/처리 수 | 실행 취소 시간 제한 WO-8 |
+| SQLGet/SetConnectAttr/W | login/connection timeout·autocommit·metadata id·access mode·격리·dead·catalog 없음·quiet mode·재인증 reset | 실제 Manager 풀 재사용 WO-8/13 |
+| SQLGet/SetStmtAttr/W | 자동/명시 descriptor·공유/자동 IPD·전진/읽기 전용·최대 행·행/파라미터 배열/offset·상태/처리 수·query timeout | 전체 속성 감사 WO-9/13 |
 | SQLGet/SetDescField/W·GetDescRec/W·SetDescRec·CopyDesc | 역할별 필드·폭·이름·일관성 검사·복사·같은 바인딩 상태·교차 연결 잠금·NEED_DATA 변경 거부 | 여러 STMT 공유 상태의 Manager 해제 재현 WO-7/13 |
 | SQLExecDirect/W·NumResultCols·RowCount·DescribeCol/W·ColAttribute/W | 조회/DML·실행 전 메타데이터·실제 타입/정밀도·한글 이름·W 길이·영향 행 수 | 전체 정보 필드 감사 WO-9 |
 | SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter | 서버 준비/설명/실행/해제·UNKNOWN/힌트·INPUT 배열·실행 시 앱 버퍼 읽기 | 출력 파라미터 제외 |
-| SQLParamData·SQLPutData·SQLCancel | NEED_DATA token·분할 입력·NULL·예고 길이·배열 상태·로컬 입력 취소 | 서버 실행 중 취소 WO-8 |
+| SQLParamData·SQLPutData·SQLCancel | NEED_DATA token·분할 입력·NULL·예고 길이·배열 상태·로컬 입력/서버 실행 취소·늦은 취소 | 전체 동시성 인수 WO-13 |
+| SQLEndTran | DBC/ENV의 COMMIT/ROLLBACK·READ COMMITTED·DDL 자동 커밋·연결 종료 롤백 | 분산 트랜잭션 제외 |
 | SQLNativeSql/W | 날짜시간·함수·outer join·LIKE escape의 실행 없는 변환·NOSCAN | CALL/GUID escape 미지원 |
 | SQLBindCol·Fetch·FetchScroll(NEXT)·GetData | 열/packed 행 배열·앱 주소·NULL·정확한 38자리 소수/64비트·날짜시간·13개 INTERVAL·분할 | GetData는 rowset=1, BLOCK 미지원 |
 | SQLCloseCursor·FreeStmt·MoreResults·Get/SetCursorName/W | 서버 커서/준비 자원 정리·모든 FreeStmt 옵션·단일 결과 종료·자동/명시/인용 커서 이름 | positioned DML 미지원 |
 | SQLGetInfo/W·SQLGetFunctions | 제품명·기본 문자열 정보·실제 구현 함수의 단일/배열/ODBC3 비트맵 | 전체 정보/함수 감사 WO-9/13 |
 
-고정 비상 진단으로 bad_alloc→HY001, 예상 밖 예외→HY000을 처리한다. 정상 레코드는 가변 길이 목록을 사용한다. ENV 할당 자체의 실패는 진단 핸들이 없어 SQL_ERROR이다. [상태·잠금·문자열 구현](state-machines.md)을 따른다. SQL_DRIVER_ODBC_VER는 현재 `03.00`으로 유지하며, 3.8 앱의 Manager 경로에서 버전 경고가 붙을 수 있다. 속성 미지원은 성공으로 무시하지 않는다.
+고정 비상 진단으로 bad_alloc→HY001, 예상 밖 예외→HY000을 처리한다. 정상 레코드는 가변 길이 목록을 사용한다. ENV 할당 자체의 실패는 진단 핸들이 없어 SQL_ERROR이다. [상태·잠금·문자열 구현](state-machines.md)과 [트랜잭션·취소·초기화](transactions-cancel-reset.md)를 따른다. SQL_DRIVER_ODBC_VER는 현재 `03.00`으로 유지하며, 3.8 앱의 Manager 경로에서 버전 경고가 붙을 수 있다. reset의 직접 DLL 시험은 실제 Manager 풀 재사용의 증거가 아니다. 속성 미지원은 성공으로 무시하지 않는다.
 
 ODBC 3.8을 목표로 하며, [Core 목록](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/core-interface-conformance?view=sql-server-ver17)과 [함수별 분류](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/function-conformance?view=sql-server-ver17)를 확인했다. 입력 배열·실행 시 데이터·descriptor·다중 스레드 취소를 완료 기준에 포함한다. 아래의 호출 형태·오류 선택은 이 프로젝트의 구현 계약이며 함수별 공식 진단표를 각 구현 단계에서 재확인한다.
 
@@ -117,7 +118,7 @@ SQLCancelHandle·SQLCompleteAsync·SQLBrowseConnect·SQLBulkOperations·SQLSetPo
 | SQL_ATTR_AUTOCOMMIT | SQL_AUTOCOMMIT_ON; OFF 지원, OFF→ON의 commit 실패 보존 | WO-8 T-TXN |
 | SQL_ATTR_TXN_ISOLATION | SQL_TXN_READ_COMMITTED; 다른 격리 수준 미지원 | WO-8 T-TXN |
 | SQL_ATTR_LOGIN_TIMEOUT | 0초(드라이버 제한 없음), 서버 인증 10초와 별개; ms 변환 오버플로 확인 | WO-4 T-CONNECT |
-| SQL_ATTR_CONNECTION_TIMEOUT | 0; 0보다 큰 네트워크 제한은 WO-8에서 구현·단위 초 | WO-8 T-TIMEOUT |
+| SQL_ATTR_CONNECTION_TIMEOUT | 0초; 요청의 송신 대기·송신·응답 대기 제한, 만료 시 동기화 또는 dead | WO-8 T-TIMEOUT |
 | SQL_ATTR_CONNECTION_DEAD | get 전용 TRUE/FALSE; 통신 실패 후 TRUE | WO-8 T-TIMEOUT |
 | SQL_ATTR_RESET_CONNECTION | Manager 전용, SQL_RESET_CONNECTION_YES만; 재인증으로 전 상태 초기화 | WO-8 T-RESET |
 | SQL_ATTR_CURRENT_CATALOG | 없음; get 빈 문자열, 비어 있지 않은 set HYC00 | WO-4 T-CONNECT |

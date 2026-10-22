@@ -10,6 +10,38 @@ Connection& statement_connection(Statement& statement) {
     if (connection.session->dead()) throw DriverError("08S01", "Connection is no longer usable.", 8006);
     return connection;
 }
+Json statement_request(Statement& statement, Json message) {
+    auto& connection = statement_connection(statement);
+    if (statement.query_timeout && !connection.session->capabilities.count("cancel"))
+        throw DriverError("HYC00", "Query timeout requires server cancellation support.");
+    auto operation = std::atomic_load(&statement.active_operation);
+    if (!operation) { operation = std::make_shared<OperationControl>(); std::atomic_store(&statement.active_operation,operation); }
+    struct Clear {
+        Statement& statement;
+        ~Clear() {
+            std::atomic_store(&statement.active_request,std::shared_ptr<RequestControl>{});
+        }
+    } clear{statement};
+    auto control = std::make_shared<RequestControl>(); control->session = connection.session; control->operation = operation;
+    std::atomic_store(&statement.active_request,control);
+    if (operation->cancelled) throw DriverError("HY008", "Operation was cancelled before execution.");
+    if (operation->cancelled) control->cancel_requested = true;
+    return connection.session->request(std::move(message),"result",connection.connection_timeout,control,statement.query_timeout);
+}
+SQLRETURN finish_statement_call(Statement& statement, SQLRETURN result) {
+    if (statement.parameter_execution) {
+        const auto operation = std::atomic_load(&statement.active_operation);
+        if (operation && operation->cancelled && !std::atomic_load(&statement.active_request)) {
+            settle_local_cancellation(statement);
+            if (result == SQL_NEED_DATA) throw DriverError("HY008", "Parameter input was cancelled.");
+        }
+    }
+    if (statement.parameter_execution) return result;
+    const auto operation = std::atomic_exchange(&statement.active_operation,std::shared_ptr<OperationControl>{});
+    // 정상 완료와 취소가 경합하면 실제 결과는 보존하되 Manager 규약대로 SELECT 커서를 닫는다.
+    if (operation && operation->cancelled && statement.cursor_open) close_statement_cursor(statement);
+    return result;
+}
 void close_statement_cursor(Statement& statement) {
     if (statement.cursor && statement.parent) {
         auto& connection = static_cast<Connection&>(*statement.parent);
@@ -28,7 +60,11 @@ void release_prepared(Statement& statement) {
     }
     statement.prepared = 0; statement.prepared_rows = false; statement.parameter_metadata.clear(); statement.parameter_metadata_dirty = false;
 }
-void release_statement(Statement& statement) { statement.parameter_execution.reset(); close_statement_cursor(statement); release_prepared(statement); }
+void release_statement(Statement& statement) {
+    statement.parameter_execution.reset();
+    std::atomic_store(&statement.active_operation,std::shared_ptr<OperationControl>{});
+    close_statement_cursor(statement); release_prepared(statement);
+}
 namespace {
 Json parameter_hints(const Statement& statement, std::size_t count) {
     Json hints = Json::array();
@@ -111,7 +147,9 @@ SQLRETURN execute_prepared(Statement& statement) {
     if (ipd.array_status) std::fill_n(ipd.array_status,apd.array_size,static_cast<SQLUSMALLINT>(SQL_PARAM_UNUSED));
     if (statement.parameter_metadata_dirty) describe_prepared(statement);
     if (apd.array_size > 1 && statement.prepared_rows) throw DriverError("HYC00", "Result-producing parameter arrays are not supported.");
-    statement.parameter_execution = std::make_unique<ParameterExecution>();
+    auto execution = std::make_unique<ParameterExecution>();
+    std::atomic_store(&statement.active_operation,std::make_shared<OperationControl>());
+    statement.parameter_execution = std::move(execution);
     return continue_parameters(statement);
 }
 void finish_statement_result(Statement& statement) {

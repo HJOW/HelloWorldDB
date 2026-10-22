@@ -1,6 +1,6 @@
 # 핸들·진단·문자열의 현재 상태 규칙
 
-WO-2·WO-5·WO-6과 진행 중인 WO-7의 현재 구현 기준이다. 준비 문장은 [준비 규칙](prepared-statements.md), descriptor/배열·NEED_DATA의 순서는 [배열 규칙](descriptors-arrays.md)을 따른다. 실행 중 서버 취소는 WO-8 후속이다.
+WO-2 ~ WO-8의 현재 구현 기준이다. 준비 문장은 [준비 규칙](prepared-statements.md), descriptor/배열·NEED_DATA의 순서는 [배열 규칙](descriptors-arrays.md), 실행 중 서버 취소와 시간 제한·reset은 [트랜잭션 규칙](transactions-cancel-reset.md)을 따른다. 실제 Manager 풀 재사용과 전체 적합성은 미검증이다.
 
 ## 수명과 잠금
 
@@ -10,7 +10,7 @@ ENV → DBC → STMT, DBC → 명시적 DESC 관계를 가진다. STMT는 자동
 
 레지스트리 잠금 중에는 핸들 잠금을 얻거나 네트워크 요청을 하지 않는다. 조회 후 레지스트리 잠금을 해제하고 핸들 mutex를 얻어 alive를 다시 확인한다. 해제 대기 중인 호출은 공유 소유권으로 메모리는 유지하지만, 무효화 후에는 SQL_INVALID_HANDLE이다. 자식 수는 원자적으로 관리하며 부모 해제와 새 자식 할당을 부모 잠금으로 조정한다.
 
-ENV는 자체 mutex, DBC마다 서로 독립적인 mutex를 가진다. 그 DBC의 STMT/DESC는 DBC mutex를 공유한다. 따라서 다른 연결의 SQL 실행은 전역으로 직렬화되지 않는다. 같은 DBC의 일반 요청은 직렬화한다. 실행 중 취소는 WO-8에서 별도 진입 경로로 추가해야 한다.
+ENV는 자체 mutex, DBC마다 서로 독립적인 mutex를 가진다. 그 DBC의 STMT/DESC는 DBC mutex를 공유한다. 따라서 다른 연결의 SQL 실행은 전역으로 직렬화되지 않는다. 같은 DBC의 일반 요청은 직렬화한다. SQLCancel은 이 mutex를 기다리지 않고 공유 수명으로 보호한 작업/요청 제어 객체를 통해 현재 요청만 취소한다. 송신은 별도 timed mutex로 프레임 단위를 보호하고 수신 스레드는 하나만 둔다.
 
 ## 진단
 
@@ -20,6 +20,8 @@ ENV는 자체 mutex, DBC마다 서로 독립적인 mutex를 가진다. 그 DBC�
 | SQLAllocHandle | 입력 부모의 진단 지움 | 부모에 기록 |
 | SQLFreeHandle | 대상 진단 지움, 실패하면 대상 유지 | 실패 진단 기록 |
 | SQLGetDiagRec/W, SQLGetDiagField/W | 지우거나 덧붙이지 않음 | 변경하지 않음 |
+| SQLCancel, NEED_DATA의 로컬 취소 | 누적 입력과 함께 지움 | SQL_SUCCESS |
+| SQLCancel, 다른 스레드의 실행 취소/유휴 호출 | 실행 측 진단을 지우거나 자신의 진단을 게시하지 않음 | 원래 실행의 반환 코드 유지 |
 | 무효 핸들 | 접근하지 않음 | SQL_INVALID_HANDLE |
 
 정상 레코드는 동적 목록으로 메시지·SQLSTATE·native error·행/컬럼을 가진다. C++ 예외에서는 추가 할당 없는 비상 레코드를 사용한다. bad_alloc은 HY001이고, 나머지 예상 밖 예외는 원문을 노출하지 않는 HY000이다. 정상 DriverError는 원래 상태와 번호를 보존한다. 진단 조회 실패도 기존 진단을 바꾸지 않는다.
@@ -48,4 +50,4 @@ SQLDisconnect는 서버 close 후 남은 STMT와 명시/자동 DESC 토큰을 �
 
 수신 스레드는 하나이며 id별 promise로 응답을 분배한다. hello/auth 필드, 결과·준비·취소·오류의 알려진 필드와 범위, 중복 키, 깊이를 검사한다. 모르는 추가 필드는 무시하지만 모르는 type은 연결 오류이다. id 0의 서버 오류는 대기 요청에 전달하고 연결을 dead로 만든다.
 
-authOk를 수신하면 서명 검증이 끝날 때까지 수신 스레드는 조건 변수에서 기다린다. 검증에 성공한 뒤에만 다음 프레임에 인증 후 16MiB 한도를 적용한다. 검증 실패·종료는 같은 조건 변수를 깨워 스레드를 정리한다. 인증 전 한도는 64KiB이다. 취소/시간 제한의 응답 정합성은 WO-8의 후속이다.
+authOk를 수신하면 서명 검증이 끝날 때까지 수신 스레드는 조건 변수에서 기다린다. 검증에 성공한 뒤에만 다음 프레임에 인증 후 16MiB 한도를 적용한다. 검증 실패·종료는 같은 조건 변수를 깨워 스레드를 정리한다. 인증 전 한도는 64KiB이다. 취소 ACK와 원래 실행 응답은 각각의 ID로 분배하며 ACK만으로 실행을 완료하지 않는다. 시간 제한 후 원래 응답과 동기화할 수 없으면 연결을 dead로 만들어 재사용을 거부한다.

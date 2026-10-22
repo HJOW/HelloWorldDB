@@ -1,8 +1,34 @@
 #include "hwdbodbc/connection.hpp"
+#include "hwdbodbc/statement.hpp"
+#include <dpapi.h>
+#include <cstring>
 #include <charconv>
 #include <cctype>
 
 namespace hwdbodbc {
+struct ReconnectState {
+    Options settings;
+    std::vector<unsigned char> password;
+    std::size_t password_size;
+    explicit ReconnectState(const Options& options) : password_size(options.at("PWD").size()) {
+        for (const auto& item : options) if (item.first != "PWD" && item.first != "PASSWORD" && item.first != "DSN") settings.emplace(item);
+        if (password_size > (std::numeric_limits<DWORD>::max)() - 15U) throw DriverError("HY090", "Password exceeds the protected memory size limit.");
+        password.resize((std::max)(std::size_t{16},(password_size + 15) / 16 * 16));
+        if (password_size) std::memcpy(password.data(),options.at("PWD").data(),password_size);
+        if (!CryptProtectMemory(password.data(),static_cast<DWORD>(password.size()),CRYPTPROTECTMEMORY_SAME_PROCESS)) {
+            const auto error = GetLastError(); SecureZeroMemory(password.data(),password.size());
+            throw DriverError("HY000", "Could not protect reconnection credentials.",static_cast<SQLINTEGER>(error));
+        }
+    }
+    ~ReconnectState() { if (!password.empty()) SecureZeroMemory(password.data(),password.size()); }
+    Options restore() const {
+        Options result = settings;
+        struct Plain { std::vector<unsigned char> bytes; ~Plain() { if (!bytes.empty()) SecureZeroMemory(bytes.data(),bytes.size()); } } plain{password};
+        if (!CryptUnprotectMemory(plain.bytes.data(),static_cast<DWORD>(plain.bytes.size()),CRYPTPROTECTMEMORY_SAME_PROCESS))
+            throw DriverError("HY000", "Could not restore reconnection credentials.",static_cast<SQLINTEGER>(GetLastError()));
+        result.emplace("PWD",std::string(reinterpret_cast<const char*>(plain.bytes.data()),password_size)); return result;
+    }
+};
 namespace {
 std::string trim(std::string_view value) {
     const auto first = value.find_first_not_of(" \t\r\n");
@@ -138,13 +164,49 @@ void open_connection(Connection& connection, Options& options) {
             && item.first != "FETCHSIZE" && item.first != "SSL" && item.first != "SSLVERIFY" && item.first != "SSLCA")
             connection.diagnostic.append("01S00", "Invalid connection string attribute was ignored.");
     }
-    auto session = std::make_shared<Session>(tcp_transport(host, static_cast<unsigned short>(port), connection.login_timeout));
-    session->login(options.at("UID"), options.at("PWD"), get_option(options, "TABLESPACE"), get_option(options, "TIMEZONE"), connection.login_timeout);
+    const auto reconnect = std::make_shared<ReconnectState>(options);
+    const auto deadline = connection.login_timeout ? std::chrono::steady_clock::now() + std::chrono::seconds(connection.login_timeout) : TransportDeadline::max();
+    auto session = std::make_shared<Session>(tcp_transport(host, static_cast<unsigned short>(port), connection.login_timeout,deadline));
+    session->login(options.at("UID"), options.at("PWD"), get_option(options, "TABLESPACE"), get_option(options, "TIMEZONE"), connection.login_timeout,deadline);
     if (connection.autocommit == SQL_AUTOCOMMIT_OFF)
         session->request({{"type", "execute"}, {"sql", "SET AUTOCOMMIT OFF"}}, "result", connection.connection_timeout);
     connection.server_name = host;
     connection.fetch_size = fetch_size;
     connection.session = std::move(session);
+    connection.reconnect = reconnect;
     connection.connected = true;
+}
+void reset_connection(Connection& connection) {
+    if (!connection.connected || !connection.session) throw DriverError("08003", "Connection is not open.");
+    if (connection.session->dead()) throw DriverError("08S01", "A dead connection cannot be reset.");
+    if (!connection.reconnect) { connection.session->abort(); throw DriverError("HYC00", "Connection has no reconnection state and must be discarded."); }
+    for (const auto& statement : connection_statements(connection)) {
+        settle_local_cancellation(*statement);
+        if (statement->parameter_execution) throw DriverError("HY010", "Complete or cancel parameter data before reset.");
+    }
+    auto options = connection.reconnect->restore();
+    struct Erase { Options& options; ~Erase() { auto& password = options.at("PWD"); if (!password.empty()) SecureZeroMemory(password.data(),password.size()); } } erase{options};
+    // 재인증 전에 기존 세션을 닫아 커서·준비 ID·미커밋 변경·잠금을 서버에서 폐기한다.
+    try {
+        connection.session->close();
+        for (const auto& statement : connection_statements(connection)) {
+            release_statement(*statement); statement->executed = false; statement->row_count = 0;
+            statement->max_rows = 0; statement->retrieve_data = SQL_RD_ON; statement->query_timeout = 0;
+            statement->metadata_id = SQL_FALSE; statement->noscan = SQL_NOSCAN_OFF; statement->auto_ipd = false;
+            statement->cursor_name = statement->automatic_cursor_name; statement->diagnostic.clear();
+        }
+        for (const auto& descriptor : connection_descriptors(connection)) {
+            descriptor->records.clear(); descriptor->array_size = 1; descriptor->bind_type = SQL_BIND_BY_COLUMN;
+            descriptor->bind_offset = nullptr; descriptor->array_status = nullptr; descriptor->rows_processed = nullptr;
+            descriptor->diagnostic.clear();
+        }
+        connection.autocommit = SQL_AUTOCOMMIT_ON; connection.connected = false;
+        open_connection(connection,options);
+        connection.login_timeout = 0; connection.connection_timeout = 0; connection.metadata_id = SQL_FALSE; connection.window = nullptr;
+        connection.diagnostic.clear();
+    } catch (...) {
+        // 초기화 실패를 성공으로 풀에 돌리지 않는다. Manager가 CONNECTION_DEAD로 폐기한다.
+        connection.connected = true; connection.session->abort(); throw;
+    }
 }
 } // namespace hwdbodbc

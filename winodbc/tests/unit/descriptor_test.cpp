@@ -93,12 +93,18 @@ int main() {
         std::thread backward([&] { for (int i = 0; i < 100; ++i) check(SQLCopyDesc(foreign,shared) == SQL_SUCCESS,"cross DBC backward copy"); });
         forward.join(); backward.join();
         first_statement->parameter_execution = std::make_unique<ParameterExecution>();
+        std::atomic_store(&first_statement->active_operation,std::make_shared<OperationControl>());
         check(SQLSetStmtAttr(second,SQL_ATTR_ROW_ARRAY_SIZE,value(2),0) == SQL_ERROR,"other statement cannot mutate shared descriptor during input"); state(SQL_HANDLE_STMT,second,"HY010");
         check(SQLSetDescField(shared,0,SQL_DESC_ARRAY_SIZE,value(2),0) == SQL_ERROR,"cannot mutate descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
         check(SQLCopyDesc(copy,shared) == SQL_ERROR,"cannot copy over descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
         check(SQLFreeHandle(SQL_HANDLE_DESC,shared) == SQL_ERROR,"cannot free descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
         check(SQLFreeHandle(SQL_HANDLE_STMT,first) == SQL_ERROR,"cannot free statement during data input"); state(SQL_HANDLE_STMT,first,"HY010");
         check(SQLCancel(first) == SQL_SUCCESS,"cancel local input without a network request");
+        check(SQLGetDiagRec(SQL_HANDLE_STMT,first,1,nullptr,nullptr,nullptr,0,nullptr) == SQL_NO_DATA,"local input cancel clears its previous diagnostics");
+        auto completed_cancel = std::make_shared<OperationControl>(); completed_cancel->cancelled = true;
+        std::atomic_store(&first_statement->active_operation,completed_cancel);
+        check(finish_statement_call(*first_statement,SQL_SUCCESS) == SQL_SUCCESS && !first_statement->cursor_open && first_statement->executed,
+            "normal completion survives cancel race while the result cursor closes");
         check(SQLFreeHandle(SQL_HANDLE_STMT,first) == SQL_SUCCESS,"STMT free leaves explicit descriptor alive");
         check(SQLGetDescField(shared,0,SQL_DESC_ALLOC_TYPE,&small,0,nullptr) == SQL_SUCCESS,"shared descriptor survives STMT");
         check(SQLFreeHandle(SQL_HANDLE_DESC,shared) == SQL_SUCCESS,"free associated explicit descriptor");

@@ -19,7 +19,8 @@ SQLLEN length_at(const DescriptorRecord& record) {
 bool streamed(SQLLEN length) { return length == SQL_DATA_AT_EXEC || length <= SQL_LEN_DATA_AT_EXEC_OFFSET; }
 bool fatal_error(const DriverError& error, const Connection& connection) {
     return connection.session->dead() || error.state.substr(0,2) == "08" || error.state.substr(0,2) == "40"
-        || error.state.substr(0,2) == "25" || error.state == "0A000" || error.state == "26000";
+        || error.state.substr(0,2) == "25" || error.state == "0A000" || error.state == "26000"
+        || error.state == "HY008" || error.state == "HYT00" || error.state == "HYT01";
 }
 void fail_input(Statement& statement) {
     auto& execution = *statement.parameter_execution;
@@ -28,6 +29,7 @@ void fail_input(Statement& statement) {
     if (ipd.rows_processed) *ipd.rows_processed = execution.row + 1;
     statement.row_count = execution.affected; statement.diagnostic.row_count = execution.affected;
     statement.parameter_execution.reset();
+    std::atomic_store(&statement.active_operation,std::shared_ptr<OperationControl>{});
 }
 }
 SQLRETURN continue_parameters(Statement& statement) {
@@ -38,6 +40,8 @@ SQLRETURN continue_parameters(Statement& statement) {
     for (; execution.row < apd.array_size; ++execution.row) {
         SQLINTEGER column = SQL_COLUMN_NUMBER_UNKNOWN;
         try {
+            if (const auto operation = std::atomic_load(&statement.active_operation); operation && operation->cancelled)
+                throw DriverError("HY008", "Parameter array execution was cancelled.");
             if (apd.array_status && apd.array_status[execution.row] == SQL_PARAM_IGNORE) {
                 if (ipd.rows_processed) *ipd.rows_processed = execution.row + 1;
                 continue;
@@ -66,7 +70,7 @@ SQLRETURN continue_parameters(Statement& statement) {
             Json request{{"type","executePrepared"},{"statement",statement.prepared},{"params",execution.parameters},{"fetchSize",connection.fetch_size}};
             // JSON의 escape와 binary 16진 인코딩까지 포함해 실제 wire 크기를 제한한다.
             if (request.dump().size() > input_limit - 64) throw DriverError("22001", "Encoded parameters exceed the message size limit.");
-            const auto response = connection.session->request(std::move(request),"result",connection.connection_timeout);
+            const auto response = statement_request(statement,std::move(request));
             if (apd.array_size > 1 && string_field(response,"type") != "ok") { connection.session->abort(); throw DriverError("08S01","Parameter array response kind does not match prepared metadata.",8000); }
             accept_result(statement,response);
             if (statement.row_count >= 0) {
@@ -88,7 +92,8 @@ SQLRETURN continue_parameters(Statement& statement) {
         statement.executed = execution.successful != 0 || !execution.failed;
     }
     const SQLRETURN result = fatal || (execution.failed && !execution.successful) ? SQL_ERROR : execution.failed || execution.warnings ? SQL_SUCCESS_WITH_INFO : SQL_SUCCESS;
-    statement.parameter_execution.reset(); return result;
+    statement.parameter_execution.reset();
+    return result;
 }
 SQLRETURN parameter_data(Statement& statement, SQLPOINTER* token) {
     if (!statement.parameter_execution || !statement.parameter_execution->pending) throw DriverError("HY010", "No parameter data is requested.");
@@ -161,9 +166,4 @@ extern "C" SQLRETURN SQL_API SQLParamData(SQLHSTMT handle, SQLPOINTER* token) {
 }
 extern "C" SQLRETURN SQL_API SQLPutData(SQLHSTMT handle, SQLPOINTER data, SQLLEN length) {
     return with_handle<Statement>(SQL_HANDLE_STMT,handle,true,[&](Statement& statement) { return put_parameter_data(statement,data,length); },true);
-}
-extern "C" SQLRETURN SQL_API SQLCancel(SQLHSTMT handle) {
-    return with_handle<Statement>(SQL_HANDLE_STMT,handle,false,[](Statement& statement) -> SQLRETURN {
-        statement.parameter_execution.reset(); return SQL_SUCCESS;
-    },true);
 }

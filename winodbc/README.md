@@ -1,12 +1,13 @@
 # HelloWorldDB Windows ODBC
 
-Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, 실행 전 메타데이터, descriptor·행/파라미터 배열, 실행 시 분할 입력과 로컬 입력 취소, fetch·바인딩·분할 수신과 모든 DB 타입 getter**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함한다. 서버 실행 중 취소·TLS·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)의 후속이다.
+Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, descriptor·배열·실행 시 분할 입력, fetch·바인딩·모든 DB 타입 getter, 트랜잭션·서버 취소·시간 제한·재인증 초기화**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함하며 초기화는 직접 DLL 호출로 검증했다. 실제 Manager 풀 재사용·TLS·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)에 남겨 두었다. 현재 사용자 요청에 따라 WO-8까지의 변경을 커밋한 뒤 목표를 일시 중지한다.
 
 - [개발 환경과 목표 앱](docs/environment.md)
 - [API·속성·descriptor·길이 단위 지원 계획](docs/api-support.md)
 - [타입 대응](docs/type-mapping.md)
 - [준비 문장·파라미터·SQL escape](docs/prepared-statements.md)
 - [Descriptor·배열과 남은 Manager 재현 사례](docs/descriptors-arrays.md)
+- [트랜잭션·취소·시간 제한·초기화](docs/transactions-cancel-reset.md)
 - [서버 기능 협상과 진단 매핑](docs/server-dependencies.md)
 - [의존성과 배포 정책](docs/dependencies.md)
 - [검증 기록과 시험 ID](docs/verification.md)

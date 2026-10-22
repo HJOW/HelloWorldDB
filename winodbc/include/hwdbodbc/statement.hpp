@@ -3,6 +3,7 @@
 
 namespace hwdbodbc {
 Connection& statement_connection(Statement& statement);
+Json statement_request(Statement& statement, Json message);
 void close_statement_cursor(Statement& statement);
 void finish_statement_result(Statement& statement);
 void accept_result(Statement& statement, const Json& response);

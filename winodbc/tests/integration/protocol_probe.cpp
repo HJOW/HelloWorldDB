@@ -24,6 +24,28 @@ int main(int argc, char** argv) {
             }
             check(false, "wrong password accepted");
         }
+        if (scenario == "login-budget") {
+            session.login("SYSTEM","HelloWorldDB",{},{},1);
+            check(false,"cumulative authentication timeout was not enforced");
+        }
+        if (scenario == "query-timeout" || scenario == "cancel-desync" || scenario == "timeout-completed" || scenario == "send-timeout") {
+            session.login("SYSTEM","HelloWorldDB",{},{},3);
+            auto control = std::make_shared<RequestControl>();
+            try {
+                const auto response = session.request({{"type","execute"},{"sql",scenario == "send-timeout" ? std::string(12U * 1024U * 1024U,' ') : "SELECT 1"}},"result",0,control,1);
+                check(scenario == "timeout-completed" && response["rows"] == Json::array({Json::array({1})}),"normal completion survives a late timeout cancel");
+            } catch (const DriverError& error) {
+                check(scenario != "timeout-completed" && error.state == "HYT00","query timeout SQLSTATE");
+                if (scenario == "query-timeout") check(error.native == 8010,"cancel native error preserved");
+            }
+            check(control->finished && control->completed,"request control completes before returning");
+            check(session.dead() == (scenario == "cancel-desync" || scenario == "send-timeout"),"only unsynchronized cancellation or send failure discards the connection");
+            if (!session.dead()) {
+                const auto response = session.request({{"type","execute"},{"sql","SELECT 2"}},"result",2);
+                check(response["rows"] == Json::array({Json::array({2})}),"following request keeps its own response"); session.close();
+            }
+            std::cout << "PASS " << scenario << '\n'; return 0;
+        }
         session.login(scenario == "nullspace" ? "NO_DEFAULT" : "SYSTEM",
             scenario == "nfkc" ? "Ａ①가\u0301😀" : scenario == "nullspace" ? "no-default-test" : "HelloWorldDB", {}, {}, 3);
         if (scenario == "auth") { session.close(); std::cout << "PASS auth\n"; return 0; }

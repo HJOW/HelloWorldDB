@@ -1,6 +1,6 @@
 # Descriptor와 배열 바인딩
 
-현재 WO-7의 descriptor·행 배열·파라미터 배열·실행 시 데이터 구현을 설명한다. SQLCancel의 서버 실행 취소는 WO-8 후속이며, 여러 STMT에 공유된 DESC의 Manager 해제에는 아래의 플랫폼 제약이 있다.
+현재 WO-7의 descriptor·행 배열·파라미터 배열·실행 시 데이터 구현을 설명한다. SQLCancel의 서버 실행 취소와 시간 제한은 [WO-8 규칙](transactions-cancel-reset.md)을 따르며, 여러 STMT에 공유된 DESC의 Manager 해제에는 아래의 플랫폼 제약이 있다.
 
 ## Descriptor 수명과 필드
 
@@ -38,7 +38,7 @@ SQLExecute와 파라미터가 있는 SQLExecDirect는 SQL_DATA_AT_EXEC 또는 SQ
 
 문자/이진 → 문자/이진은 여러 조각을 허용한다. UTF-16 코드 단위의 경계를 지키면 surrogate 쌍 사이에서도 나눌 수 있으며 최종 문자열을 엄격하게 검증한다. 고정 C 타입은 SDK 구조체 폭을 읽고 두 번째 PutData는 HY019, NULL과 조각의 결합은 HY020이다. SQL_NULL_DATA와 길이 0은 다르다. 길이 예고는 바이트이며 초과는 22001, 최종 부족은 22026이다. SQL_NEED_LONG_DATA_LEN은 Y이다.
 
-입력 행별 16MiB와 최종 JSON 인코딩 크기, 문자/이진 타입 한도를 검사한다. 오류를 낸 PutData의 바이트는 누적하지 않는다. 오류 뒤에는 SQLCancel로 입력 대화를 정리하고 재실행한다. 로컬 SQLCancel은 서버 요청을 보내지 않고 누적 입력만 폐기하며 준비 문장·바인딩은 유지한다. 이미 실행한 배열 set을 되돌리는 기능은 아니다. 배열 set별 성공/오류/미처리 상태, 처리 위치, 합계 row count와 행/열 진단을 유지한다.
+입력 행별 16MiB와 최종 JSON 인코딩 크기, 문자/이진 타입 한도를 검사한다. 오류를 낸 PutData의 바이트는 누적하지 않는다. 오류 뒤에는 SQLCancel로 입력 대화를 정리하고 재실행한다. 로컬 SQLCancel은 서버 요청을 보내지 않고 누적 입력과 해당 진단을 폐기하며 준비 문장·바인딩은 유지한다. 이미 실행한 배열 set을 되돌리는 기능은 아니다. 배열 set별 성공/오류/미처리 상태, 처리 위치와 합계 row count는 실제 진행을 반영한다. 실행 중 취소/시간 초과에서는 뒤의 set을 실행하지 않는다.
 
 입력 중 STMT의 재실행·재바인딩·닫기·해제는 HY010이다. 그 STMT에 연결된 descriptor의 필드 변경·복사 대상 지정·해제도 HY010이다. 변경을 시도하기 전에 검사하므로 다른 STMT가 공유하는 주소를 중간에 바꾸지 않는다. 단위 시험 `parameters.streaming_limits_sequence`와 실제 Manager `data_cases.cpp`는 분할 surrogate·이진 0·NULL/빈 값·60,000자·예고 길이 오류·취소 뒤 재실행·배열 중간 PK 오류를 검사한다.
 

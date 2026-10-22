@@ -7,12 +7,12 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 ## 현재 상태
 
 - 최종 갱신: 2026-10-22.
-- 진행 단계: **WO-0 ~ WO-6 완료, WO-7 구현·기본 검증 완료 및 외부 Manager 제약 추적 중**. descriptor·배열에 SQLParamData/SQLPutData·로컬 SQLCancel을 연결했다. WO-7.2 ~ WO-7.7은 완료했다. WO-7.1의 드라이버 자동 복원과 Manager 단일 연결 복원은 통과하나 여러 STMT에 공유된 채 DESC를 해제하는 Windows Manager 재현은 남아 있어 해당 체크박스는 유지한다. 전체 Core/3.8 적합성은 미완료이다.
-- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 60개**, 그 안의 실제 서버/결함 주입 **19개 × 4구성 = 76개**, 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. `build/native/summary.json`은 2026-10-22T00:08:01Z이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
-- 다음 작업: **WO-8 트랜잭션·서버 실행 취소·시간 제한·reset**. WO-7.1의 외부 Manager 제약은 WO-13 최종 인수까지 추적하며, 이 제약과 독립인 후속 구현을 계속한다. 이후 카탈로그·TLS/UDP·Setup/설치·범용 앱 인수까지 목표는 활성 상태이다. [준비 규칙](docs/prepared-statements.md)과 [descriptor/배열/분할 입력 규칙](docs/descriptors-arrays.md)을 따른다.
+- 진행 단계: **WO-8까지 구현·검증한 변경을 문서화하고 커밋 후 목표 일시 중지**. 2026-10-22 사용자 지시로 WO-9 이후는 착수하지 않는다. WO-0 ~ WO-6 및 WO-7.2 ~ WO-7.7은 완료했고 WO-7 변경은 `11190b4`로 커밋했다. WO-8.1 ~ WO-8.6·WO-8.8은 네 구성에서 검증했다. WO-8.7의 reset 구현과 직접 DLL 시험은 통과했으나 실제 Manager 풀 재사용은 미검증이어서 체크하지 않았다. WO-7.1의 여러 STMT 공유 DESC 해제 재현과 전체 Core/3.8 적합성도 남아 있다.
+- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 60개**, 그 안의 실제 서버/결함 주입 **24개 × 4구성 = 96개**, 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. `build/native/summary.json`은 2026-10-22T00:36:10.4970455+00:00이며 export는 63개이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
+- 재개 시 작업: WO-8.7의 실제 Manager 풀 검증을 ODBC 3.8 보고·전체 적합성 감사와 함께 완료하고 WO-7.1의 외부 Manager 제약을 추적한다. 이후 WO-9 카탈로그부터 WO-13 인수까지 남아 있다. 현재는 사용자 요청으로 목표를 일시 중지하며 후속 구현을 진행하지 않는다. [트랜잭션·취소·초기화 규칙](docs/transactions-cancel-reset.md), [준비 규칙](docs/prepared-statements.md), [descriptor/배열/분할 입력 규칙](docs/descriptors-arrays.md)을 따른다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
 - 생성·변경 파일과 조회 결과는 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지한다. **2026-10-22 현재 요청에 따라 WO 번호별로 검증 후 간결한 한 줄 메시지로 커밋하며, 이전 커밋 금지 지시보다 현재 요청을 우선한다. 푸시는 하지 않는다.**
-- TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화를 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. 정상 취소·Core 완료는 후속이다.
+- TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화·트랜잭션·잠금/CPU 실행 취소·시간 제한을 검증했다. reset은 직접 DLL과 실제 서버로 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. Manager 풀과 Core 완료는 후속이다.
 
 ## 1. 이 문서를 따라 작업하는 방법
 
@@ -92,7 +92,7 @@ winodbc/
 | WO-5 | **완료**: 직접 실행·fetch·타입 변환 | Hello World·모든 타입·분할/메모리 경계·서버 커서 수명 통과 |
 | WO-6 | prepare/describe·단일 파라미터 | 실행 전 메타데이터·반복 실행 성공 |
 | WO-7 | descriptor·배열·실행 시 데이터 | 입력/출력 버퍼와 순서 상태 시험 통과 |
-| WO-8 | 트랜잭션·취소·시간 제한·초기화 | 취소 뒤 세션·트랜잭션 정합성 유지 |
+| WO-8 | 구현·네 구성 검증, 실제 Manager 풀 검증 잔여 | 취소 뒤 세션·트랜잭션 정합성 검증, 일시 중지 |
 | WO-9 | 카탈로그·기능 보고 | 지원표와 실제 API 결과 일치 |
 | WO-10 | TLS | 검증 기본 켬·실패·재시도 시험 통과 |
 | WO-11 | UDP | 유실·중복·순서 변경에서도 정합성 유지 |
@@ -237,14 +237,16 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 
 선행 조건: WO-7과 서버 PD-4 ~ PD-6. 서버의 정상 취소를 사용하고 소켓 종료만으로 대체 완료 처리하지 않는다.
 
-- [ ] WO-8.1: SQL_ATTR_AUTOCOMMIT 기본 ON, OFF 전환, SQLEndTran(DBC)의 COMMIT/ROLLBACK, ENV 수준 호출의 각 연결 처리를 구현한다. 여러 연결을 원자적으로 묶는 분산 트랜잭션이라고 보고하지 않는다.
-- [ ] WO-8.2: 격리는 READ COMMITTED만 지원한다. DDL·GRANT/REVOKE의 앞뒤 자동 커밋과 연결 종료 시 미커밋 변경 롤백을 그대로 반영한다.
-- [ ] WO-8.3: SQLCancel과 필요 시 SQLCancelHandle을 서버 cancel에 연결한다. execute를 기다리는 스레드가 잠근 동일 mutex를 cancel이 무기한 기다리지 않게 한다. 수신은 한 곳에서 하고 id별 응답을 분배한다.
-- [ ] WO-8.4: SQLParamData/SQLPutData 대화 취소와 실행 중 취소를 나누어 구현한다. 취소 접수와 원래 요청의 최종 취소 완료를 구분한다. 이미 끝난 요청·취소 불가 커밋 단계·늦은 취소가 다음 요청에 적용되지 않게 한다.
-- [ ] WO-8.5: LOGIN_TIMEOUT·CONNECTION_TIMEOUT·QUERY_TIMEOUT의 적용 범위·기본값·0·단위를 정한다. 취소 가능 시간 초과는 서버 취소를 시도하고, 응답 동기화에 실패하면 연결을 dead로 표시하여 재사용하지 않는다.
-- [ ] WO-8.6: 서버의 취소 SQLSTATE와 ODBC HY008, 사용자 취소와 HYT00/HYT01을 명시적으로 매핑한다. native error와 원래 서버 상태를 진단에 보존한다. 통신 단절 후 결과가 불확실한 DML을 자동 재실행하지 않는다.
-- [ ] WO-8.7: ODBC 3.8의 SQL_ATTR_RESET_CONNECTION을 처리한다. 열린 커서·준비 문장·미커밋 변경·현재 테이블스페이스·타임존·자동 커밋·바인딩/진단 상태의 초기화 범위를 정의한다.
-- [ ] WO-8.8: 원래 tablespace가 null이었던 세션 등 현재 프로토콜만으로 되돌릴 수 없는 상태를 숨기지 않는다. 서버 초기화 기능을 검토하거나, 안전하게 초기화할 수 없는 물리 연결을 풀에서 재사용하지 않도록 실패·폐기 경로를 구현한다. 단순 성공 스텁은 금지한다.
+- [x] WO-8.1: SQL_ATTR_AUTOCOMMIT 기본 ON, OFF 전환, SQLEndTran(DBC)의 COMMIT/ROLLBACK, ENV 수준 호출의 각 연결 처리를 구현했다. 여러 연결을 원자적으로 묶는 분산 트랜잭션이라고 보고하지 않는다.
+- [x] WO-8.2: 격리는 READ COMMITTED만 지원한다. DDL·GRANT/REVOKE의 앞뒤 자동 커밋과 연결 종료 시 미커밋 변경 롤백을 그대로 반영한다.
+- [x] WO-8.3: SQLCancel을 서버 cancel에 연결했다. execute를 기다리는 스레드가 잠근 동일 mutex를 cancel이 무기한 기다리지 않는다. 수신은 한 곳에서 하고 id별 응답을 분배한다. 비동기 실행과 SQLCancelHandle은 광고하지 않는다.
+- [x] WO-8.4: SQLParamData/SQLPutData 대화 취소와 실행 중 취소를 나누어 구현했다. 취소 접수와 원래 요청의 최종 취소 완료를 구분한다. 이미 끝난 요청·취소 불가 커밋 단계·늦은 취소가 다음 요청에 적용되지 않는다.
+- [x] WO-8.5: LOGIN_TIMEOUT·CONNECTION_TIMEOUT·QUERY_TIMEOUT의 적용 범위·기본값·0·단위를 정했다. DNS/연결/인증의 공통 제한과 송신 정체도 검사한다. 취소 가능 시간 초과는 서버 취소를 시도하고, 응답 동기화에 실패하면 연결을 dead로 표시하여 재사용하지 않는다.
+- [x] WO-8.6: 서버의 취소 SQLSTATE와 ODBC HY008, 사용자 취소와 HYT00/HYT01을 명시적으로 매핑한다. native error와 원래 서버 상태를 진단에 보존한다. 통신 단절 후 결과가 불확실한 DML을 자동 재실행하지 않는다.
+- [ ] WO-8.7: ODBC 3.8의 SQL_ATTR_RESET_CONNECTION 처리와 열린 커서·준비 문장·미커밋 변경·현재 테이블스페이스·타임존·자동 커밋·바인딩/진단 초기화를 구현하고 직접 DLL 시험을 통과했다. 실제 Manager 풀 재사용 필수 시험이 남아 있어 완료 처리하지 않는다.
+- [x] WO-8.8: 기존 물리 세션을 닫고 처음 해석한 옵션과 보호한 암호로 재인증하여 원래 tablespace NULL·타임존을 복원한다. 암호 변경 등 초기화 실패는 연결 dead로 처리해 폐기한다. 직접 DLL/실제 서버에서 롤백·앱 메모리 유지·모든 descriptor/준비/커서 상태와 실패 뒤 재사용 거부를 검증했다.
+
+현재 결과: [상세 규칙과 검증 경로](docs/transactions-cancel-reset.md). 실제 Manager/서버로 트랜잭션·잠금/CPU 취소·동일 DBC 직렬화/독립 DBC 진행·시간 제한·후속 실행을 검증했다. reset은 직접 DLL/실제 서버로 통과했다. SQL_DRIVER_ODBC_VER는 `03.00`으로 유지하므로 ODBC 3.8 Manager의 실제 풀 반환/재인수 경로는 아직 완료 증거가 없다. WO-8.7은 이 필수 시험을 남겨 두며 사용자 요청에 따라 문서·커밋 후 여기서 목표를 일시 중지한다.
 
 필수 시험: 커밋 가시성·롤백·DDL 자동 커밋, 잠금 대기 취소와 긴 CPU 질의 취소, 취소 후 앞선 트랜잭션 변경 보존·다음 SELECT, 완료/취소 경합, 시간 초과, 같은 DBC의 경쟁 호출·여러 DBC 동시 실행, Driver Manager 풀에서 다음 사용자에게 상태가 남지 않음. [SQLCancel](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function?view=sql-server-ver17).
 
@@ -418,6 +420,8 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
 
 ## 작업 이력
+
+- 2026-10-22: WO-8의 SQLEndTran(DBC/ENV)·서버 SQLCancel·요청 ID/논리 작업 수명·로그인/연결/질의 제한·송신 정체 처리·재인증 reset을 구현했다. 네 구성 CTest 60개(내부 Node 96개), 교차 로드 4개·63개 export PE 검사 4개·문서/환경 10개가 실패/건너뜀 없이 통과했다. 실제 Manager/서버의 트랜잭션·잠금/CPU 취소와 직접 DLL/서버의 NULL 테이블스페이스·미커밋 롤백·암호 변경 reset 실패를 구분했다. WO-8.7의 실제 Manager 풀 시험과 WO-7.1은 미완료로 남겼다. 사용자 요청에 따라 WO-8 변경을 간결한 한 줄 메시지로 커밋한 뒤 전체 목표를 일시 중지하며 WO-9 이후는 착수하지 않는다.
 
 - 2026-10-22: WO-7 실행 시 데이터를 구현하고 62개 export를 두 비트 수에서 검사했다. 단위 한도/호출 순서와 Manager 실제 서버의 분할 Unicode·이진·NULL/빈 값·긴 문자·취소 후 재실행·배열 중간 PK 오류·상태/처리 수/합계 row count를 검증했다. 기본 행렬 CTest 60개(내부 Node 76개), 교차 로드 4개·PE 4개·문서/환경 10개가 통과했다. 오래된 서버 dist 의존을 제거하고 현재 서버 소스를 winodbc/build/server에 빌드한다. 공유 DESC 해제 재현은 Windows 11에서도 실패하며 Ghidra 정적 코드와 단일/다중 연결 관측으로 Manager 목록 순회 제약을 좁혔다. 단일 연결 자동 복원은 기본 시험에 포함했다. WO-7.1과 전체 인수는 미완료이고 독립적인 WO-8을 계속한다. 현재 사용자 요청에 따라 WO 번호별 커밋을 수행하며 푸시는 하지 않는다.
 

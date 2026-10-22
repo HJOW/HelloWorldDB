@@ -29,7 +29,7 @@ else()
 endif()
 
 add_library(hwdb_core STATIC src/odbc/handles.cpp src/odbc/connection.cpp src/odbc/statement.cpp src/types/text.cpp
-    src/odbc/statement_attributes.cpp src/odbc/descriptor.cpp src/odbc/rowset.cpp src/odbc/data_execution.cpp src/odbc/sql_text.cpp src/types/parameters.cpp src/types/metadata.cpp src/types/conversion.cpp
+    src/odbc/statement_attributes.cpp src/odbc/descriptor.cpp src/odbc/rowset.cpp src/odbc/data_execution.cpp src/odbc/transaction.cpp src/odbc/sql_text.cpp src/types/parameters.cpp src/types/metadata.cpp src/types/conversion.cpp
     src/protocol/json.cpp src/protocol/scram.cpp src/protocol/session.cpp src/transport/tcp.cpp)
 target_include_directories(hwdb_core SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 target_link_libraries(hwdb_core PUBLIC hwdb_build_options ws2_32 bcrypt crypt32 normaliz advapi32)
@@ -51,6 +51,8 @@ if(BUILD_TESTING)
     target_link_libraries(hwdb_text_test PRIVATE hwdb_core)
     add_executable(hwdb_protocol_probe tests/integration/protocol_probe.cpp)
     target_link_libraries(hwdb_protocol_probe PRIVATE hwdb_core)
+    add_executable(hwdb_reset_probe tests/integration/reset_probe.cpp)
+    target_link_libraries(hwdb_reset_probe PRIVATE hwdb_build_options)
     add_executable(hwdb_protocol_test tests/unit/protocol_test.cpp)
     target_link_libraries(hwdb_protocol_test PRIVATE hwdb_core)
     add_executable(hwdb_conversion_test tests/unit/conversion_test.cpp)
@@ -68,7 +70,7 @@ if(BUILD_TESTING)
     # Manager용 EXE는 드라이버 타깃이나 import lib에 링크하지 않는다.
     add_executable(hwdb_dm_probe tests/driver_manager/manager_probe.cpp)
     target_link_libraries(hwdb_dm_probe PRIVATE hwdb_build_options odbc32)
-    add_executable(hwdb_dm_connection tests/driver_manager/connection_probe.cpp tests/driver_manager/query_cases.cpp tests/driver_manager/prepare_cases.cpp tests/driver_manager/descriptor_cases.cpp tests/driver_manager/data_cases.cpp)
+    add_executable(hwdb_dm_connection tests/driver_manager/connection_probe.cpp tests/driver_manager/query_cases.cpp tests/driver_manager/prepare_cases.cpp tests/driver_manager/descriptor_cases.cpp tests/driver_manager/data_cases.cpp tests/driver_manager/transaction_cases.cpp)
     target_link_libraries(hwdb_dm_connection PRIVATE hwdb_build_options odbc32 ole32 advapi32 ws2_32)
 
     foreach(scenario exports lifecycle diagnostics)
@@ -91,8 +93,9 @@ if(BUILD_TESTING)
             "HWDB_PROTOCOL_PROBE=$<TARGET_FILE:hwdb_protocol_probe>"
             "HWDB_DM_CONNECTION=$<TARGET_FILE:hwdb_dm_connection>"
             "HWDB_ODBC_DLL=$<TARGET_FILE:hwdbodbc>"
+            "HWDB_RESET_PROBE=$<TARGET_FILE:hwdb_reset_probe>"
             "${HWDB_NODE_EXECUTABLE}" --test --test-reporter=tap "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/protocol.test.mjs")
-    set_tests_properties(integration.protocol_manager PROPERTIES TIMEOUT 90)
+    set_tests_properties(integration.protocol_manager PROPERTIES TIMEOUT 180)
     add_test(NAME manager.environment COMMAND hwdb_dm_probe)
     set_tests_properties(abi.exports abi.lifecycle abi.diagnostics
         abi.exception_boundary manager.environment handles.lifecycle_diagnostics_concurrency

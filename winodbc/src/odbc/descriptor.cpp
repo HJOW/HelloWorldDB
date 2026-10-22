@@ -4,10 +4,12 @@
 
 namespace hwdbodbc {
 void check_descriptor_mutation(const Descriptor& descriptor) {
-    for (const auto& statement : connection_statements(static_cast<Connection&>(*descriptor.parent)))
+    for (const auto& statement : connection_statements(static_cast<Connection&>(*descriptor.parent))) {
+        settle_local_cancellation(*statement);
         if (statement->parameter_execution && std::any_of(statement->descriptors.begin(),statement->descriptors.end(),
             [&](const auto& attached) { return attached.get() == &descriptor; }))
             throw DriverError("HY010", "A statement using this descriptor is receiving parameter data.");
+    }
 }
 SQLSMALLINT descriptor_subtype(SQLSMALLINT concise) {
     if (concise >= SQL_INTERVAL_YEAR && concise <= SQL_INTERVAL_MINUTE_TO_SECOND) return static_cast<SQLSMALLINT>(concise - 100);

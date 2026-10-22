@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const expectedExports = [
-  'SQLParamData', 'SQLPutData', 'SQLCancel',
+  'SQLParamData', 'SQLPutData', 'SQLCancel', 'SQLEndTran',
   'SQLAllocHandle', 'SQLFreeHandle', 'SQLGetDiagRec', 'SQLGetDiagRecW', 'SQLGetEnvAttr', 'SQLSetEnvAttr',
   'SQLGetDiagField', 'SQLGetDiagFieldW', 'SQLGetStmtAttr', 'SQLGetStmtAttrW', 'SQLConnect', 'SQLConnectW',
   'SQLDriverConnect', 'SQLDriverConnectW', 'SQLGetConnectAttr', 'SQLGetConnectAttrW', 'SQLSetConnectAttr', 'SQLSetConnectAttrW',

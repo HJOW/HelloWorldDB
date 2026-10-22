@@ -20,6 +20,9 @@ SQLRETURN info(SQLHDBC handle, SQLUSMALLINT field, SQLPOINTER output, SQLSMALLIN
         switch (field) {
         case SQL_GETDATA_EXTENSIONS: return number(static_cast<SQLUINTEGER>(0));
         case SQL_NEED_LONG_DATA_LEN: return string("Y");
+        case SQL_TXN_CAPABLE: return number(static_cast<SQLUSMALLINT>(SQL_TC_DDL_COMMIT));
+        case SQL_DEFAULT_TXN_ISOLATION: case SQL_TXN_ISOLATION_OPTION: return number(static_cast<SQLUINTEGER>(SQL_TXN_READ_COMMITTED));
+        case SQL_MULTIPLE_ACTIVE_TXN: return string("Y");
         case SQL_PARAM_ARRAY_ROW_COUNTS: return number(static_cast<SQLUINTEGER>(SQL_PARC_NO_BATCH));
         case SQL_PARAM_ARRAY_SELECTS: return number(static_cast<SQLUINTEGER>(SQL_PAS_NO_SELECT));
         case SQL_MAX_CONCURRENT_ACTIVITIES: return number(static_cast<SQLUSMALLINT>(16));
@@ -65,7 +68,7 @@ extern "C" SQLRETURN SQL_API SQLGetFunctions(SQLHDBC handle, SQLUSMALLINT functi
             SQL_API_SQLSETCURSORNAME, SQL_API_SQLSETSTMTATTR, SQL_API_SQLPREPARE, SQL_API_SQLEXECUTE,
             SQL_API_SQLNUMPARAMS, SQL_API_SQLDESCRIBEPARAM, SQL_API_SQLBINDPARAMETER, SQL_API_SQLNATIVESQL,
             SQL_API_SQLGETDESCFIELD, SQL_API_SQLSETDESCFIELD, SQL_API_SQLGETDESCREC, SQL_API_SQLSETDESCREC, SQL_API_SQLCOPYDESC,
-            SQL_API_SQLPARAMDATA, SQL_API_SQLPUTDATA, SQL_API_SQLCANCEL };
+            SQL_API_SQLPARAMDATA, SQL_API_SQLPUTDATA, SQL_API_SQLCANCEL, SQL_API_SQLENDTRAN };
         const auto found = std::find(std::begin(functions), std::end(functions), function) != std::end(functions);
         if (function == SQL_API_ALL_FUNCTIONS) {
             std::fill_n(supported, 100, static_cast<SQLUSMALLINT>(SQL_FALSE));
