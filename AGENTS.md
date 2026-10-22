@@ -15,7 +15,8 @@
 5. pythonDriver - Python 용 드라이버 개발, 3.2 이상 버전 지원, DB-API 표준 준수
 6. jdbc8 - JDBC (자바 8 이상 지원) 개발 - JDBC 인터페이스 4.2 버전으로 개발
 7. winodbc - Windows 용 ODBC 드라이버 (https://learn.microsoft.com/ko-kr/sql/odbc/microsoft-open-database-connectivity-odbc?view=sql-server-ver17 참고)
-8. hwdbBench - Node.js 기반 HelloWorldDB 벤치마크 도구 - TEST 1 (단순 1,000,000건 등록, 일괄수정, 일괄삭제 테스트), TEST 2 (테이블 3개 조인된 상태로 가장 자식(Child) 테이블 기준 2,000,000건 등록, 일괄수정, 일괄삭제 테스트), 두 테스트 모두 정수 PK 를 가지고, 1000 크기의 VARCHAR 컬럼 하나, TIMESTAMP 또는 DATETIME 타입 컬럼 하나, 자식 테이블의 경우에는 추가로 부모 테이블 참조 FK 컬럼들을 포함하여 테이블을 구성해 테스트
+8. unixodbc - Unix (Linux, Mac 등) 용 ODBC 드라이버
+9. hwdbBench - Node.js 기반 HelloWorldDB 벤치마크 도구 - TEST 1 (단순 1,000,000건 등록, 일괄수정, 일괄삭제 테스트), TEST 2 (테이블 3개 조인된 상태로 가장 자식(Child) 테이블 기준 2,000,000건 등록, 일괄수정, 일괄삭제 테스트), 두 테스트 모두 정수 PK 를 가지고, 1000 크기의 VARCHAR 컬럼 하나, TIMESTAMP 또는 DATETIME 타입 컬럼 하나, 자식 테이블의 경우에는 추가로 부모 테이블 참조 FK 컬럼들을 포함하여 테이블을 구성해 테스트
 
 # RDBMS 에 구현되어야 할 사항 (개요)
 
