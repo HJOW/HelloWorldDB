@@ -153,3 +153,30 @@ test("정수로 바꿀 때 0 에서 먼 쪽으로 반올림한다", () => {
   assert.equal(d("2.99").toBigInt("DOWN"), 2n);
   assert.equal(d("42").toBigInt(), 42n);
 });
+
+test("자릿수 상한을 넘는 긴 입력은 BigInt 를 만들기 전에 22003 으로 거부한다 (R-5)", () => {
+  // 정수부 1000자리는 받고 1001자리는 거부한다.
+  assert.equal(d("1".repeat(1000)).toString(), "1".repeat(1000));
+  assertSqlState(() => d("1".repeat(1001)), "22003");
+  // 지수 표기도 정수부 자릿수로 판정한다.
+  assertSqlState(() => d(`1${"0".repeat(1000)}`), "22003");
+  assertSqlState(() => d("1e1001"), "22003");
+  assertSqlState(() => d(`1${"0".repeat(4_000_000)}`), "22003");
+  assertSqlState(() => d(`1${"0".repeat(10)}e${"9".repeat(400)}`), "22003");
+});
+
+test("긴 가수에 음의 지수를 붙인 값은 정확한 값을 준다 (R-5)", () => {
+  // 1 뒤에 0 이 1500개인 가수에 e-1001 을 붙이면 10^499 이다. (이전 구현은 0 을 돌려주었다)
+  const value = d(`1${"0".repeat(1500)}e-1001`);
+  assert.equal(value.unscaled, 10n ** 1499n);
+  assert.equal(value.scale, 1000);
+  assert.equal(value.toString().length, 500 + 1 + 1000);
+  assert.equal(d(`1${"0".repeat(1500)}e-1500`).toBigInt(), 1n);
+  // 소수부가 상한(1000자리) 안에 있으면 그대로 두고, 그 밖의 자리는 버려도 반올림 결과가 같다.
+  assert.equal(d(`0.${"0".repeat(999)}5`).toString(), `0.${"0".repeat(999)}5`);
+  assert.equal(d(`0.${"0".repeat(1000)}5`).toString(), `0.${"0".repeat(999)}1`);
+  assert.equal(d("0").scale, 0);
+  assert.equal(d("-0.000").toString(), "0.000");
+  // 0 이 들어간 긴 입력도 큰 BigInt 를 만들지 않는다.
+  assert.equal(d(`0.${"0".repeat(4_000_000)}`).toString().length, 2 + 1000);
+});

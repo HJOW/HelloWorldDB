@@ -54,16 +54,17 @@ test("2만 행 테이블의 PK 단건 DML과 명시적 커밋은 힙을 순회�
   } finally { db.close(); }
 });
 
-test("UPDATE의 여러 행과 INSERT의 DEFAULT 서브쿼리는 변경 전 상태를 본다", (t) => {
+test("UPDATE의 여러 행은 변경 전 상태를 보고, DEFAULT 서브쿼리는 정의할 때 거부한다", (t) => {
   const { db, session } = setupApp(t);
   try {
     session.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, V INTEGER)");
     session.execute("INSERT INTO T VALUES (1, 10), (2, 20), (3, 30)");
     session.execute("UPDATE T SET V = V + (SELECT SUM(V) FROM T)");
     assert.deepEqual(rows(session, "SELECT V FROM T ORDER BY ID"), [["70"], ["80"], ["90"]]);
-    session.execute("ALTER TABLE T ALTER COLUMN V SET DEFAULT (SELECT COUNT(*) FROM T)");
-    session.execute("INSERT INTO T (ID) VALUES (4), (5)");
-    assert.deepEqual(rows(session, "SELECT V FROM T WHERE ID >= 4 ORDER BY ID"), [["3"], ["3"]]);
+    // DEFAULT 는 상수 식만 받는다. (2026-10-22 점검 R-2)
+    assert.throws(() => session.execute("ALTER TABLE T ALTER COLUMN V SET DEFAULT (SELECT COUNT(*) FROM T)"), state("0A000"));
+    session.execute("INSERT INTO T (ID) VALUES (4)");
+    assert.deepEqual(rows(session, "SELECT V FROM T WHERE ID = 4"), [["NULL"]]);
   } finally { db.close(); }
 });
 

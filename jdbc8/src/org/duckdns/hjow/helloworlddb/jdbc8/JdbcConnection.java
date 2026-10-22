@@ -18,7 +18,8 @@ final class JdbcConnection extends JdbcProxy {
     /** 파싱된 접속 옵션이다. */
     final Driver.Options options;
     /** 이 연결에서 열린 문장들의 집합이다. 연결 종료 때 함께 닫는다. */
-    final Set<JdbcStatement> statements = new HashSet<>();
+    /** 열린 문장이다. 여러 스레드가 문장을 열고 닫으므로 동기화 집합으로 둔다. (ConcurrentHashMap.newKeySet 은 Java 8 API 이다) */
+    final Set<JdbcStatement> statements = Collections.synchronizedSet(new HashSet<JdbcStatement>());
     /** 현재 트랜잭션에서 만든 세이브포인트들의 집합이다. */
     private final Set<Point> points = new HashSet<>();
     /** {@code close()} 뒤에는 요청을 거부하기 위한 표시이다. */
@@ -193,7 +194,10 @@ final class JdbcConnection extends JdbcProxy {
      */
     private void close() throws SQLException {
         if (closed) return; SQLException error = null;
-        try { for (JdbcStatement s : new ArrayList<>(statements)) try { s.close(); } catch (SQLException e) { error = e; } }
+        // 문장이 다른 스레드에서 닫히며 집합을 바꿀 수 있으므로, 복사는 집합의 모니터를 잡고 한다. (J-4)
+        List<JdbcStatement> open;
+        synchronized (statements) { open = new ArrayList<JdbcStatement>(statements); }
+        try { for (JdbcStatement s : open) try { s.close(); } catch (SQLException e) { error = e; } }
         finally { try { protocol.close(); } finally { closed = true; points.clear(); } }
         if (error != null) throw error;
     }

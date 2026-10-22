@@ -37,6 +37,7 @@ import {
   formatDataType,
   integerType,
   intervalType,
+  isNullLiteralType,
   timeType,
   timestampType,
   varcharType,
@@ -670,7 +671,8 @@ export function aggregateResultType(name: string, argType: DataType | null, star
       return BIGINT_TYPE;
     case "SUM": {
       if (argType === null) throw typeMismatch("SUM needs an argument.");
-      if (argType.kind === "INTEGER") return BIGINT_TYPE;
+      // 타입이 없는 NULL 은 수 계열로 보아 NULL 결과를 낸다. (정수 계열과 같은 타입)
+      if (argType.kind === "INTEGER" || isNullLiteralType(argType)) return BIGINT_TYPE;
       if (argType.kind === "DECIMAL") return argType;
       if (argType.kind === "FLOAT") return DOUBLE_TYPE;
       throw typeMismatch(`SUM is not defined for ${formatDataType(argType)}.`);
@@ -678,7 +680,7 @@ export function aggregateResultType(name: string, argType: DataType | null, star
     case "AVG": {
       if (argType === null) throw typeMismatch("AVG needs an argument.");
       if (argType.kind === "FLOAT") return DOUBLE_TYPE;
-      if (argType.kind === "INTEGER" || argType.kind === "DECIMAL") {
+      if (argType.kind === "INTEGER" || argType.kind === "DECIMAL" || isNullLiteralType(argType)) {
         return decimalType(38, 6);
       }
       throw typeMismatch(`AVG is not defined for ${formatDataType(argType)}.`);

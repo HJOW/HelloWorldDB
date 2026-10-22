@@ -300,6 +300,86 @@ export function viewColumnMapping(
   return { baseTablespace, baseTable: only.name.name, map };
 }
 
+/**
+ * 갱신 가능한 뷰 체인의 한 단계이다. 아래(기반 테이블 쪽) 단계부터 차례로 쌓인다.
+ * 단계의 WHERE 는 FROM 항목(바로 아래 테이블이나 뷰)의 열을 가리키고, items 는 이 뷰의 열 순서대로 FROM 항목의 열에서 값을 만든다.
+ */
+export interface ViewFilterStep {
+  /** 이 단계의 뷰가 있는 테이블스페이스와 뷰 이름 */
+  tablespace: string;
+  view: string;
+  /** 이 뷰 열의 이름(정의 순서) */
+  columns: string[];
+  /** FROM 항목의 별칭. 조건과 식이 FROM 항목을 이 이름으로 가리킬 수 있다. */
+  sourceAlias: string | null;
+  /** 선택 목록의 식. `*` 은 FROM 항목의 열 참조로 펼친다. */
+  items: Expression[];
+  /** WHERE 조건. 없으면 null. */
+  where: Expression | null;
+}
+
+/**
+ * 갱신 가능한 뷰가 가리키는 기반 테이블과, 뷰마다의 조건 체인을 구한다. 중첩 뷰는 기반 테이블 쪽 단계가 앞에 온다.
+ * viewColumnMapping 과 달리 WHERE 조건과 계산 열의 식을 버리지 않는다. 뷰를 통한 UPDATE, DELETE 는 이 조건으로 대상 행을 거른다.
+ */
+export function viewFilterChain(
+  manager: TablespaceManager,
+  tablespace: string,
+  viewName: string,
+): { baseTablespace: string; baseTable: string; steps: ViewFilterStep[] } {
+  const catalog = manager.requireCatalog(tablespace);
+  const def = catalog.data.views[viewName] as StoredView | undefined;
+  if (def === undefined) {
+    throw new DbError("42P01", ERROR_CODES.VIEW_NOT_FOUND, `View does not exist: "${tablespace}.${viewName}".`);
+  }
+  const query = parseStatement(def.queryText).statement;
+  if (query.kind !== "Query" || !isUpdatableQuery(query)) {
+    throw new DbError("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View "${viewName}" is not updatable.`);
+  }
+  const body = query.body as Select;
+  const only = body.from[0] as TableReference;
+  if (only.kind !== "Table") {
+    throw new DbError("42P17", ERROR_CODES.INVALID_VIEW_DEFINITION, `View "${viewName}" is not updatable.`);
+  }
+  const sourceTablespace = only.name.tablespace ?? tablespace;
+  const sourceCatalog = manager.requireCatalog(sourceTablespace);
+  const sourceView = sourceCatalog.data.views[only.name.name] as StoredView | undefined;
+  let inner: { baseTablespace: string; baseTable: string; steps: ViewFilterStep[] };
+  let sourceColumns: string[];
+  if (sourceView !== undefined) {
+    inner = viewFilterChain(manager, sourceTablespace, only.name.name);
+    sourceColumns = sourceView.columns;
+  }
+  else {
+    const sourceTable = sourceCatalog.data.tables[only.name.name] as StoredTable | undefined;
+    if (sourceTable === undefined) {
+      throw new DbError("42P01", ERROR_CODES.TABLE_NOT_FOUND, `Object does not exist: "${sourceTablespace}.${only.name.name}".`);
+    }
+    inner = { baseTablespace: sourceTablespace, baseTable: only.name.name, steps: [] };
+    sourceColumns = sourceTable.columns.map((column) => column.name);
+  }
+  // 선택 목록의 `*` 은 FROM 항목의 열을 순서대로 펼친다.
+  const items: Expression[] = [];
+  for (const item of body.items) {
+    if (item.kind === "Star") {
+      for (const name of sourceColumns) {
+        items.push({ kind: "Column", qualifier: [], name, position: item.position } as ColumnExpression);
+      }
+    } else {
+      items.push(item.expression);
+    }
+  }
+  const step: ViewFilterStep = {
+    tablespace,
+    view: viewName,
+    columns: def.columns,
+    sourceAlias: only.alias,
+    items,
+    where: body.where,
+  };
+  return { baseTablespace: inner.baseTablespace, baseTable: inner.baseTable, steps: [...inner.steps, step] };
+}
+
 /** 식 안의 뷰 열 참조를 기반 테이블 참조로 바꾼다. */
 export function rewriteViewColumns(
   expression: Expression,
@@ -309,6 +389,8 @@ export function rewriteViewColumns(
 ): Expression {
   const clone = JSON.parse(JSON.stringify(expression)) as Expression;
   const rewrite = (node: Expression): void => {
+    // 서브쿼리 안의 비한정 열은 서브쿼리 자신의 FROM 을 먼저 가리키므로 뷰 열로 바꾸지 않는다.
+    if ((node as { kind: string }).kind === "Query") return;
     if (node.kind === "Column") {
       const qualifier = node.qualifier;
       const matchesView = qualifier.length === 0 || (qualifier.length === 1 && qualifier[0] === viewNameOrAlias);

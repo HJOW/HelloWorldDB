@@ -123,7 +123,8 @@ final class JdbcStatement extends JdbcProxy {
         else if (n.equals("setQueryTimeout")) { if ((Integer) a[0] < 0) throw invalid("Invalid query timeout."); timeout = (Integer) a[0]; return null; }
         else if (n.equals("getQueryTimeout")) { return timeout; }
         else if (n.equals("setMaxRows") || n.equals("setLargeMaxRows")) { { long limit = ((Number) a[0]).longValue(); if (limit < 0) throw invalid("Invalid row limit."); maxRows = limit; return null; } }
-        else if (n.equals("getMaxRows")) { return count(maxRows); }
+        // int 로 된 행 수 제한은 넘치면 Integer.MAX_VALUE 로 포화한다. (SUCCESS_NO_INFO 는 갱신 개수 전용이다. J-3)
+        else if (n.equals("getMaxRows")) { return maxRows > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) maxRows; }
         else if (n.equals("getLargeMaxRows")) { return maxRows; }
         else if (n.equals("getResultSetType")) { return ResultSet.TYPE_FORWARD_ONLY; }
         else if (n.equals("getResultSetConcurrency")) { return ResultSet.CONCUR_READ_ONLY; }
@@ -234,8 +235,7 @@ final class JdbcStatement extends JdbcProxy {
         if (n.equals("setNull")) value = null;
         else if (n.equals("setObject") && a.length >= 3) {
             if (a[2] == null) throw invalid("SQL type is null.");
-            if (!(a[2] instanceof Integer)) throw unsupported("JDBC 4.2 SQLType");
-            Integer target = (Integer) a[2];
+            Integer target = typeNumber(a[2]);
             if (target == null) throw unsupported("Unknown SQLType"); value = Values.target(value, target, a.length == 4 ? (Integer) a[3] : null);
         } else if ((n.equals("setDate") || n.equals("setTime") || n.equals("setTimestamp")) && a.length == 3) value = Values.calendarValue(value, (Calendar) a[2], false);
         else if (n.endsWith("Stream")) {
@@ -256,11 +256,32 @@ final class JdbcStatement extends JdbcProxy {
         params[index] = Values.encode(value); bound[index] = true;
         if (!inferred[index]) hints[index] = hint(n, a, value);
     }
+    /**
+     * 타입 번호 또는 JDBC 4.2 의 {@code SQLType} 에서 타입 번호를 읽는다. (J-1)
+     * jdbc6 은 Java 6 에서 컴파일되어 {@code java.sql.SQLType} 을 직접 참조할 수 없으므로, 그 객체의 {@code getVendorTypeNumber} 를 리플렉션으로 부른다.
+     *
+     * @param supplied 호출 인자. {@code Integer} 또는 {@code SQLType} 이어야 한다
+     * @return 타입 번호. 알 수 없으면 {@code null}
+     * @throws SQLException 타입 번호를 읽을 수 없는 객체일 때 (0A000)
+     */
+    static Integer typeNumber(Object supplied) throws SQLException {
+        if (supplied == null || supplied instanceof Integer) return (Integer) supplied;
+        try {
+            return (Integer) supplied.getClass().getMethod("getVendorTypeNumber").invoke(supplied);
+        } catch (Exception e) {
+            throw JdbcProxy.unsupported("JDBC 4.2 SQLType");
+        }
+    }
+
     /** 타입을 모르는 자리만 JDBC 바인딩 문맥으로 보완한다. 알려진 컬럼 문맥은 바꾸지 않는다. */
     private static String hint(String setter, Object[] args, Object value) throws SQLException {
         if (value instanceof BigDecimal && ((BigDecimal) value).scale() > 38) throw new SQLDataException("Decimal scale exceeds the server limit.", "22003");
         int type = Types.OTHER;
-        if (setter.equals("setNull") || (setter.equals("setObject") && args.length >= 3)) type = ((Integer) args[setter.equals("setNull") ? 1 : 2]).intValue();
+        if (setter.equals("setNull") || (setter.equals("setObject") && args.length >= 3)) {
+            Integer number = typeNumber(args[setter.equals("setNull") ? 1 : 2]);
+            if (number == null) throw JdbcProxy.unsupported("Unknown SQLType");
+            type = number.intValue();
+        }
         else if (value instanceof Byte || value instanceof Short) type = Types.SMALLINT;
         else if (value instanceof Integer) type = Types.INTEGER;
         else if (value instanceof Long || value instanceof BigInteger) type = Types.BIGINT;

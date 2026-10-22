@@ -71,6 +71,20 @@ public final class DriverTest {
             state("22003", () -> Values.encode(Double.POSITIVE_INFINITY)); state("0A000", () -> Values.encode(new Object())); state("22018", () -> Values.decode("A", Types.BINARY));
             equal(new BigDecimal("1.24"), Values.target("1.235", Types.DECIMAL, 2));
         });
+        test("문자 값의 getBytes 는 UTF-8 바이트이고 이진 값은 복사본을 준다 (J-2)", () -> {
+            equal("안녕abc".getBytes("UTF-8"), Values.convert("안녕abc", byte[].class));
+            byte[] binary = { 1, 2, (byte) 255 }; byte[] copy = (byte[]) Values.convert(binary, byte[].class); ok(copy != binary); equal(binary, copy);
+            equal(null, Values.convert(null, byte[].class));
+        });
+        test("URL 질의의 + 는 공백이 아니고 %2B 와 %20 은 디코딩된다 (J-5)", () -> {
+            equal("a+b+c d", new Driver.Options("jdbc:helloworlddb://localhost?password=a+b%2Bc%20d", credentials()).password);
+            equal("x+y", new Driver.Options("jdbc:helloworlddb://localhost?tablespace=x%2By", credentials()).tablespace);
+        });
+        test("TLS 최소 버전은 기본 TLSv1.2 이고 알 수 없는 이름은 거부한다 (J-6)", () -> {
+            equal("TLSv1.2", new Driver.Options("jdbc:helloworlddb://localhost?ssl=true", credentials()).sslMinVersion);
+            equal("TLSv1", new Driver.Options("jdbc:helloworlddb://localhost?ssl=true&sslMinVersion=TLSv1", credentials()).sslMinVersion);
+            state("08001", () -> new Driver.Options("jdbc:helloworlddb://localhost?ssl=true&sslMinVersion=SSLv3", credentials()));
+        });
         test("SCRAM nonce·반복수·서버 서명 검증", () -> {
             Scram s = new Scram("a,b=c"); ok(s.first().contains("a=2Cb=3Dc"));
             io(() -> s.finish("p", "r=bad,s=c2FsdA==,i=1"));
@@ -216,6 +230,32 @@ public final class DriverTest {
                 try (Statement s = c.createStatement(); ResultSet r = s.executeQuery("SELECT 1")) { state("0A000", r::previous); state("0A000", () -> r.updateInt(1, 2)); state("0A000", s::getGeneratedKeys); }
                 Statement s = c.createStatement(); s.closeOnCompletion(); ResultSet r = s.executeQuery("SELECT 1"); r.close(); ok(s.isClosed());
                 Statement other = c.createStatement(); other.close(); state("HY010", () -> other.execute("SELECT 1"));
+            });
+            test("추론되지 않는 자리의 setObject(…, SQLType)·setNull(int, int) 는 타입을 알려 준다 (J-1)", () -> {
+                try (PreparedStatement p = c.prepareStatement("SELECT ?, ?")) {
+                    p.setObject(1, null, JDBCType.INTEGER); p.setObject(2, null, JDBCType.VARCHAR);
+                    try (ResultSet r = p.executeQuery()) { ok(r.next()); equal(null, r.getObject(1)); equal(null, r.getObject(2)); ok(!r.next()); }
+                    p.setNull(1, Types.INTEGER); p.setNull(2, Types.VARCHAR);
+                    try (ResultSet r = p.executeQuery()) { ok(r.next()); equal(null, r.getObject(1)); ok(!r.next()); }
+                }
+            });
+            test("getMaxRows 는 int 범위를 넘으면 Integer.MAX_VALUE 로 포화하고 큰 값은 getLargeMaxRows 로 읽는다 (J-3)", () -> {
+                try (Statement s = c.createStatement()) {
+                    s.setLargeMaxRows(3_000_000_000L); equal(Integer.MAX_VALUE, s.getMaxRows()); equal(3_000_000_000L, s.getLargeMaxRows());
+                    s.setMaxRows(3); equal(3, s.getMaxRows()); equal(3L, s.getLargeMaxRows());
+                }
+            });
+            test("연결 종료와 문장 종료가 겹쳐도 열린 문장은 모두 닫힌다 (J-4)", () -> {
+                for (int round = 0; round < 10; round++) {
+                    Connection side = DriverManager.getConnection(url, props);
+                    final List<Statement> opened = new ArrayList<>();
+                    for (int i = 0; i < 40; i++) opened.add(side.createStatement());
+                    Thread closer = new Thread(() -> {
+                        for (Statement st : opened) try { st.close(); } catch (SQLException ignored) { }
+                    });
+                    closer.start(); side.close(); closer.join();
+                    for (Statement st : opened) ok(st.isClosed());
+                }
             });
             if (transport.equals("udp")) test("UDP 유휴 ping으로 세션 유지", () -> { Thread.sleep(1400); ok(c.isValid(2)); });
         }

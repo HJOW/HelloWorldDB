@@ -158,3 +158,26 @@ test("? 파라미터 바인딩을 확인한다", (t) => {
     db.close();
   }
 });
+
+test("SUM 과 AVG 는 타입 없는 NULL 에 NULL 을 돌려준다 (R-6)", (t) => {
+  const { db, session } = setupApp(t);
+  try {
+    const rows = (sql: string): string[][] => selectStrings(session.execute(sql)).rows;
+    assert.deepEqual(rows("SELECT SUM(NULL), AVG(NULL)"), [["NULL", "NULL"]]);
+    assert.deepEqual(rows("SELECT SUM(CAST(NULL AS INTEGER)), AVG(CAST(NULL AS DECIMAL(5,2)))"), [["NULL", "NULL"]]);
+    assert.deepEqual(rows("SELECT MIN(NULL), MAX(NULL), COUNT(NULL)"), [["NULL", "NULL", "0"]]);
+    session.execute("CREATE TABLE T (ID INTEGER, V INTEGER)");
+    session.execute("INSERT INTO T VALUES (1, NULL), (2, NULL)");
+    // NULL 만 있는 그룹과 빈 그룹 모두 NULL 이다. COUNT 는 0 이다.
+    assert.deepEqual(rows("SELECT SUM(V), AVG(V), COUNT(V) FROM T"), [["NULL", "NULL", "0"]]);
+    assert.deepEqual(rows("SELECT SUM(V), AVG(V), COUNT(*) FROM T WHERE ID > 99"), [["NULL", "NULL", "0"]]);
+    assert.deepEqual(rows("SELECT ID, SUM(NULL), AVG(NULL) FROM T GROUP BY ID ORDER BY ID"), [
+      ["1", "NULL", "NULL"],
+      ["2", "NULL", "NULL"],
+    ]);
+    // 문자열 인자는 여전히 거부한다.
+    assert.throws(() => session.execute("SELECT SUM('a') FROM T"), state("42804"));
+  } finally {
+    db.close();
+  }
+});

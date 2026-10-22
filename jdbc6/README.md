@@ -81,7 +81,7 @@ try {
 
 위 예제에는 `java.sql.*`, `java.util.Properties` import가 필요하다. URL과 공통 속성은 [jdbc8 README의 접속 절](../jdbc8/README.md#접속)을 따른다. 형식은 `jdbc:helloworlddb://호스트[:포트][?옵션]`이며 SID·DB 이름·경로는 없다. 현재 테이블스페이스는 `tablespace` 속성으로 지정한다. TCP가 기본이고 `transport=udp` 또는 `ssl=true`·`sslCa`를 선택할 수 있다.
 
-TLS는 런타임이 지원하는 TLS 프로토콜을 켜서 협상한다. 서버 인증서는 기본으로 체인·기간·호스트 이름을 검증하며 인증서 오류에만 100 ms 뒤 최대 두 번 재시도한다. TLS 1.2를 지원하지 않는 이 PC의 Java 6은 서버 `tcp.ssl.minVersion`을 `TLSv1`로 낮춰 접속을 확인했다. Java 7·8·21은 서버 기본 최소 TLSv1.2로 통과했다. 서버 코드를 바꿀 필요는 없었다.
+TLS는 `sslMinVersion`(기본 `TLSv1.2`) 이상의 프로토콜만 켜서 협상한다. Java 6에는 TLSv1.2가 없으므로 그 런타임에서는 `sslMinVersion=TLSv1`을 명시해야 한다(2026-10-22 점검 J-6). 서버 인증서는 기본으로 체인·기간·호스트 이름을 검증하며 인증서 오류에만 100 ms 뒤 최대 두 번 재시도한다. TLS 1.2를 지원하지 않는 이 PC의 Java 6은 서버 `tcp.ssl.minVersion`을 `TLSv1`로 낮춰 접속을 확인했다. Java 7·8·21은 서버 기본 최소 TLSv1.2로 통과했다. 서버 코드를 바꿀 필요는 없었다.
 
 ## JDBC 4.0과 타입
 

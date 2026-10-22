@@ -14,7 +14,7 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 - 이전 검증(Windows, Node.js 24.22.0 / TypeScript 6.0.3) : `npm test` 116개 모두 통과. Bun 1.3.14는 최종 116개 시나리오 중 115개 통과·1개 건너뜀(기존 구버전 TLS)·실패 0이었다(전체 114개 실행 후 초기화 경계 2개를 포함한 `review.test.ts` 재실행).
 - 2026-10-20 점검 및 수정 : 결과 객체의 특수 컬럼 이름, 풀 생성·종료 경쟁과 초기화, 주석이 든 트랜잭션 문장, 인증 제한 시간, 응답 검증, 소켓 조기 종료, 시험 서버 정리 문제를 재현하고 수정했다. 회귀 시험 16개를 추가했다. 상세는 아래 "코드 점검 및 수정".
 - 진행 단계 : **12단계 완료** (12-1 ~ 12-5). 완료 기준 "실제 `rdbms` 를 띄워 수행하는 통합 테스트 통과"를 채웠다.
-- 다음 작업 : **2026-10-22 점검에서 확인한 결함 N-1 ~ N-5의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). N-1은 풀에서 미커밋 트랜잭션이 다음 대여자에게 넘어가는 문제이므로 가장 먼저 고친다. 필수 구현과 Node.js 22.x 후속 검증은 완료했고, 다른 OS의 시험과 선택 기능은 아래 "미결 사항"에 남긴다.
+- 다음 작업 : 2026-10-22 점검의 결함 N-1 ~ N-5 수정과 Node 쪽 빈 묶음 검사를 마쳤다(아래 "2026-10-22 점검 취약점 수정 (완료)"). 다른 OS 시험과 선택 기능은 "미결 사항"에 남긴다.
 - 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)의 서버 작업을 선행 조건으로 하며, 아래 체크리스트는 아직 미구현이다.
 - 구현한 것 : TCP(SSL 포함)와 UDP 접속, 호스트와 포트 번호만으로 대상 지정(생략하면 `127.0.0.1:7410`), SCRAM-SHA-256 인증(서버 nonce·반복 횟수·서버 서명 검증), 문장 실행과 `?` 파라미터 바인딩,
   결과 나누어 받기(`cursor`, 비동기 반복자 `stream`), 트랜잭션 API(`begin`·`commit`·`rollback`·`setAutoCommit`·`transaction`), 접속 종료와 끊김 감지(`close` 이벤트), `DbError`(SQLSTATE·내부 번호·위치), 커넥션 풀, TypeScript 타입 정의, README.
@@ -40,34 +40,40 @@ HelloWorldDB 에 접속하는 Node.js 용 드라이버 패키지를 개발하는
 - [ ] Node.js 22 이상과 Bun에서 TCP·TLS·UDP 실제 서버 시험을 추가한다. 실행 없는 describe, 반복 바인딩, 잠금 대기·CPU 질의 취소, 취소 후 연결 재사용과 앞선 트랜잭션 변경 보존, UDP 유실·중복, 구형 서버 호환을 검증한다.
 - [ ] 기존 전체 시험과 풀·스트림 회귀 시험을 통과시킨 뒤 README·타입 사용 예제·이 문서의 완료 상태를 갱신한다. 기능 없는 서버의 동작과 취소·제한 시간의 보장 범위를 명시한다.
 
-## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+## 2026-10-22 점검 취약점 수정 (완료)
 
-2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 다음 수행할 작업으로 등록한다. 점검 기준선은 Node.js 24.16.0에서 전체 **116/116 통과**이다. 아래 N-1은 실제 서버와 풀로 재현했고, 나머지는 코드 경로를 확인했다.
+2026-10-22 코드 점검에서 확인한 결함이다. **수정을 마쳤다.** 각 항목의 조치와 시험은 항목 아래 `조치` 줄에 적었다. 점검 기준선은 Node.js 24.16.0에서 전체 **116/116 통과**이다. 아래 N-1은 실제 서버와 풀로 재현했고, 나머지는 코드 경로를 확인했다.
 
-- [ ] **N-1 (높음, 확인됨) `SET AUTOCOMMIT`의 다른 문법과 `ROLLBACK WORK TO`에서 상태를 잘못 추적해 풀이 미커밋 세션을 넘긴다.**
+- [x] **N-1 (높음, 확인됨) `SET AUTOCOMMIT`의 다른 문법과 `ROLLBACK WORK TO`에서 상태를 잘못 추적해 풀이 미커밋 세션을 넘긴다.**
+  - 조치(2026-10-22) : SET AUTOCOMMIT 은 서버 문법(`[= | TO] ON|TRUE|1|OFF|FALSE|0`)을 토큰으로 정확히 읽고, 알아볼 수 없는 형태는 `uncertainSession` 으로 표시해 반납 때 초기화한다. `ROLLBACK [WORK] TO` 는 저장점 롤백으로 보아 트랜잭션을 남긴다. 시험 : `test/pool.test.ts` 의 "SET AUTOCOMMIT 의 다른 형태와 ROLLBACK WORK TO …(N-1)". 검증 : 수정 전 코드에서 이 시험이 실패함을 확인했다.
   - 위치 : `src/connection.ts:309-327`(`trackStatement`), `:405-408`(`_needsReset`), `src/pool.ts:216-232`.
   - 원인 : SQL 앞 세 낱말만 본다. `SET AUTOCOMMIT OFF`는 맞게 추적하지만 `SET AUTOCOMMIT = OFF`·`TO OFF`·`FALSE`·`0`은 autocommit = true로 기록하고, `ROLLBACK WORK TO SAVEPOINT s`는 전체 롤백으로 오인해 inTxn = false로 만든다. 그러면 `_needsReset`이 false가 되어 반납 시 `_reset()`을 건너뛴다.
   - 재현(실제 서버·풀) : 첫 대여자가 `SET AUTOCOMMIT = OFF` 후 `INSERT INTO LEAK VALUES (42)`를 하고 반납하면 `autocommit`은 true, `_needsReset`은 false였다. 두 번째 대여자가 같은 세션에서 `SELECT ID FROM LEAK`을 하면 `[["42"]]`를 읽는다. 서버는 autocommit OFF·열린 트랜잭션 상태로 남아 있어 이후 대여자의 `BEGIN`이 25001로 실패하거나 첫 대여자의 변경이 함께 커밋·롤백될 수 있다.
   - 수정 : `SET AUTOCOMMIT`의 `ON/OFF/TRUE/FALSE/1/0`과 선택적 `TO`/`=`를 정확히 파싱하고, `ROLLBACK [WORK] TO [SAVEPOINT]`를 구분한다. 더 안전하게는 추정을 버리고 **반납 시 항상 `ROLLBACK`과 초기 autocommit 복원을 수행**한다. 결정 사항의 "트랜잭션 상태는 성공한 문장에서 가늠한다"(아래 "결정 사항")와 README의 관련 설명도 함께 고친다.
   - 시험 : 위 모든 문법, `ROLLBACK WORK TO`, `COMMIT WORK`, 주석이 섞인 문장, autocommit OFF 뒤 INSERT/DML, 풀 `max: 1`에서 두 대여자 사이의 격리(두 번째가 첫 번째의 미커밋 행을 보지 않아야 함), 반납 뒤 서버 상태를 `SYS_SESSIONS`로 확인하는 시험을 넣는다.
 
-- [ ] **N-2 (중간, 코드 확인) 풀 `_reset()`에 응답 제한 시간이 없어 반열림 연결이 슬롯을 영구 점유할 수 있다.**
+- [x] **N-2 (중간, 코드 확인) 풀 `_reset()`에 응답 제한 시간이 없어 반열림 연결이 슬롯을 영구 점유할 수 있다.**
+  - 조치(2026-10-22) : `_reset()` 에 제한 시간을 두었다. 풀 옵션 `resetTimeoutMs`(기본 35,000 ms, 0 보다 커야 함)를 넘으면 접속을 끊고 기다리던 정리 요청을 모두 실패시킨다. `pool.close()` 는 되돌리기가 끝나야 끝나므로 제한 시간 안에 끝난다. 시험 : `test/hardening.test.ts`(응답 없는 가짜 프로토콜), `test/pool.test.ts` 의 옵션 검사. 검증 : 수정 전 코드에서는 응답 없는 가짜 프로토콜의 `_reset()` 이 끝나지 않아 시험이 멈췄다(버그의 재현). 옵션 검사 시험은 수정 전 코드에서 실패했다.
   - 위치 : `src/pool.ts:216-232`, `src/connection.ts:411-426`, `src/protocol/protocolConnection.ts:222`.
   - 원인 : `_reset()`의 `rollback()`·`closeCursor()`·`USE`·`SET TIME ZONE`·`SET AUTOCOMMIT` 요청이 `requestTimeoutMs`를 넘기지 않아 기본값이 없다. 서버가 RST 없이 사라진 반열림 TCP에서는 `_reset()`이 끝나지 않고, 그 접속이 `releasing`에 남아 `total()`에 계속 계산된다. 반복되면 `acquire()`가 전부 실패하고 `pool.close()`도 끝나지 않는다.
   - 수정 : 내부 정리 요청에 짧은 고정 제한 시간(예 : 잠금 제한 시간 + 여유)을 적용하고, 초과 시 접속을 폐기한다. `releasing`도 유휴 정리 대상에 넣고 경고를 남긴다.
   - 시험 : 응답하지 않는 가짜 전송으로 `_reset()` 시간 초과 → 접속 폐기 → 슬롯 반환을 확인하고, `pool.close()`가 제한 시간 안에 끝나는지 넣는다.
 
-- [ ] **N-3 (낮음) 인증 전 프레임 한도가 16MiB다.**
+- [x] **N-3 (낮음) 인증 전 프레임 한도가 16MiB다.**
+  - 조치(2026-10-22) : 인증 전에는 64 KiB, 인증 뒤에는 16 MiB 를 쓴다. TCP 는 `MessageTransport.onAuthenticated` 로, UDP 는 접속별 한도로 바꾼다. 시험 : `test/hardening.test.ts`(인증 전 70 KB 프레임은 접속 종료, 인증 뒤 65 KB 결과는 정상).
   - 위치 : `src/transport/tcpTransport.ts:104-105`. 프로토콜은 인증 전 64KiB, 인증 후 16MiB를 요구한다(Python 드라이버는 지킨다).
   - 수정 : `hello`/로그인 완료 시점에 프레임 해석기 한도를 바꾸는 콜백을 넘긴다. UDP도 인증 전 한도를 64KiB로 둔다(`src/transport/udpTransport.ts`의 `RECEIVE_LIMIT`).
   - 시험 : 인증 전 64KiB 초과 프레임이 접속 종료로 이어지고, 인증 후 큰 결과는 정상인지 확인한다.
 
-- [ ] **N-4 (낮음) `Cursor.fetch(size)`가 크기를 검증하지 않는다.**
+- [x] **N-4 (낮음) `Cursor.fetch(size)`가 크기를 검증하지 않는다.**
+  - 조치(2026-10-22) : `Cursor.fetch(size)` 가 `query` 의 `fetchSize` 와 같은 `checkFetchSize` 로 검증한다. 시험 : `test/hardening.test.ts`(`-1`, `0`, `1.5`, `NaN` 은 RangeError).
+  - 추가(pythonDriver P-6 의 Node 쪽) : 묶음이 비었는데 `hasMore` 가 이어지면 접속을 끊고 `08P01` 로 알린다(`rejectEmptyBatch`, `query` 와 `Cursor.fetch`). 시험 : `test/hardening.test.ts`. 이 항목은 N 목록에 없던 것이다.
   - 위치 : `src/connection.ts:470-483`. `query()`의 `fetchSize`는 `checkFetchSize`로 검증하지만 `cursor.fetch(size)`는 음수·소수·NaN을 그대로 보낸다. 서버가 22023으로 거절하므로 크래시는 아니지만 API 계약이 비대칭이다.
   - 수정 : `Cursor.fetch()`에서도 `checkFetchSize(size, "size")`를 호출한다.
   - 시험 : `-1`, `0`, `1.5`, `NaN`이 `RangeError`가 되고 정상 값은 그대로인지 넣는다.
 
-- [ ] **N-5 (낮음) 요청 시간 초과 뒤 서버 커서 번호를 잃어 풀 접속이 16개 한도에 막힐 수 있다.**
+- [x] **N-5 (낮음) 요청 시간 초과 뒤 서버 커서 번호를 잃어 풀 접속이 16개 한도에 막힐 수 있다.**
+  - 조치(2026-10-22) : 요청 응답 제한 시간을 넘긴 접속은 `serverStateUnknown` 으로 표시하고, 반납 때 되돌리지 않고 끊는다. 풀은 새 접속을 만든다. 시험 : `test/pool.test.ts` 의 N-5 시험, `test/hardening.test.ts`. 검증 : 실제 데몬 시험은 수정 전 코드에서도 통과했다(되돌리기가 실패해 접속이 버려지는 경로). 이 수정을 직접 확인하는 것은 응답 없는 가짜 프로토콜의 `serverStateUnknown` 단위 시험이다.
   - 위치 : `src/protocol/protocolConnection.ts:231-238`, `src/connection.ts:241-262`.
   - 원인 : 타임아웃되면 대기 항목을 지우고 늦은 응답을 버린다. 서버에는 커서가 남지만 번호를 몰라 `closeCursor`를 보낼 수 없고, `_reset()`도 추적된 커서만 닫는다. 같은 풀 접속에서 16번 쌓이면 이후 커서 있는 질의가 53400으로 실패한다.
   - 수정 : `execute`/`fetch` 타임아웃 시 접속을 폐기하고 풀에서 교체하거나, 서버에 커서 전체 정리 요청을 추가한다. 최소한 "커서 번호 불명" 상태를 표시해 반납 시 접속을 버린다.
@@ -224,7 +230,7 @@ AGENTS.md 지켜야 할 사항 5의 Node.js 22.x 후속 검증을 `VM-W11-Codex`
   행은 컬럼 순서의 배열이고 `result.records()` 가 컬럼 이름 키의 객체로 바꾼다. (컬럼 이름이 겹칠 수 있어 객체를 기본으로 하지 않았다)
 - **`DbError.isConnectionError`** : SQLSTATE 클래스 `08` 에 더해 서버가 접속을 끊으며 알리는 `57P01`(서버 종료), `57P05`(유휴 시간 초과)도 "이 접속을 더 쓸 수 없는 오류" 로 본다. 서버가 먼저 끊은 접속에 이어서 보낸 문장은 그 서버 오류(`57P01`·`57P05`)로 거부된다.
 - **`close` 이벤트** : 이쪽이 `close()`/`destroy()` 로 끝낸 것은 `null`, 서버가 끊었거나 연결이 끊긴 것은 `DbError` 를 함께 보낸다. (서버가 먼저 보낸 `id: 0` 오류가 있으면 그것이 원인이다)
-- **트랜잭션 상태는 성공한 문장에서 가늠한다.** `BEGIN`·`START TRANSACTION`·`COMMIT`·`ROLLBACK`(`ROLLBACK TO` 제외)·`SET AUTOCOMMIT`·DDL 계열을 보고 `inTransaction`, `autoCommit`을 갱신한다. 낱말 사이와 끝의 주석도 처리한다. 서버가 상태를 알려 주지 않으므로 실패·응답 대기 상태는 별도로 표시하며, 풀 반환 때는 필요한 경우 추정 상태와 무관하게 ROLLBACK을 전송한다.
+- **트랜잭션 상태는 서버 문법의 형태를 알아보는 범위에서 가늠한다.** `BEGIN`·`START TRANSACTION`·`COMMIT`·`ROLLBACK`(`ROLLBACK [WORK] TO` 는 트랜잭션을 남긴다)·`SET AUTOCOMMIT`(`[= | TO] ON|TRUE|1|OFF|FALSE|0` 만 상태로 받는다)·DDL 계열을 보고 `inTransaction`, `autoCommit` 을 갱신한다. 알아볼 수 없는 형태는 `uncertainSession` 으로 표시한다. 낱말 사이와 끝의 주석도 처리한다. 풀 반환 때는 상태와 무관하게 필요한 경우 ROLLBACK 과 자동 커밋 복원을 보내고, 응답을 잃은 접속은 되돌리지 않고 버린다. (2026-10-22 N-1, N-5 로 고침)
   `transaction(fn)` 은 자동 커밋이 켜져 있으면 `BEGIN`/`COMMIT`/`ROLLBACK`, 꺼져 있으면 `BEGIN` 없이 `COMMIT`/`ROLLBACK` 만 보낸다. (자동 커밋이 꺼진 상태의 `BEGIN` 은 이미 시작된 트랜잭션이 있으면 서버가 `25001` 로 거부한다)
 - **커넥션 풀의 기본값** : `max` 5(서버 `maxConnections` 기본 10 이 TCP·UDP 세션 합계라 절반으로), `idleTimeoutMs` 30초, `acquireTimeoutMs` 30초(넘으면 `53300`), `maxLifetimeMs` 제한 없음. 접속은 처음 빌릴 때 만든다. 반환 시 필요한 롤백·커서 정리·자동 커밋·테이블스페이스·타임존 복원이 끝난 뒤 다시 빌려주고, 복원하지 못하면 버린다.
 - **파라미터의 `Date`** 는 `toISOString()` (UTC, `Z`)으로 보낸다. 서버가 오프셋이 적힌 문자열을 타임존 없는 타입으로 받으면 세션 타임존의 벽시계 시각으로 옮기고, `WITH TIME ZONE` 에는 입력한 오프셋(`+00:00`)으로 저장한다. (`rdbms/docs/data-types.md`)
@@ -267,3 +273,4 @@ AGENTS.md 지켜야 할 사항 5의 Node.js 22.x 후속 검증을 `VM-W11-Codex`
   통합 시험이 **서버 결함 하나**(문자열 파라미터의 `CAST(? AS INTEGER)` 가 `XX000`)를 찾아 `rdbms` 에서 고쳤다. 같은 날 `rdbms` 통합 시험 도우미의 데몬 누수와 PID 재사용 문제도 고쳤다(`rdbms/PROGRESS.md`). 커밋은 하지 않았다.
 - 2026-10-20 : 코드 점검 항목 D-1 ~ D-8을 수정했다. 기존 시험 100개 통과 후 회귀 14개가 수정 전 실패함을 확인했고 풀 초기화 경계 시험 2개를 더했다. 최종 Node.js 전체 116개 통과·실패 0, Bun은 115개 통과·기존 TLS 1개 건너뜀이다(전체 114개 실행 + 경계 2개가 포함된 회귀 파일 재실행). 시험 후 남은 HelloWorldDB 데몬 0개. README와 두 PROGRESS.md를 갱신했다. 서버 코드와 프로토콜 형식은 바꾸지 않았고 커밋·푸시는 하지 않았다.
 - 2026-10-20 : `VM-W11-Codex`의 Node.js 22.23.3으로 드라이버 전체 116개 시험을 통과해 Node.js 22.x 미결 항목을 닫았다. 실제 서버도 같은 런타임으로 구동했다. 배포본을 새 소비자 프로젝트에 설치하여 Node.js 22.23.3·Bun 1.4.2의 TCP·TLS·UDP 시나리오, TypeScript 6.0.3의 엄격한 타입 검사, Node.js의 CommonJS `require(esm)` 접속을 확인했다. 호환성 수정은 필요하지 않았고 README와 진행 문서를 갱신했다. 임시 파일·시험 데몬은 정리했으며 커밋·푸시는 하지 않았다.
+- 2026-10-22 : 점검 결함 N-1 ~ N-5 수정과 Node 쪽 빈 묶음 검사(P-6 대응)를 마쳤다. 풀 되돌리기 제한 시간(`resetTimeoutMs`)과 인증 전 프레임 한도를 더했다. 시험 `test/hardening.test.ts` 와 `test/pool.test.ts` 에 회귀 시험을 추가했다. 커밋·푸시는 하지 않았다.

@@ -52,8 +52,8 @@ SELECT SET SOME TABLE THEN TO TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE W
 | 리터럴 | `TIMESTAMP WITH TIME ZONE '...'`, `TIME WITHOUT TIME ZONE '...'`, `INTERVAL -'5' DAY`(부호를 문자열 앞에) |
 | 타입 | `TIME(p) WITHOUT TIME ZONE`, `NATIONAL CHAR`, `NATIONAL CHAR VARYING`, `NCHAR VARYING`, `INTERVAL SECOND(선행 정밀도, 소수 초 자릿수)` |
 | INSERT | `DEFAULT VALUES`, 괄호로 감싼 질의 |
-| CREATE TABLE | 컬럼 속성(`DEFAULT`, `NOT NULL`, `NULL`, `PRIMARY KEY`, `REFERENCES`)을 순서와 무관하게 받는다. 컬럼에 붙여 적는 제약조건에도 `CONSTRAINT 이름`을 둘 수 있다. 컬럼과 테이블 제약조건을 섞어 적을 수 있다 |
-| ALTER TABLE | `RENAME [COLUMN] a TO b`의 `COLUMN` 생략, `DROP [COLUMN] a RESTRICT` |
+| CREATE TABLE | 컬럼 속성(`DEFAULT`, `NOT NULL`, `NULL`, `PRIMARY KEY`, `REFERENCES`)을 순서와 무관하게 받는다. 컬럼에 붙여 적는 제약조건에도 `CONSTRAINT 이름`을 둘 수 있다. 컬럼과 테이블 제약조건을 섞어 적을 수 있다. `DEFAULT` 식은 상수 식만 받는다(열 참조는 `42703`, 파라미터와 서브쿼리는 `0A000`) |
+| ALTER TABLE | `RENAME [COLUMN] a TO b`의 `COLUMN` 생략, `DROP [COLUMN] a RESTRICT`. `RENAME TO` 는 그 테이블을 참조하는 뷰가 있으면 `55006` |
 | ALTER USER | 비밀번호와 기본 테이블스페이스를 한 문장에 함께 적을 수 있다 |
 | DROP TABLESPACE | `INCLUDING CONTENTS AND DATAFILES`(데이터 파일은 항상 함께 지우므로 뜻이 같다) |
 | 트랜잭션 | `BEGIN [WORK \| TRANSACTION]`, `START TRANSACTION ISOLATION LEVEL READ COMMITTED`, `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, `RELEASE [SAVEPOINT] 이름` |

@@ -69,14 +69,37 @@ class Cursor(object):
             raise errors.ProgrammingError("Parameters must be a sequence.", None, None, None)
         return [types.encode_param(value, index) for index, value in enumerate(items)]
 
+    def _clear_result(self):
+        """이전 문장의 결과를 모두 버린다. 새 문장이 실패해도 옛 행이 남지 않게 한다. (P-2)"""
+        self.description = None
+        self.rowcount = -1
+        self._columns = []
+        self._buffer = []
+        self._server_cursor = None
+        self._has_more = False
+
+    def _violation(self, reason):
+        """서버가 프로토콜을 어겼다. 접속을 끊고 DB-API 오류로 알린다."""
+        self._connection._wire.abort()
+        return errors.protocol_violation(reason)
+
+    def _decode_batch(self, raws, columns):
+        """묶음의 행을 값으로 바꾼다. 행 폭이 컬럼 수와 다르면 프로토콜 위반이다. (P-4)"""
+        rows = []
+        for raw in raws:
+            if len(raw) != len(columns):
+                raise self._violation("A row does not match the column count.")
+            rows.append([types.decode_value(value, columns[index]) for index, value in enumerate(raw)])
+        return rows
+
     def _store_rows(self, response):
         columns = response.get("columns") or []
         raws = response.get("rows") or []
+        # 묶음에는 항상 행이 하나 이상 있다. 빈 묶음에 이어진다고 하면 서버가 어긋난 것이다. (P-6)
+        if response.get("hasMore") and not raws:
+            raise self._violation("A batch with more rows is empty.")
         descriptions = [_describe(column) for column in columns]
-        rows = []
-        for raw in raws:
-            rows.append([types.decode_value(value, columns[index] if index < len(columns) else {})
-                         for index, value in enumerate(raw)])
+        rows = self._decode_batch(raws, columns)
         self._columns = columns
         self.description = descriptions or []
         # 빈 결과라도 조회는 빈 목록 description을 둔다.
@@ -114,6 +137,7 @@ class Cursor(object):
         encoded = self._take_params(parameters)
         fetch_size = self._connection._fetch_size
         self._close_server_cursor()
+        self._clear_result()
         response = self._connection._wire.execute_encoded(operation, encoded, fetch_size)
         if response.get("type") == "rows":
             self._store_rows(response)
@@ -154,11 +178,10 @@ class Cursor(object):
             batch = self._connection._wire.fetch(self._server_cursor,
                                                  self._connection._fetch_size)
             raws = batch.get("rows") or []
-            columns = self._columns
-            for raw in raws:
-                self._buffer.append(
-                    [types.decode_value(value, columns[index] if index < len(columns) else {})
-                     for index, value in enumerate(raw)])
+            # 빈 묶음에 이어진다고 하면 서버가 어긋난 것이다. 빈 묶음을 반복해 받으며 무한히 기다리지 않는다. (P-6)
+            if batch.get("hasMore") and not raws:
+                raise self._violation("A batch with more rows is empty.")
+            self._buffer.extend(self._decode_batch(raws, self._columns))
             if batch.get("hasMore"):
                 cursor = batch.get("cursor")
                 if (not isinstance(cursor, int) or isinstance(cursor, bool)):
@@ -169,10 +192,14 @@ class Cursor(object):
                 self._server_cursor = None
                 self._has_more = False
 
+    def _require_result(self):
+        """결과 집합이 없는 문장(DML 등)이나 execute 가 없었던 뒤의 fetch 는 PEP 249 대로 오류이다. (P-5)"""
+        if self.description is None:
+            raise errors.ProgrammingError("No result set is available.", None, None, None)
+
     def fetchone(self):
         self._check_open()
-        if self.description is None:
-            return None
+        self._require_result()
         self._fill(1)
         if not self._buffer:
             return None
@@ -185,8 +212,7 @@ class Cursor(object):
         if (not isinstance(size, int) or isinstance(size, bool) or size < 0):
             raise errors.ProgrammingError("Fetch size must be a non-negative integer.",
                                           None, None, None)
-        if self.description is None:
-            return []
+        self._require_result()
         self._fill(size)
         taken = self._buffer[0:size]
         del self._buffer[0:size]
@@ -194,8 +220,7 @@ class Cursor(object):
 
     def fetchall(self):
         self._check_open()
-        if self.description is None:
-            return []
+        self._require_result()
         while self._has_more:
             self._fill(len(self._buffer) + 1)
             if not self._has_more:
@@ -212,6 +237,8 @@ class Cursor(object):
         finally:
             self._closed = True
             self._buffer = []
+            # 닫은 커서는 접속의 목록에서 뺀다. 문장마다 만드는 커서가 쌓이지 않게 한다. (P-3)
+            self._connection._forget_cursor(self)
 
     def setinputsizes(self, *args):
         return

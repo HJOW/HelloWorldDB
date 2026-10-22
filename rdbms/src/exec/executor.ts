@@ -1444,21 +1444,22 @@ export function scanTableForDml(catalog: CatalogStore, table: StoredTable, table
  * DML의 WHERE 탐색에 쓸 단일 테이블 스캔이다. 행 식별자와 함께 돌려준다.
  * 조건의 앞쪽 컬럼에 맞는 인덱스(PK 포함)가 있으면 그 인덱스로 후보만 읽는다. 없으면 힙을 하나씩 읽는 지연 순회로 훑으며
  * 조건에 맞는 행만 모은다. (테이블 전체를 메모리에 올리지 않는다) 어느 쪽이든 조건은 모든 후보에 다시 건다.
+ * scopeName 은 조건과 식이 열을 가리킬 이름이다. 뷰를 통한 DML은 뷰 이름을 넘겨, 기반 테이블 이름으로 열을 참조하지 못하게 한다.
  */
-export function* scanTableForDmlSteps(catalog: CatalogStore, table: StoredTable, tablespace: string, alias: string | null, where: Expression | null, ctx: QueryContext): Work<{
+export function* scanTableForDmlSteps(catalog: CatalogStore, table: StoredTable, tablespace: string, alias: string | null, where: Expression | null, ctx: QueryContext, scopeName: string = table.name): Work<{
   id: RowId | null;
   tempId: string | null;
   values: SqlValue[];
   scopes: RowScope[];
 }[]> {
-  const candidates = where === null ? null : (yield* indexedCandidatesSteps(catalog, tablespace, table, alias ?? table.name, where, ctx));
+  const candidates = where === null ? null : (yield* indexedCandidatesSteps(catalog, tablespace, table, alias ?? scopeName, where, ctx));
   const rows = candidates ?? visibleRows(catalog, tablespace, table, ctx.txn);
   const out: { id: RowId | null; tempId: string | null; values: SqlValue[]; scopes: RowScope[] }[] = [];
   for (const row of rows) {
     yield;
     const scopes: RowScope[] = [{
         tablespace,
-        table: table.name,
+        table: scopeName,
         alias,
         slots: (yield* mapWork(table.columns, function* (column, index) {
           return ({

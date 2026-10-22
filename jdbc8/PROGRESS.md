@@ -14,7 +14,7 @@ HelloWorldDB용 JDBC 4.2 드라이버(자바 8 이상)를 개발하는 프로젝
 - 확정된 지원 기준 : 자바 8 이상, JDBC 4.2 (AGENTS.md 상세 8-1). `jdbc6`는 JDBC 4.0을 제공하며 자바 8 이상에서도 실행 가능해야 한다.
 - 착수 조건 : 선행 두 프로젝트 완료와 사용자의 추가 작업 지시로 충족했다. 기존 번호와 범위를 유지하고 Maven 제안 대신 jdbc6과 같은 JDK·Node.js 방식으로 정했다.
 - 검증 : Windows / Node.js 22.23.3 서버 / TypeScript 6.0.3. 사용자 지정 Oracle JDK 8u202로 만든 같은 JAR을 Java 8u202·21.0.12.1에서 실행해 **기존 130개·확장 50개·독립 소비자 6개 전부 통과**, 실패·건너뜀 0이다. 클래스 버전 52·공유 코드의 실제 JDK 6 컴파일·동기화 검사도 통과했다.
-- 다음 작업 : **2026-10-22 점검에서 확인한 결함 J-1 ~ J-6의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). `jdbc6`와 같은 JDBC 계층 결함은 양쪽을 함께 고치고 공유 프로토콜 동기화 검사를 통과시킨다. 그 뒤 macOS·실제 원격망·장시간 부하·다른 범용 도구는 추가 검증 범위이다.
+- 다음 작업 : 2026-10-22 점검의 결함 J-1 ~ J-6 수정을 마쳤다(아래 "2026-10-22 점검 취약점 수정 (완료)"). 13-5 범위의 DBeaver 화면 재확인은 이번 수정 뒤에 다시 하지 않았다.
 - 재검증 : `npm test`, `npm run test:extensions`, `npm run test:consumer`. `HWDB_JDBC_TEST_MAJORS=8`은 확장 집중 시험용이다. 이번 JDK 8 집중 25개도 통과했다.
 
 ## 서버 prepare/describe·cancel 연동
@@ -29,42 +29,48 @@ HelloWorldDB용 JDBC 4.2 드라이버(자바 8 이상)를 개발하는 프로젝
 - [x] 공유 프로토콜은 `jdbc6` 원본에서 패키지 선언만 바꾸어 동기화한다. 공통 계층에 자바 8 전용 API를 넣지 않고, JDBC 4.2 전용 타입 대응은 jdbc8 계층에 둔다. 양쪽 동기화 검사를 통과시킨다.
 - [x] 실제 JDK 8로 빌드한 같은 JAR을 자바 8·21에서 시험한다. TCP·TLS·UDP, 실행 없는 describe·미정 타입·반복 실행·잠금 대기/CPU 질의 취소·UDP 유실/중복·구형 서버 호환과 기존 전체 회귀를 확인한다. README·한계·진행 기록을 갱신한다. Linux DBeaver의 객체·컬럼 탐색과 취소·재사용 화면도 아래 13-5에서 확인했다.
 
-## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+## 2026-10-22 점검 취약점 수정 (완료)
 
-2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 다음 수행할 작업으로 등록한다. 이 장비에는 JDK 8이 없어 전체 시험을 다시 돌리지 못했고, 소스를 JDK 25에서 `javac --release 8`로 컴파일한 뒤 리플렉션으로 J-1·J-2를 실제 호출해 확인했다. 수정 뒤에는 Java 8·21 행렬과 Linux DBeaver 화면 확인을 다시 수행한다.
+2026-10-22 코드 점검에서 확인한 결함이다. **수정을 마쳤다.** 이 PC 에는 JDK 6·7·8·21 이 모두 설치되어 있어 Java 6·7·8·21(·25)에서 시험을 다시 돌렸다. 앞선 기록의 "JDK 8 없음"은 그 장비 기준이다. 각 항목의 조치는 항목 아래 `조치` 줄에 적었다.
 
-- [ ] **J-1 (중간, 확인됨) `setNull(int, SQLType)`이 ClassCastException으로 실패한다.**
+- [x] **J-1 (중간, 확인됨) `setNull(int, SQLType)`이 ClassCastException으로 실패한다.**
+  - 조치(2026-10-22) : `setNull` 의 힌트 계산이 `Integer` 만 받던 것을 `SQLType` 도 받도록 바꾸었다(내부 방어). 다만 JDBC 4.2 공개 API 에는 `setNull(int, SQLType)` 이 없고 SQLType 바인딩은 `setObject(int, Object, SQLType)` 뿐이며, 그 경로는 원래도 정상이었다. 따라서 보고된 CCE 는 공개 API 로는 재현되지 않았다. 시험 : 추론되지 않는 자리의 `setObject(…, SQLType)`·`setNull(int, int)`. jdbc6 은 `SQLType` 을 리플렉션으로 읽는다(`JdbcStatement.typeNumber`).
   - 위치 : `src/org/duckdns/hjow/helloworlddb/jdbc8/JdbcStatement.java:305` (`hint`의 `((Integer) args[1]).intValue()`). `jdbc6`의 같은 코드는 `JdbcStatement.java:263`.
   - 원인 : JDBC 4.2의 `setNull(int, SQLType)`은 두 번째 인자가 `SQLType`인데 `Integer`로 캐스팅한다. 서버가 파라미터 타입을 추론하지 못해 `inferred[index]`가 false인 경우(예 : `INSERT INTO T VALUES (?)`)에 바로 발생한다.
   - 확인 : 리플렉션 호출에서 `ClassCastException: Probe$T cannot be cast to java.lang.Integer`를, `setNull(int, int)`는 정상 동작함을 확인했다.
   - 수정 : `SQLType`이면 `getVendorTypeNumber()`를 사용하고, 알 수 없는 타입이면 SQLSTATE 0A000으로 알린다. `setObject(int, Object, SQLType)` 경로와 같은 규칙으로 맞춘다. `jdbc6`도 같은 수정을 적용한다.
   - 시험 : `setNull(int, SQLType)`·`setObject(int, Object, SQLType)`·`setNull(int, int)`를 타입 추론 불가/가능 컬럼에서 각각 실행하고, Java 8·21에서 확인한다.
 
-- [ ] **J-2 (중간, 확인됨) CHAR/VARCHAR에 `getBytes()`·`getObject(byte[].class)`를 하면 0A000이다.**
+- [x] **J-2 (중간, 확인됨) CHAR/VARCHAR에 `getBytes()`·`getObject(byte[].class)`를 하면 0A000이다.**
+  - 조치(2026-10-22) : `Values.convert` 에 문자열 → `byte[]`(UTF-8) 변환을 더했다. `getBytes`·`getObject(i, byte[].class)` 가 같은 경로를 쓴다. README 에 이진 컬럼의 `getString`(16진)과 짝을 적었다. 시험 : 단위(`안녕abc` 의 UTF-8, 이진 복사본)와 통합 DriverTest.
   - 위치 : `src/org/duckdns/hjow/helloworlddb/jdbc8/Values.java:151-198`(`convert`), `JdbcResultSet.java:124`.
   - 원인 : `String`에서 `byte[]`로 가는 변환이 없어 `getBytes()`가 `SQLFeatureNotSupportedException(0A000)`이 된다. JDBC 변환표는 문자 타입에 `getBytes`를 허용하며 `getString`의 역변환과 대칭이 맞지 않는다.
   - 확인 : `Values.convert("abc", byte[].class)`를 리플렉션으로 호출해 `SQLFeatureNotSupportedException: Conversion to [B`를 확인했다.
   - 수정 : `String`을 UTF-8 바이트로 바꾸는 변환을 추가하고 `getObject(i, byte[].class)`도 같은 경로를 쓰게 한다. 이진 컬럼의 `getString`(16진 표기)과 왕복 규칙을 README에 적는다. `jdbc6`도 함께 고친다.
   - 시험 : CHAR/VARCHAR/BINARY/VARBINARY의 `getBytes`, `getObject(byte[].class)`, `getString` 왕복과 NULL을 넣는다.
 
-- [ ] **J-3 (낮음) `getMaxRows()`가 int 범위를 넘으면 -2(`SUCCESS_NO_INFO`)를 돌려준다.**
+- [x] **J-3 (낮음) `getMaxRows()`가 int 범위를 넘으면 -2(`SUCCESS_NO_INFO`)를 돌려준다.**
+  - 조치(2026-10-22) : `getMaxRows()` 는 int 로 포화한다(`Integer.MAX_VALUE`). `getUpdateCount` 의 `SUCCESS_NO_INFO` 규칙과 섞지 않았다. 시험 : `setLargeMaxRows(3_000_000_000L)` 뒤 `getMaxRows()`.
   - 위치 : `JdbcStatement.java:205`(`count`), `:154`(`getMaxRows`).
   - 수정 : `getMaxRows` 전용으로 `maxRows > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) maxRows`로 포화한다. `getUpdateCount`의 `SUCCESS_NO_INFO` 규칙과 섞지 않는다.
   - 시험 : `setLargeMaxRows(3_000_000_000L)` 뒤 `getMaxRows()`가 `Integer.MAX_VALUE`인지 확인한다.
 
-- [ ] **J-4 (낮음) `Connection.close()`와 `Statement.close()`가 `statements` HashSet을 동시에 만질 수 있다.**
+- [x] **J-4 (낮음) `Connection.close()`와 `Statement.close()`가 `statements` HashSet을 동시에 만질 수 있다.**
+  - 조치(2026-10-22) : `statements` 를 `Collections.synchronizedSet` 으로 바꾸고, 종료 때 복사는 집합의 모니터를 잡고 한다(Java 8 전용 `newKeySet` 은 피했다). 시험 : 통합 시험의 종료 경합 반복. 확률적 경쟁이라 결정적으로 재현하지는 못한다.
   - 위치 : `JdbcConnection.java:21,169-174`, `JdbcStatement.java:416`.
   - 문제 : `Connection.close()`가 `new ArrayList<>(statements)`로 복사하는 동안 다른 스레드가 `remove(this)`를 하면 `ConcurrentModificationException`이 나거나 복사가 누락될 수 있다. 종료 경로에서 자원 정리가 중단될 수 있다.
   - 수정 : `Collections.synchronizedSet`/`ConcurrentHashMap.newKeySet()`으로 바꾸거나 add·remove도 연결 모니터로 보호한다. `jdbc6`도 함께 고친다.
   - 시험 : 연결 종료와 문장 종료를 여러 스레드에서 반복해 예외 없이 모든 문장이 닫히는지 확인한다.
 
-- [ ] **J-5 (낮음) JDBC URL 질의 문자열의 `+`를 공백으로 해석한다.**
+- [x] **J-5 (낮음) JDBC URL 질의 문자열의 `+`를 공백으로 해석한다.**
+  - 조치(2026-10-22) : URL 질의의 키와 값을 `+` → `%2B` 로 바꾼 뒤 퍼센트 디코딩한다. `+` 는 문자 그대로 남고 공백은 `%20`. 시험 : 단위(`password=a+b%2Bc%20d`, `tablespace=x%2By`).
   - 위치 : `src/org/duckdns/hjow/helloworlddb/jdbc8/Driver.java:113-116`.
   - 문제 : `URLDecoder.decode`가 `password=a+b`를 `a b`로 바꾼다. JDBC URL 관례는 `+`를 문자 그대로 보는 경우가 일반적이다.
   - 수정 : `+`를 `%2B`로 먼저 바꾸거나 자체 퍼센트 디코더를 쓴다. `jdbc6`도 함께 고친다.
   - 시험 : `user`·`password`·`tablespace`에 `+`, `%`, 한글, 공백이 든 값을 넣어 왕복한다.
 
-- [ ] **J-6 (낮음/의도 확인) TLS 클라이언트가 TLSv1·1.1도 기본 활성화한다.**
+- [x] **J-6 (낮음/의도 확인) TLS 클라이언트가 TLSv1·1.1도 기본 활성화한다.**
+  - 조치(2026-10-22) : `sslMinVersion` 접속 속성을 더했다(기본 `TLSv1.2`, 허용: `TLSv1`·`TLSv1.1`·`TLSv1.2`·`TLSv1.3`). 켤 프로토콜은 최소 버전 이상만 고르고, 고를 것이 없으면 오류이다(예전에는 `TLS*` 를 모두 켰다). 공유 원본은 jdbc6 의 `protocol/TcpTransport.java` 이고 jdbc8 은 동기화 스크립트로 복사했다. Java 6 시험은 `sslMinVersion=TLSv1` 을 명시한다. 시험 : 단위 기본값·거부, Java 6 TLS 통합.
   - 위치 : `src/org/duckdns/hjow/helloworlddb/jdbc8/protocol/TcpTransport.java:57-58`(공유 원본은 `jdbc6`).
   - 문제 : `getSupportedProtocols()` 중 `TLS`로 시작하는 모든 버전을 켠다. Java 6 호환을 위한 의도일 수 있지만, 기본은 TLS 1.2 이상으로 두고 구버전은 명시적 접속 속성으로 여는 편이 안전하다. 서버 기본 최소 버전이 1.2라 즉시 취약하지는 않다.
   - 수정안 : `sslMinVersion` 접속 속성을 추가하고 기본 `TLSv1.2`, Java 6 사용자는 `TLSv1`을 명시한다. `jdbc6`·`rdbms/docs/protocol.md`의 TLS 안내를 함께 고친다.
@@ -197,3 +203,4 @@ HelloWorldDB용 JDBC 4.2 드라이버(자바 8 이상)를 개발하는 프로젝
 - 2026-10-16 : 자바 8 이상용 JDBC 4.2 기준을 명시하고, 공유 대상 프로젝트를 `jdbc6`(자바 6 이상 실행, JDBC 4.0)으로 바꿨다. 공통 프로토콜 코드의 자바 6 기준과 메타데이터 버전 차이를 반영했다. 개발 보류는 유지한다.
 - 2026-10-20 : `VM-W11-Codex`의 JDK 8 설치 경로(`C:\Program Files\Java\jdk8u432-b06`)와 실행·컴파일러 경로를 기록했다. `jdbc6`의 자바 8 호환성 시험에도 같은 설치본을 사용한다. 개발 보류는 유지한다.
 - 2026-10-20 : 전 소스 한국어 Javadoc 추가. 13개 전체 소스(Driver·JdbcConnection·JdbcStatement·JdbcResultSet·JdbcDatabaseMetaData·JdbcProxy·Values·protocol 6종)의 클래스·중첩 클래스·상수·필드·생성자·메소드(비공개 포함)에 한국어 Javadoc을 달았다. 빌드(`scripts/build.mjs`, JDK 8) 통과를 확인했고 커밋·푸시는 하지 않았다. 로직 변경 없음(멤버별 주석을 위해 한 줄 다중 필드 선언만 분리).
+- 2026-10-22 : 점검 결함 J-1 ~ J-6 수정. 공유 TLS 최소 버전(`sslMinVersion`), URL 디코딩, 문자 값의 getBytes, 문장 집합 동기화, getMaxRows 포화, SQLType 타입 번호를 고쳤고 시험을 더했다. 커밋·푸시는 하지 않았다.

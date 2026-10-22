@@ -23,7 +23,11 @@ public final class Consumer {
     Properties options = new Properties();
     options.setProperty("user", "SYSTEM"); options.setProperty("password", "HelloWorldDB");
     if (args[1].equals("udp")) options.setProperty("transport", "udp");
-    if (args[1].equals("tls")) { options.setProperty("ssl", "true"); options.setProperty("sslCa", args[2]); }
+    if (args[1].equals("tls")) {
+      options.setProperty("ssl", "true"); options.setProperty("sslCa", args[2]);
+      // Java 6 에는 TLSv1.2 가 없으므로, 그 런타임의 사용자는 최소 버전을 명시한다. (J-6)
+      if ("1.6".equals(System.getProperty("java.specification.version"))) options.setProperty("sslMinVersion", "TLSv1");
+    }
     Connection connection = DriverManager.getConnection(args[0], options);
     try {
       PreparedStatement statement = connection.prepareStatement("SELECT CAST(? AS DECIMAL(12,0)) AS N");

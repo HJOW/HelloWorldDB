@@ -63,6 +63,27 @@ def _invalid_response(reason):
     return protocol_violation("Invalid response from the server: {0}".format(reason))
 
 
+def _check_rows(parsed):
+    """`rows` 응답의 columns 와 행 모양을 본다. (P-4)
+
+    columns 가 있으면 이름과 타입 이름이 문자열인 객체의 배열이어야 하고, 각 행은 컬럼 수만큼의 값을 가진 배열이어야 한다.
+    fetch 응답에는 columns 가 없으므로 그 행 폭은 커서가 자기 컬럼 수와 맞춰 본다.
+    """
+    columns = parsed.get("columns")
+    width = None
+    if columns is not None:
+        if not isinstance(columns, list):
+            raise _invalid_response("Response rows has an invalid columns field.")
+        for column in columns:
+            if (not isinstance(column, dict) or not isinstance(column.get("name"), str) or
+                    not isinstance(column.get("typeName"), str)):
+                raise _invalid_response("Response rows has an invalid column.")
+        width = len(columns)
+    for row in parsed["rows"]:
+        if not isinstance(row, list) or (width is not None and len(row) != width):
+            raise _invalid_response("Response rows has a row of the wrong width.")
+
+
 def decode_response(body):
     """응답 본문을 읽는다. 봉투와 핵심 필드만 보고 모르는 필드는 둔다."""
     if isinstance(body, (bytearray, memoryview)):
@@ -102,6 +123,7 @@ def decode_response(body):
         if (not isinstance(parsed.get("rows"), list) or
                 not isinstance(parsed.get("hasMore"), bool)):
             raise _invalid_response("Response rows has an invalid field.")
+        _check_rows(parsed)
     elif message_type == "ok":
         if not isinstance(parsed.get("message"), str):
             raise _invalid_response("Response ok has an invalid field.")

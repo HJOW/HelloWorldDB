@@ -76,8 +76,12 @@ export function authorizeStatement(env: AuthContext, stmt: Statement): void {
     }
     case "AlterTable": {
       requireObject(env, stmt.name, ["ALTER"]);
+      const selfSpace = stmt.name.tablespace ?? env.currentTablespace;
+      // 컬럼에 붙은 REFERENCES 도 FK 이므로, 참조 테이블의 SELECT 를 확인한다. (CREATE TABLE 과 같은 규칙)
+      if (stmt.action.kind === "AddColumn" && stmt.action.column.references !== null) {
+        requireReference(env, stmt.action.column.references, selfSpace, stmt.name.name);
+      }
       if (stmt.action.kind === "AddConstraint" && stmt.action.constraint.kind === "ForeignKey") {
-        const selfSpace = stmt.name.tablespace ?? env.currentTablespace;
         requireReference(env, stmt.action.constraint.reference, selfSpace, stmt.name.name);
       }
       return;

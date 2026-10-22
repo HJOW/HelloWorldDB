@@ -16,7 +16,7 @@
  */
 
 import { DbError, ERROR_CODES } from "./errors.js";
-import { Connection } from "./connection.js";
+import { Connection, DEFAULT_RESET_TIMEOUT_MS } from "./connection.js";
 import type { ConnectOptions, QueryOptions, QueryResult } from "./connection.js";
 import type { Param } from "./values.js";
 
@@ -29,6 +29,11 @@ export interface PoolOptions extends ConnectOptions {
   acquireTimeoutMs?: number;
   /** 접속 하나를 쓸 수 있는 최대 시간(ms)이다. 넘은 접속은 돌려받을 때 닫는다. 기본 0(제한 없음). */
   maxLifetimeMs?: number;
+  /**
+   * 돌려받은 접속을 로그인 직후의 상태로 되돌리는 제한 시간(ms)이다. 넘으면 서버 상태를 알 수 없으므로 접속을 닫는다.
+   * 기본 35,000. 0 보다 커야 한다.
+   */
+  resetTimeoutMs?: number;
 }
 
 export interface PoolStats {
@@ -59,6 +64,7 @@ export class Pool {
   private readonly idleTimeoutMs: number;
   private readonly acquireTimeoutMs: number;
   private readonly maxLifetimeMs: number;
+  private readonly resetTimeoutMs: number;
   private readonly connectOptions: ConnectOptions;
   private readonly idle: IdleEntry[] = [];
   private readonly active = new Set<Connection>();
@@ -74,11 +80,13 @@ export class Pool {
   private drained: Array<() => void> = [];
 
   constructor(options: PoolOptions) {
-    const { max, idleTimeoutMs, acquireTimeoutMs, maxLifetimeMs, ...connectOptions } = options;
+    const { max, idleTimeoutMs, acquireTimeoutMs, maxLifetimeMs, resetTimeoutMs, ...connectOptions } = options;
     this.max = max ?? 5;
     this.idleTimeoutMs = idleTimeoutMs ?? 30_000;
     this.acquireTimeoutMs = acquireTimeoutMs ?? 30_000;
     this.maxLifetimeMs = maxLifetimeMs ?? 0;
+    this.resetTimeoutMs = resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS;
+    if (!(this.resetTimeoutMs > 0) || !Number.isFinite(this.resetTimeoutMs)) throw new RangeError("resetTimeoutMs must be greater than 0.");
     if (!Number.isInteger(this.max) || this.max < 1) throw new RangeError("max must be an integer of 1 or more.");
     for (const [name, value] of [["idleTimeoutMs", this.idleTimeoutMs], ["acquireTimeoutMs", this.acquireTimeoutMs], ["maxLifetimeMs", this.maxLifetimeMs]] as const) {
       if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be 0 or more.`);
@@ -214,7 +222,7 @@ export class Pool {
       return;
     }
     this.releasing.add(connection);
-    connection._reset().then(
+    connection._reset(this.resetTimeoutMs).then(
       () => {
         this.releasing.delete(connection);
         if (this.closing || connection.isClosed) connection.destroy();

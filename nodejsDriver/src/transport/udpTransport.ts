@@ -20,16 +20,13 @@
 import dgram from "node:dgram";
 import net from "node:net";
 import { connectionFailure } from "../errors.js";
-import { MAX_MESSAGE_BYTES } from "../protocol/messages.js";
+import { MAX_MESSAGE_BYTES, PRE_AUTH_MAX_MESSAGE_BYTES } from "../protocol/messages.js";
 import { ReliableEndpoint, UdpFlags, decodePacket, encodePacket, realClock } from "../protocol/udpReliability.js";
 import type { UdpPacket, UdpReliabilityError } from "../protocol/udpReliability.js";
 import type { MessageTransport, TransportHandlers } from "./tcpTransport.js";
 
 /** 처음 쓰는 패킷 크기이다. 서버가 알려 주는 값에 맞춘다. */
 const INITIAL_PACKET_SIZE = 1200;
-
-/** 인증 뒤의 큰 결과를 받아야 하므로 메시지 하나의 최대 크기(16 MiB)로 둔다. */
-const RECEIVE_LIMIT = MAX_MESSAGE_BYTES;
 
 export async function connectUdp(host: string, port: number): Promise<MessageTransport> {
   const socket = dgram.createSocket({ type: net.isIPv6(host) ? "udp6" : "udp4" });
@@ -51,6 +48,8 @@ export async function connectUdp(host: string, port: number): Promise<MessageTra
   let closed = false;
   let heardFromServer = false;
   const early: Buffer[] = [];
+  // 인증 전에는 64 KiB, 인증 뒤에는 큰 결과를 받도록 16 MiB 를 쓴다. (onAuthenticated)
+  let receiveLimit = PRE_AUTH_MAX_MESSAGE_BYTES;
 
   const finish = (error: Error | null): void => {
     if (closed) return;
@@ -84,7 +83,7 @@ export async function connectUdp(host: string, port: number): Promise<MessageTra
       onFailure: (error: UdpReliabilityError) => {
         finish(connectionFailure(error.kind === "retransmit-limit" ? "The server did not respond (UDP retransmissions exhausted)." : `UDP protocol error: ${error.message}`, error));
       },
-      maxMessageBytes: () => RECEIVE_LIMIT,
+      maxMessageBytes: () => receiveLimit,
     },
   );
 
@@ -159,6 +158,9 @@ export async function connectUdp(host: string, port: number): Promise<MessageTra
           // 서버가 알려 준 크기가 범위 밖이면 기본값을 그대로 쓴다.
         }
       }
+    },
+    onAuthenticated() {
+      receiveLimit = MAX_MESSAGE_BYTES;
     },
   };
 }

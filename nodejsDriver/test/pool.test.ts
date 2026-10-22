@@ -271,3 +271,64 @@ test("release 는 빌린 접속에만 쓸 수 있고 두 번 돌려줄 수 없�
   assert.throws(() => createPool({ ...ADMIN, acquireTimeoutMs: Number.NaN }), RangeError);
   assert.ok(conn instanceof Connection);
 });
+
+test("SET AUTOCOMMIT 의 다른 형태와 ROLLBACK WORK TO 를 쓴 접속도 돌려줄 때 미커밋 변경을 되돌린다 (N-1)", async () => {
+  const admin = await connect({ port: server.port, ...ADMIN });
+  await admin.query("CREATE TABLE ND_LEAK (ID INTEGER PRIMARY KEY)");
+  const p = pool({ max: 1 });
+  // 서버가 받는 형태들이다. 앞 세 낱말로 판단하던 예전 추정은 이 중 일부를 놓쳤다.
+  const forms = ["SET AUTOCOMMIT = OFF", "SET AUTOCOMMIT TO OFF", "SET AUTOCOMMIT FALSE", "SET AUTOCOMMIT 0", "/* 주석 */ SET AUTOCOMMIT OFF"];
+  let id = 1;
+  for (const form of forms) {
+    const a = await p.acquire();
+    await a.query(form);
+    assert.equal(a.autoCommit, false, form);
+    await a.query(`INSERT INTO ND_LEAK VALUES (${id++})`);
+    a.release();
+    const b = await p.acquire();
+    assert.equal(b.autoCommit, true, `${form} 뒤 반납하면 자동 커밋이 되돌아온다`);
+    assert.equal(b.inTransaction, false, form);
+    assert.equal((await b.query("SELECT COUNT(*) FROM ND_LEAK")).rows[0]?.[0], 0n, `${form} 의 변경은 롤백된다`);
+    b.release();
+  }
+
+  // ROLLBACK WORK TO 는 저장점까지만 되돌린다. 트랜잭션은 남으므로 반납할 때 전부 되돌아가야 한다.
+  const c = await p.acquire();
+  await c.begin();
+  await c.query("INSERT INTO ND_LEAK VALUES (100)");
+  await c.query("SAVEPOINT S1");
+  await c.query("INSERT INTO ND_LEAK VALUES (101)");
+  await c.query("ROLLBACK WORK TO SAVEPOINT S1");
+  assert.equal(c.inTransaction, true, "저장점 롤백 뒤에도 트랜잭션은 열려 있다");
+  c.release();
+  const d = await p.acquire();
+  assert.equal(d.inTransaction, false);
+  assert.equal((await d.query("SELECT COUNT(*) FROM ND_LEAK")).rows[0]?.[0], 0n, "미커밋 행이 다음 대여자에게 보이지 않는다");
+  d.release();
+  await admin.close();
+});
+
+test("응답 제한 시간을 넘긴 접속은 돌려줄 때 버리고, 다음 대여자는 새 접속을 받는다 (N-5)", async () => {
+  const admin = await connect({ port: server.port, ...ADMIN });
+  await admin.query("CREATE TABLE ND_N5 (ID INTEGER PRIMARY KEY, V INTEGER)");
+  await admin.query("INSERT INTO ND_N5 VALUES (1, 0)");
+  await admin.begin();
+  await admin.query("UPDATE ND_N5 SET V = 1 WHERE ID = 1"); // 잠금을 쥔다.
+  const p = pool({ max: 1, requestTimeoutMs: 600 });
+  const a = await p.acquire();
+  const error = await failure(a.query("UPDATE ND_N5 SET V = 2 WHERE ID = 1")); // 잠금을 기다리다 응답 제한 시간을 넘는다.
+  assert.equal(error.sqlState, "08006");
+  a.release();
+  const b = await p.acquire();
+  assert.notEqual(b, a, "응답을 잃은 접속은 다시 쓰지 않는다");
+  assert.equal((await b.query("SELECT V FROM ND_N5 WHERE ID = 1")).rows[0]?.[0], 0, "INTEGER 는 number 로 읽는다");
+  b.release();
+  await admin.rollback();
+  await admin.close();
+});
+
+test("resetTimeoutMs 는 0 보다 커야 한다 (N-2)", () => {
+  assert.throws(() => pool({ resetTimeoutMs: 0 }), RangeError);
+  assert.throws(() => pool({ resetTimeoutMs: Number.NaN }), RangeError);
+  pool({ resetTimeoutMs: 1000 });
+});

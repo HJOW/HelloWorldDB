@@ -94,6 +94,7 @@
 
 - 뷰에 권한이 있으면 뷰가 참조하는 테이블 각각의 권한은 검사하지 않는다. 예를 들어 뷰 `VIEW_SAMPLE1` 에 `UPDATE` 가 있으면 기반 테이블에 권한이 없어도 그 뷰로 `UPDATE` 할 수 있다(`test/auth/privileges.test.ts`의 개요 5 예시).
   구현은 문장에 **적힌** 객체만 검사하고 뷰를 펼친 안쪽은 검사하지 않는 방식이다. 뷰 안의 서브쿼리와 조인이 읽는 객체도 뷰 정의자의 권한으로 읽는 셈이다.
+- 뷰를 통한 `UPDATE`·`DELETE` 의 대상은 **뷰 조건을 만족하는 기반 행**이다. 뷰 조건이 중첩 뷰를 거치면 모든 단계의 조건을 합친다. 뷰 조건은 뷰 정의를 따르므로 뷰 밖의 행은 바뀌지 않고 영향 행 수에도 들지 않는다. 조건 열이 선택 목록에 없어도 기반 행에 적용한다. (2026-10-22 점검 R-1. 이전에는 조건을 버려 기반 테이블 전체를 바꿀 수 있었다)
 - 뷰를 만들려면 테이블스페이스의 `CREATE` 와 뷰가 참조하는 **모든** 객체(서브쿼리, 조인, 다른 뷰 포함)에 대한 `SELECT` 가 있어야 한다.
 - 뷰 소유자 본인이 따로 부여받은 뷰 권한이 없을 때는 기반 객체에 대한 본인의 권한으로 검사한다. 뷰를 만든 것만으로 기반 테이블에 없던 권한이 생기지 않게 하기 위함이다.
   기반 테이블의 권한을 잃으면 자기 뷰도 쓸 수 없다.
@@ -133,7 +134,7 @@ DDL 계열(사용자·권한 문장 포함)은 진행 중인 트랜잭션을 자
 | `INSERT` / `UPDATE` / `DELETE` | 대상의 `INSERT` / `UPDATE` / `DELETE`. `INSERT ... SELECT` 의 원천, 식 안의 서브쿼리가 읽는 다른 객체의 `SELECT` |
 | `CREATE TABLE` | 테이블스페이스의 `CREATE`. FK 가 참조하는 테이블(자기 자신 제외)의 `SELECT` |
 | `CREATE VIEW` | 테이블스페이스의 `CREATE`(기존 뷰를 `OR REPLACE` 하면 그 뷰의 `ALTER`)와 참조하는 모든 객체의 `SELECT` |
-| `ALTER TABLE` | 테이블의 `ALTER`. FK 를 더하면 참조되는 테이블의 `SELECT` |
+| `ALTER TABLE` | 테이블의 `ALTER`. FK 를 더하면(`ADD CONSTRAINT FOREIGN KEY`, `ADD COLUMN ... REFERENCES`) 참조되는 테이블의 `SELECT` |
 | `CREATE INDEX`, `DROP INDEX` | 테이블의 `ALTER` |
 | `DROP TABLE`, `DROP VIEW`, `TRUNCATE` | 대상의 `DROP` |
 | `CREATE TABLESPACE`, `DROP TABLESPACE`, `CREATE USER`, `DROP USER`, 권한 그룹의 `GRANT`·`REVOKE` | DBA |
@@ -167,9 +168,12 @@ DDL 이 끝날 때마다(`Session.cleanupAfterDdl`) 다음을 한다.
 - 사라진 객체와 테이블스페이스의 권한 기록을 지운다(`AccessControl.pruneStaleRecords`). 객체를 지우면 그 객체의 권한 기록도 지워지고, 같은 이름으로 다시 만들어도 이어받지 않는다.
   사용 불가 상태라 읽을 수 없는 테이블스페이스의 기록은 있는지 알 수 없으므로 남긴다.
 - 지워진 테이블스페이스를 기본으로 쓰던 사용자는 기본 테이블스페이스가 없는 상태가 된다(`UserStore.clearMissingDefaultTablespaces`).
-- 테이블 이름을 바꾸면(`ALTER TABLE ... RENAME TO`) 권한 기록이 새 이름을 따라간다(`AccessControl.renameObject`).
+- 테이블 이름을 바꾸면(`ALTER TABLE ... RENAME TO`) 권한 기록이 새 이름을 따라간다(`AccessControl.renameObject`). 다만 그 테이블을 참조하는 뷰가 있으면 `55006` 으로 거부한다. `DROP TABLE ... RESTRICT` 와 같은 기준이며, 뷰의 정의가 옛 이름을 가리켜 다른 사용자의 데이터가 엉뚱하게 노출되는 것을 막는다. (2026-10-22 점검 R-3)
 
 ## 8. 구현에서 정한 사항
+
+- `DEFAULT` 식은 상수 식만 받는다. 열 참조는 `42703`, 파라미터와 서브쿼리는 `0A000` 으로 정의할 때 거부한다. 저장된 식은 나중에 어느 세션에서든 평가되므로, 서브쿼리를 허용하면 정의한 사람의 권한이 INSERT 하는 사람에게 넘어간다. `CREATE TABLE`, `ADD COLUMN`, `ALTER COLUMN ... SET DEFAULT` 가 같은 규칙을 쓴다. (2026-10-22 점검 R-2)
+- `ADD COLUMN ... REFERENCES` 는 `ADD CONSTRAINT FOREIGN KEY` 와 같이 참조 테이블의 `SELECT` 를 요구한다. (2026-10-22 점검 R-4)
 
 사양이 정하지 않아 구현에서 정했다. 바꿔야 하면 이 문서와 PROGRESS.md 의 결정 사항을 함께 고친다.
 

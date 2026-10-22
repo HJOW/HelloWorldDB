@@ -20,7 +20,12 @@ public final class JdbcTest {
     private static Properties options(String mode, String ca) {
         Properties p = new Properties(); p.setProperty("user", "SYSTEM"); p.setProperty("password", "HelloWorldDB"); p.setProperty("fetchSize", "3");
         if (mode.equals("udp")) p.setProperty("transport", "udp");
-        if (mode.startsWith("tls")) { p.setProperty("ssl", "true"); if (ca.length() > 0) p.setProperty("sslCa", ca); } return p;
+        if (mode.startsWith("tls")) {
+            p.setProperty("ssl", "true"); if (ca.length() > 0) p.setProperty("sslCa", ca);
+            // Java 6 에는 TLSv1.2 가 없으므로, 그 런타임의 사용자는 최소 버전을 명시한다. (J-6)
+            if ("1.6".equals(System.getProperty("java.specification.version"))) p.setProperty("sslMinVersion", "TLSv1");
+        }
+        return p;
     }
     public static void main(String[] args) throws Exception {
         if (args[0].equals("unit")) unit();
@@ -30,6 +35,7 @@ public final class JdbcTest {
         System.out.println("PASSED " + passed);
     }
     private static void unit() throws Exception {
+        reviewUnit();
         eq("org.duckdns.hjow.helloworlddb.jdbc6.Driver", DriverManager.getDriver("jdbc:helloworlddb://localhost").getClass().getName());
         eq(null, new Driver().connect("jdbc:other://localhost", new Properties())); pass("JDBC 4.0 자동 등록·다른 URL 거부");
         Map<String, Object> value = Json.object("한글😀", Arrays.<Object>asList("", null, Boolean.TRUE, Long.valueOf(123), new BigDecimal("0.000000000000000001")));
@@ -128,6 +134,7 @@ public final class JdbcTest {
             privileges(c, url, props, space); pass("기본 테이블스페이스 없음·뷰 권한·메타데이터 가시성");
             calendar(c); pass("Calendar·스트림·정밀도 명시 setObject");
             modern(c, space); pass("상위 런타임 JDBC 메서드 호환 처리");
+            reviewIntegration(url, props); pass("SQLType 바인딩·getMaxRows 포화·문장 종료 경합");
             if (mode.equals("udp")) { Thread.sleep(1400); ok(c.isValid(2)); pass("UDP 유휴 ping으로 세션 유지"); }
         } finally { c.close(); }
         ok(c.isClosed());
@@ -189,6 +196,56 @@ public final class JdbcTest {
         Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")); utc.clear(); utc.set(2026, 9, 20, 12, 34, 56); Timestamp ts = new Timestamp(utc.getTimeInMillis()); ts.setNanos(123456000);
         PreparedStatement p = c.prepareStatement("UPDATE Q SET V=?,N=?,TS=? WHERE ID=1"); try { p.setCharacterStream(1, new StringReader("reader한글")); p.setObject(2, "12.3456", Types.DECIMAL, 2); p.setTimestamp(3, ts, utc); p.executeUpdate(); } finally { p.close(); }
         Statement s = c.createStatement(); try { ResultSet r = s.executeQuery("SELECT V,N,TS FROM Q WHERE ID=1"); try { ok(r.next()); eq("reader한글", r.getString(1)); eq(new BigDecimal("12.350000000"), r.getBigDecimal(2)); eq(ts, r.getTimestamp(3, utc)); } finally { r.close(); } } finally { s.close(); }
+    }
+    /** 2026-10-22 점검의 단위 부분이다 (J-2 문자 값의 getBytes, J-5 URL 의 +, J-6 TLS 최소 버전). */
+    private static void reviewUnit() throws Exception {
+        eq("안녕abc".getBytes("UTF-8"), Values.convert("안녕abc", byte[].class));
+        byte[] binary = { 1, 2, (byte) 255 }; byte[] copy = (byte[]) Values.convert(binary, byte[].class); ok(copy != binary); eq(binary, copy);
+        eq(null, Values.convert(null, byte[].class));
+        Properties credentials = new Properties(); credentials.setProperty("user", "SYSTEM"); credentials.setProperty("password", "HelloWorldDB");
+        eq("a+b+c d", new Driver.Options("jdbc:helloworlddb://localhost?password=a+b%2Bc%20d", credentials).password);
+        eq("x+y", new Driver.Options("jdbc:helloworlddb://localhost?tablespace=x%2By", credentials).tablespace);
+        eq("TLSv1.2", new Driver.Options("jdbc:helloworlddb://localhost?ssl=true", credentials).sslMinVersion);
+        eq("TLSv1", new Driver.Options("jdbc:helloworlddb://localhost?ssl=true&sslMinVersion=TLSv1", credentials).sslMinVersion);
+        try { new Driver.Options("jdbc:helloworlddb://localhost?ssl=true&sslMinVersion=SSLv3", credentials); throw new AssertionError(); } catch (SQLException e) { eq("08001", e.getSQLState()); }
+        pass("J-2 getBytes UTF-8·J-5 URL 의 + 보존·J-6 TLS 최소 버전");
+    }
+    /**
+     * 2026-10-22 점검의 통합 부분이다 (J-1 SQLType 바인딩, J-3 getMaxRows 포화, J-4 문장 종료 경합).
+     * 상위 런타임에만 있는 메서드와 타입은 리플렉션으로 부르고, 없는 런타임에서는 건너뛴다.
+     */
+    private static void reviewIntegration(String url, Properties props) throws Exception {
+        Connection c = DriverManager.getConnection(url, props);
+        try {
+            PreparedStatement p = c.prepareStatement("SELECT ?, ?");
+            try {
+                p.setObject(1, null, Types.INTEGER);
+                p.setObject(2, null, Types.VARCHAR);
+                try {
+                    Class<?> sqlType = Class.forName("java.sql.SQLType");
+                    Object integer = Class.forName("java.sql.JDBCType").getField("INTEGER").get(null);
+                    PreparedStatement.class.getMethod("setObject", int.class, Object.class, sqlType).invoke(p, Integer.valueOf(1), null, integer);
+                } catch (ClassNotFoundException java6) { }
+                ResultSet r = p.executeQuery();
+                try { ok(r.next()); eq(null, r.getObject(1)); eq(null, r.getObject(2)); ok(!r.next()); } finally { r.close(); }
+            } finally { p.close(); }
+            Statement s = c.createStatement();
+            try {
+                try { Statement.class.getMethod("setLargeMaxRows", Long.TYPE).invoke(s, Long.valueOf(3000000000L)); eq(Integer.valueOf(Integer.MAX_VALUE), Integer.valueOf(s.getMaxRows())); }
+                catch (NoSuchMethodException java6) { }
+                s.setMaxRows(3); eq(Integer.valueOf(3), Integer.valueOf(s.getMaxRows()));
+            } finally { s.close(); }
+            for (int round = 0; round < 10; round++) {
+                final Connection side = DriverManager.getConnection(url, props);
+                final List<Statement> opened = new ArrayList<Statement>();
+                for (int i = 0; i < 40; i++) opened.add(side.createStatement());
+                Thread closer = new Thread(new Runnable() {
+                    public void run() { for (Statement st : opened) { try { st.close(); } catch (SQLException ignored) { } } }
+                });
+                closer.start(); side.close(); closer.join();
+                for (Statement st : opened) ok(st.isClosed());
+            }
+        } finally { c.close(); }
     }
     private static void modern(Connection c, String space) throws Exception {
         try { Method schema = Connection.class.getMethod("getSchema"); eq(space, schema.invoke(c)); } catch (NoSuchMethodException java6) { }

@@ -107,21 +107,27 @@ export class Decimal {
     }
     const integerPart = match[2] ?? "";
     const fractionPart = match[3] ?? match[4] ?? "";
-    let unscaled = BigInt(`${integerPart}${fractionPart}` || "0");
-    let scale = fractionPart.length;
-
-    if (match[5] !== undefined && unscaled !== 0n) {
-      const exponent = Number(match[5]);
-      const integerDigits = countDigits(unscaled) - scale + exponent;
-      if (integerDigits > MAX_PARSE_INTEGER_DIGITS) {
-        throw numericOutOfRange(`Numeric value out of range: ${quoteForMessage(text)}.`);
-      }
-      if (scale - exponent > MAX_INTERNAL_SCALE) {
-        // 어떤 타입으로 받아도 0 으로 반올림되는 작은 수이다.
-        return new Decimal(0n, 0);
-      }
-      scale -= exponent;
+    const exponent = match[5] === undefined ? 0 : Number(match[5]);
+    // 값 = digits × 10^power 로 나눈다. BigInt 를 만들기 전에 자릿수 상한을 문자열 길이로 먼저 본다.
+    // 상한을 넘는 긴 입력이 BigInt 계산으로 이벤트 루프를 오래 붙잡지 않게 하려는 것이다.
+    const digits = `${integerPart}${fractionPart}`.replace(/^0+/, "");
+    if (digits === "") {
+      return new Decimal(0n, Math.min(fractionPart.length, MAX_INTERNAL_SCALE));
     }
+    let power = exponent - fractionPart.length;
+    if (digits.length + power > MAX_PARSE_INTEGER_DIGITS) {
+      throw numericOutOfRange(`Numeric value out of range: ${quoteForMessage(text)}.`);
+    }
+    // 10^-(MAX+1) 보다 낮은 자리는 버린다. 그 한 자리 위(10^-(MAX+1))는 남겨 HALF_UP 반올림 판정에 쓴다.
+    // 버린 뒤에도 남는 자릿수는 정수부 상한과 반올림 한 자리로 묶이므로 BigInt 가 작게 유지된다.
+    const dropped = Math.max(0, -(MAX_INTERNAL_SCALE + 1) - power);
+    if (dropped >= digits.length) {
+      // 어떤 타입으로 받아도 0 으로 반올림되는 작은 수이다.
+      return new Decimal(0n, 0);
+    }
+    let unscaled = BigInt(dropped === 0 ? digits : digits.slice(0, digits.length - dropped));
+    // 0 - x 로 적어 0 일 때 -0 이 되지 않게 한다.
+    let scale = 0 - (power + dropped);
     if (scale < 0) {
       unscaled *= pow10(-scale);
       scale = 0;

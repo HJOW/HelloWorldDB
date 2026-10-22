@@ -77,6 +77,8 @@ export class ProtocolConnection {
   private readonly pending = new Map<number, Pending>();
   private nextId = 1;
   private closed = false;
+  /** 요청 응답을 시간 안에 받지 못한 적이 있는지이다. 그 뒤 서버 상태(커서, 실행 결과)는 확정할 수 없다. */
+  private responseLost = false;
   /** 이쪽에서 접속을 끝내기로 한 뒤이다. 이 뒤의 전송 계층 닫힘은 예상한 것이다. */
   private closing = false;
   private closedError: DbError | null = null;
@@ -118,6 +120,11 @@ export class ProtocolConnection {
       throw error;
     }
     return connection;
+  }
+
+  /** 응답을 시간 안에 받지 못해 서버의 실행 상태(커서 등)를 확정할 수 없는지이다. 이 접속은 반납하지 말고 버려야 한다. */
+  get serverStateUnknown(): boolean {
+    return this.responseLost;
   }
 
   /** 서버가 협상한 프로토콜 정보이다. */
@@ -233,6 +240,8 @@ export class ProtocolConnection {
       if (timeoutMs !== undefined) {
         waiting.timer = setTimeout(() => {
           this.pending.delete(id);
+          // 늦은 응답이 올 수 있고 서버에 남은 커서나 실행 결과를 알 수 없으므로, 이 접속은 더 믿지 않는다.
+          this.responseLost = true;
           reject(connectionFailure(`No response from the server within ${timeoutMs} ms.`));
         }, timeoutMs);
       }
@@ -291,6 +300,7 @@ export class ProtocolConnection {
       throw connectionFailure("The server could not prove that it knows the password; the connection was dropped.");
     }
     this.sessionInfo = ok.session;
+    this.transport.onAuthenticated?.();
     return ok.session;
   }
 

@@ -153,6 +153,8 @@ final class Values {
         if (v == null) return null;
         try {
             if (type == byte[].class && v instanceof byte[]) return ((byte[]) v).clone();
+            // 문자 컬럼의 getBytes 는 UTF-8 바이트이다. 이진 컬럼의 getString 이 16진 표기인 것과 짝을 이룬다. (J-2)
+            if (type == byte[].class && v instanceof String) return ((String) v).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             if (type == String.class) return v instanceof byte[] ? hex((byte[]) v) : v.toString();
             if (type == BigDecimal.class) return decimal(v);
             if (type == Byte.class || type == byte.class) return decimal(v).setScale(0, RoundingMode.DOWN).byteValueExact();

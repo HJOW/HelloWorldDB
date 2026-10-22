@@ -43,7 +43,7 @@ public final class Driver implements java.sql.Driver {
         Options o = new Options(url, info);
         Protocol protocol = null;
         try {
-            Transport transport = o.udp ? new UdpTransport(o.host, o.port) : TcpTransport.open(o.host, o.port, o.connectTimeout, o.ssl, o.ca, o.verify);
+            Transport transport = o.udp ? new UdpTransport(o.host, o.port) : TcpTransport.open(o.host, o.port, o.connectTimeout, o.ssl, o.ca, o.verify, o.sslMinVersion);
             protocol = new Protocol(transport, o.connectTimeout);
             protocol.login(o.user, o.password, o.tablespace, o.timeZone); protocol.setTimeout(o.timeout);
             return JdbcConnection.open(protocol, o);
@@ -89,9 +89,20 @@ public final class Driver implements java.sql.Driver {
     /** 연결 주소와 속성을 해석한 결과. {@link Driver#connect}가 검증한 값을 보관한다. */
     static final class Options {
         /** 지원하는 연결 속성 이름 목록. */
-        static final List<String> KEYS = Arrays.asList("user", "password", "transport", "ssl", "sslCa", "sslVerify", "connectTimeoutMs", "socketTimeoutMs", "fetchSize", "tablespace", "timeZone");
+        static final List<String> KEYS = Arrays.asList("user", "password", "transport", "ssl", "sslCa", "sslVerify", "sslMinVersion", "connectTimeoutMs", "socketTimeoutMs", "fetchSize", "tablespace", "timeZone");
+
+        /**
+         * URL 질의의 키나 값을 퍼센트 디코딩한다. {@code +} 는 공백이 아니라 문자 그대로 {@code +} 이다.
+         * 공백은 {@code %20} 으로 적는다. (J-5 : 비밀번호의 {@code +} 가 바뀌지 않게 한다)
+         */
+        static String decodeQuery(String text) throws java.io.UnsupportedEncodingException {
+            return URLDecoder.decode(text.replace("+", "%2B"), "UTF-8");
+        }
+
         /** 원본 연결 주소, 접속 호스트, 사용자명, 비밀번호, CA 경로, 현재 테이블스페이스, 시간대. */
         final String url, host, user, password, ca, tablespace, timeZone;
+        /** TLS 최소 버전. 기본 TLSv1.2 이며 Java 6 사용자는 TLSv1 을 명시한다. (J-6) */
+        final String sslMinVersion;
         /** 포트 번호, 접속 제한 시간, 소켓 제한 시간, fetch 크기. */
         final int port, connectTimeout, timeout, fetchSize;
         /** UDP 사용, SSL 사용, 서버 인증서 검증 여부. */
@@ -112,7 +123,7 @@ public final class Driver implements java.sql.Driver {
                 if (port < 1 || port > 65535) throw new IllegalArgumentException();
                 if (uri.getRawQuery() != null) for (String pair : uri.getRawQuery().split("&", -1)) {
                     String[] kv = pair.split("=", 2); if (kv.length != 2) throw new IllegalArgumentException();
-                    p.setProperty(URLDecoder.decode(kv[0], "UTF-8"), URLDecoder.decode(kv[1], "UTF-8"));
+                    p.setProperty(decodeQuery(kv[0]), decodeQuery(kv[1]));
                 }
                 for (String key : p.stringPropertyNames()) if (!KEYS.contains(key)) throw new SQLException("Unknown connection property: " + key, "08001");
                 user = p.getProperty("user"); password = p.getProperty("password", "");
@@ -120,6 +131,8 @@ public final class Driver implements java.sql.Driver {
                 String transport = p.getProperty("transport", "tcp");
                 if (!transport.equals("tcp") && !transport.equals("udp")) throw new IllegalArgumentException();
                 udp = transport.equals("udp"); ssl = bool(p, "ssl", false); verify = bool(p, "sslVerify", true); ca = p.getProperty("sslCa");
+                sslMinVersion = p.getProperty("sslMinVersion", TcpTransport.DEFAULT_TLS_MIN_VERSION);
+                if (!TcpTransport.isTlsVersion(sslMinVersion)) throw new IllegalArgumentException();
                 if (udp && ssl || (ca != null || !verify) && !ssl || ca != null && !verify) throw new IllegalArgumentException();
                 connectTimeout = integer(p, "connectTimeoutMs", DriverManager.getLoginTimeout() > 0 ? (int) Math.min(Integer.MAX_VALUE, DriverManager.getLoginTimeout() * 1000L) : 10000, 1, Integer.MAX_VALUE);
                 timeout = integer(p, "socketTimeoutMs", 30000, 0, Integer.MAX_VALUE); fetchSize = integer(p, "fetchSize", 500, 1, 100000);

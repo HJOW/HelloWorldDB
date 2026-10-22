@@ -31,6 +31,7 @@ import type {
   DropTableStatement,
   DropViewStatement,
   IndexColumn,
+  Expression,
   ObjectName,
   Query,
   Select,
@@ -163,6 +164,29 @@ interface ParsedColumns {
   inlineFks: { name: string | null; columns: string[]; reference: import("../sql/ast.js").ForeignKeyReference }[];
 }
 
+/**
+ * DEFAULT 식은 상수 식만 받는다. 저장된 식은 나중에 어떤 세션이 INSERT 할 때 계산되므로, 서브쿼리나 열 참조가 있으면
+ * 정의한 사람의 권한이 쓰는 사람에게 넘어간다. ANSI 의 기본값 옵션(리터럴, 날짜시간 함수, 사용자 함수)에 맞추어
+ * 서브쿼리, 파라미터, 열 참조를 막는다. (AGENTS.md 상세 1-3, 5)
+ */
+function assertConstantDefault(expression: Expression): void {
+  const stack: unknown[] = [expression];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === null || typeof node !== "object") continue;
+    const { kind, position } = node as { kind?: unknown; position?: SourcePosition };
+    if (kind === "Query" || kind === "Parameter") {
+      fail("0A000", ERROR_CODES.FEATURE_NOT_SUPPORTED, "A DEFAULT expression must be a constant; subqueries and parameters are not supported.", position);
+    }
+    if (kind === "Column") {
+      fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, "A DEFAULT expression cannot refer to a column.", position);
+    }
+    for (const value of Object.values(node)) {
+      if (value !== null && typeof value === "object") stack.push(value);
+    }
+  }
+}
+
 /** 컬럼 정의 목록을 저장 형태로 바꾼다. 타입은 파서가 이미 해석했다. */
 function parseColumnDefinitions(stmt: CreateTableStatement): ParsedColumns {
   const columns: StoredColumn[] = [];
@@ -175,6 +199,7 @@ function parseColumnDefinitions(stmt: CreateTableStatement): ParsedColumns {
       fail("42701", ERROR_CODES.COLUMN_EXISTS, `Duplicate column name: "${column.name}".`, stmt.name.position);
     }
     names.add(column.name);
+    if (column.default !== null) assertConstantDefault(column.default);
     const stored: StoredColumn = {
       name: column.name,
       dataType: column.dataType,
@@ -661,6 +686,7 @@ function addColumn(
     fail("42701", ERROR_CODES.COLUMN_EXISTS, `Duplicate column name: "${columnDef.name}".`, columnPosition);
   }
   assertNotReserved(tablespace, columnDef.name, columnPosition);
+  if (columnDef.default !== null) assertConstantDefault(columnDef.default);
   const added: StoredColumn = {
     name: columnDef.name,
     dataType: columnDef.dataType,
@@ -839,6 +865,7 @@ function alterColumn(
   const target = column as StoredColumn;
   switch (change.kind) {
     case "SetDefault":
+      assertConstantDefault(change.expression);
       target.defaultText = expressionText(change.expression);
       target.defaultExpr = change.expression;
       break;
@@ -927,13 +954,17 @@ function renameTable(
     fail("42P07", ERROR_CODES.TABLE_EXISTS, `An object with the same name already exists: "${newName}".`, position);
   }
   assertNotReserved(tablespace, newName, position);
-  // 참조하는 FK 나 뷰가 있으면 보수적으로 막지 않고 이름을 따라 고친다.
-  // 뷰의 queryText 는 그대로 두므로, 이름이 바뀐 뒤 뷰는 다시 만들도록 안내한다.
-  const referencing = catalog.findReferencingForeignKeys(tableName);
+  // 뷰는 정의(queryText)와 의존 기록이 옛 이름을 가리키므로, 의존하는 뷰가 있으면 DROP TABLE RESTRICT 와 같이 막는다.
+  // FK 는 이름을 따라 고친다.
   const dependentViews = findDependentViews(manager, tablespace, tableName);
-  void dependentViews;
-  const oldHeap = table.heapRoot;
-  void oldHeap;
+  if (dependentViews.length > 0) {
+    fail(
+      "55006",
+      ERROR_CODES.OBJECT_IN_USE,
+      `Table "${tableName}" is referenced by view "${dependentViews[0]}"; cannot rename it.`,
+      position,
+    );
+  }
   delete catalog.data.tables[tableName];
   table.name = newName;
   catalog.data.tables[newName] = table;

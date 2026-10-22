@@ -147,6 +147,10 @@ class TcpConnection(object):
             except socket.timeout:
                 raise connection_failure(
                     "No response from the server within {0} ms.".format(int(timeout * 1000)))
+            except socket.error as error:
+                # RST 등 소켓 오류도 DB-API 예외로 바꾸고 접속을 닫는다. (P-1)
+                raise self._fail_closed(connection_failure(
+                    "The connection was lost while receiving.", error))
             if chunk == b"":
                 raise self._fail_closed(connection_failure("The connection was closed."))
             try:

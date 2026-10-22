@@ -54,7 +54,7 @@ class Connection(object):
         self._wire = wire
         self._lock = _threading.Lock()
         self._closed = False
-        self._cursors = []
+        self._cursors = set()
         self._autocommit = bool(autocommit)
         self._fetch_size = fetch_size
         info = session or {}
@@ -91,8 +91,16 @@ class Connection(object):
         try:
             self._check_open()
             cursor = Cursor(self)
-            self._cursors.append(cursor)
+            self._cursors.add(cursor)
             return cursor
+        finally:
+            self._lock.release()
+
+    def _forget_cursor(self, cursor):
+        """닫은 커서를 접속의 목록에서 뺀다. (P-3)"""
+        self._lock.acquire()
+        try:
+            self._cursors.discard(cursor)
         finally:
             self._lock.release()
 
@@ -124,7 +132,7 @@ class Connection(object):
                 return
             self._closed = True
             cursors = list(self._cursors)
-            self._cursors = []
+            self._cursors = set()
         finally:
             self._lock.release()
         for cursor in cursors:

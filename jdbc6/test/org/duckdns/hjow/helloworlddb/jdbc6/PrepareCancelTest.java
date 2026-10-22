@@ -21,7 +21,11 @@ final class PrepareCancelTest {
     static int run(String url, String mode, String ca, boolean legacy) throws Exception {
         Properties props = new Properties(); props.setProperty("user", "SYSTEM"); props.setProperty("password", "HelloWorldDB");
         if (mode.equals("udp")) props.setProperty("transport", "udp");
-        if (mode.equals("tls")) { props.setProperty("ssl", "true"); props.setProperty("sslCa", ca); }
+        if (mode.equals("tls")) {
+            props.setProperty("ssl", "true"); props.setProperty("sslCa", ca);
+            // Java 6 에는 TLSv1.2 가 없으므로, 그 런타임의 사용자는 최소 버전을 명시한다. (J-6)
+            if ("1.6".equals(System.getProperty("java.specification.version"))) props.setProperty("sslMinVersion", "TLSv1");
+        }
         Connection c = DriverManager.getConnection(url, props);
         try {
             if (legacy) {

@@ -11,6 +11,8 @@ import { setupApp } from "./helpers.js";
 import { openTestDb } from "./helpers.js";
 import { tempDir } from "./helpers.js";
 import { state } from "./helpers.js";
+import { makeUser, setupAuth } from "../auth/helpers.js";
+import type { ExecuteResult } from "../../src/session/session.js";
 
 test("INSERT의 여러 형태와 DEFAULT를 확인한다", (t) => {
   const { db, session } = setupApp(t);
@@ -236,3 +238,55 @@ test("DML이 재구동 후에도 남는다", (t) => {
     db.close();
   }
 });
+
+test("뷰를 통한 UPDATE와 DELETE는 뷰 조건 안의 행만 바꾼다 (R-1)", (t) => {
+  const { db, admin } = setupAuth(t);
+  try {
+    makeUser(admin, "ALICE", "APP");
+    makeUser(admin, "BOB", "APP");
+    admin.execute("GRANT CREATE ON TABLESPACE APP TO ALICE");
+    const alice = db.createSession({ user: "ALICE", tablespace: "APP" });
+    const bob = db.createSession({ user: "BOB", tablespace: "APP" });
+    alice.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, V INTEGER, W INTEGER)");
+    alice.execute("INSERT INTO T VALUES (1, 10, 1), (2, 20, 2), (3, 30, 3), (4, 40, 1)");
+    // V1 은 ID = 1 행만 보인다. V2 는 조건 열 W 를 선택 목록에 두지 않는다.
+    alice.execute("CREATE VIEW V1 AS SELECT ID, V FROM T WHERE ID = 1");
+    alice.execute("CREATE VIEW V2 AS SELECT V FROM T WHERE W = 1");
+    // N2 는 N1(ID > 1) 위의 중첩 뷰이며 열 이름을 바꾸어 쓴다.
+    alice.execute("CREATE VIEW N1 AS SELECT ID, V FROM T WHERE ID > 1");
+    alice.execute("CREATE VIEW N2 AS SELECT ID AS K, V FROM N1 WHERE V < 40");
+    // 뷰 열 별칭을 쓴 대입 : 선택 목록의 열 V 가 뷰에서는 X 이다.
+    alice.execute("CREATE VIEW R1 (X) AS SELECT V FROM T WHERE W = 2");
+    alice.execute("GRANT UPDATE, DELETE ON VIEW V1 TO BOB");
+    alice.execute("GRANT UPDATE, DELETE ON VIEW V2 TO BOB");
+    alice.execute("GRANT UPDATE, DELETE ON VIEW N2 TO BOB");
+    alice.execute("GRANT UPDATE ON VIEW R1 TO BOB");
+
+    // 뷰 V1 의 UPDATE 는 ID = 1 행 하나만 바꾼다.
+    assert.equal(affected(bob.execute("UPDATE V1 SET V = 99")), 1);
+    // 뷰 밖의 행을 가리키는 조건은 아무 행도 바꾸지 못한다.
+    assert.equal(affected(bob.execute("UPDATE V1 SET V = 98 WHERE ID = 2")), 0);
+    assert.equal(affected(bob.execute("DELETE FROM V1 WHERE ID = 2")), 0);
+    // 조건 열이 선택 목록에 없어도 뷰 조건으로 걸러진다. (W = 1 인 ID 1, 4 만)
+    assert.equal(affected(bob.execute("UPDATE V2 SET V = 500")), 2);
+    // 중첩 뷰 : N2 의 조건(V < 40)은 N1 의 열 V 를 가리킨다. ID 2, 3 만 대상이다.
+    assert.equal(affected(bob.execute("UPDATE N2 SET V = 0")), 2);
+    assert.equal(affected(bob.execute("DELETE FROM N2 WHERE K = 3")), 1);
+    assert.equal(affected(bob.execute("DELETE FROM V1")), 1);
+    assert.deepEqual(selectStrings(alice.execute("SELECT ID, V, W FROM T ORDER BY ID")).rows, [
+      ["2", "0", "2"],
+      ["4", "500", "1"],
+    ]);
+    // 뷰 열 별칭을 쓴 대입과 조건이 기반 열로 풀린다.
+    assert.equal(affected(bob.execute("UPDATE R1 SET X = X + 1 WHERE X = 0")), 1);
+    assert.deepEqual(selectStrings(alice.execute("SELECT ID, V FROM T WHERE ID = 2")).rows, [["2", "1"]]);
+  } finally {
+    db.close();
+  }
+});
+
+/** 변경 문장이 바꾼 행 수이다. */
+function affected(result: ExecuteResult): number {
+  if (result.kind !== "ok" || result.rowCount === undefined) throw new Error("Not a change result.");
+  return result.rowCount;
+}

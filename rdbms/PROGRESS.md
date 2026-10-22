@@ -18,7 +18,7 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
   완료 기준을 채웠다 : 데몬을 띄우면 바로 돌아오고 부모와 콘솔이 끝나도 남으며, 설치 직후 SYSTEM 으로 로그인해 초기 암호를 바꿀 수 있고, TCP·UDP 를 껐거나 `maxConnections` 가 차도 로컬 접속이 된다(Windows 에서 확인).
   명령의 동작은 [docs/cli.md](docs/cli.md), 9단계(통신)의 프로토콜 명세는 [docs/protocol.md](docs/protocol.md)이다.
 - 착수 조건 : 없음
-- 다음 작업 : **2026-10-22 점검에서 확인한 결함 R-1 ~ R-6의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). jdbc6·jdbc8의 prepare/describe·cancel 공개 API는 연동했다. Node.js·Python의 새 공개 API와 ODBC 통합은 각 프로젝트의 후속 작업이다. 서버의 [PREPARE.md](PREPARE.md) PD-1 ~ PD-5를 완료했으며 PD-6의 ODBC 시험은 별도로 남긴다. Linux 검증은 2026-10-21 완료했고 macOS·범용 DB툴 검증·복합 질의의 외부 정렬은 아래 미결 사항의 범위로 유지한다.
+- 다음 작업 : 2026-10-22 점검의 결함 R-1 ~ R-6 수정을 마쳤다(아래 "다음 작업: 2026-10-22 점검 취약점 수정 (완료)"). jdbc6·jdbc8의 prepare/describe·cancel 공개 API는 연동했다. Node.js·Python의 새 공개 API와 ODBC 통합은 각 프로젝트의 후속 작업이다. 서버의 [PREPARE.md](PREPARE.md) PD-1 ~ PD-5를 완료했으며 PD-6의 ODBC 시험은 별도로 남긴다. Linux 검증은 2026-10-21 완료했고 macOS·범용 DB툴 검증·복합 질의의 외부 정렬은 아래 미결 사항의 범위로 유지한다.
 - 10단계에서 서버·프로토콜에 더한 것(2026-10-16) : `bye` 응답의 `rolledBack`(세션을 닫으며 커밋하지 않은 변경을 롤백했는지. `Session.hasUncommittedChanges`, `Connection.close()` 가 `{ rolledBack }` 을 돌려줌),
   정상 종료 뒤 프로세스를 직접 끝내는 `exitAfterShutdown`(`daemon/main.ts`. 클라이언트가 소켓을 읽지 않아 Windows 네임드 파이프가 닫히지 않을 때 데몬이 영원히 남아 `hwdb stop` 이 끝나지 않던 것을 고쳤다), 강제 종료로 남은 잠금 생성 가드 정리(`lockFile.ts`).
 - 사용자 확인이 남은 것 : 없다. 2026-10-16 에 3건이 정해졌다. (화면 문구는 영어만 + 다국어 준비, DML 은 행 단위로, 사양이 정하지 않은 권한 규칙은 보편적인 RDBMS 방식. "결정 사항"의 "사용자 결정")
@@ -60,22 +60,24 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 - 비동기 문장이 실행 중인 같은 세션에서 동기 `Session.execute`를 호출하면 `25001`로 거부한다.
 - 트랜잭션 크기는 메모리에 제한된다. (사양 10 이 인정한 제한)
 
-## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+## 다음 작업: 2026-10-22 점검 취약점 수정 (완료)
 
-2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 이 문서에는 다음 수행할 작업으로 등록한다. 점검 기준선은 Node.js 24.16.0에서 전체 **956/956 통과**이며, 아래 항목은 기존 시험이 다루지 않는 경로에서 실제 실행으로 재현했다. winodbc는 완료 프로젝트가 아니므로 점검 범위에서 제외했다.
+2026-10-22 코드 점검에서 확인한 결함이다. **수정을 마쳤다.** 점검 기준선은 Node.js 24.16.0에서 전체 956/956 통과였다. 수정한 항목마다 회귀 시험을 넣었고 수정 전 코드에서 실패하는지 확인했다. winodbc는 완료 프로젝트가 아니므로 점검 범위에서 제외했다.
 
 우선순위 1은 기밀성·무결성에 직접 영향을 주므로 먼저 고친다. 각 항목을 고칠 때 회귀 시험을 함께 넣고, 수정 전 코드에서 그 시험이 실패하는지 확인한다. 권한 의미가 바뀌는 항목은 [docs/accounts-and-privileges.md](docs/accounts-and-privileges.md), [docs/sql-syntax.md](docs/sql-syntax.md), [docs/manual.md](docs/manual.md)도 함께 갱신한다.
 
 ### 우선순위 1 (즉시)
 
-- [ ] **R-1 (높음, 확인됨) 갱신 가능한 뷰의 `UPDATE`·`DELETE`가 뷰의 WHERE 조건을 무시한다.**
+- [x] **R-1 (높음, 확인됨) 갱신 가능한 뷰의 `UPDATE`·`DELETE`가 뷰의 WHERE 조건을 무시한다.**
+  - 조치(2026-10-22) : UPDATE·DELETE 가 뷰 체인(중첩 뷰 포함)의 WHERE 를 기반 행마다 평가해 뷰 밖의 행을 뺀다(`dml.ts` 의 `keepViewRowsSteps`, `analyzer.ts` 의 `viewFilterChain`). 계산 열 식도 뷰 행을 만들어 위 단계의 조건에 쓴다. 뷰 DML 의 문장 WHERE 와 SET 식은 뷰 열을 기반 열로 풀고, 한정 이름은 뷰 이름으로만 가리키게 했다. 서브쿼리 안의 비한정 열은 풀지 않는다(`rewriteViewColumns`). 뷰 밖을 가리키는 조건은 0행이며 오류가 아니다. 부수 결함 : 뷰 열 별칭을 쓴 SET 식(`UPDATE R1 SET X = X + 1`)이 기반 열로 풀리지 않던 것도 함께 고쳤다. 시험 : test/exec/dml.test.ts 의 "뷰를 통한 UPDATE와 DELETE는 뷰 조건 안의 행만 바꾼다 (R-1)". 문서 : accounts-and-privileges 4-3.
   - 위치 : `src/exec/dml.ts:75-102`(`resolveTarget`), `:281-336`(`executeUpdateSteps`), `:344-360`(`executeDeleteSteps`).
   - 원인 : 뷰를 기반 테이블로 풀 때 컬럼 대응만 가져오고 뷰 질의의 WHERE 조건을 버린다. `scanTableForDmlSteps`는 문장의 WHERE만 적용해 기반 테이블 전체를 스캔한다.
   - 재현 : ALICE가 `T(ID,V)`에 3행을 넣고 `CREATE VIEW V1 AS SELECT ID, V FROM T WHERE ID = 1`, `GRANT SELECT, UPDATE, DELETE ON VIEW V1 TO BOB`을 한다. BOB의 `UPDATE V1 SET V = 99`는 기대한 1행이 아니라 **3행**을 바꾸고, `UPDATE V1 SET V = 98 WHERE ID = 2`와 `DELETE FROM V1 WHERE ID = 2`는 뷰에 없는 2번 행을 바꾸고 지운다. 뷰에 UPDATE/DELETE 권한만 받은 사용자가 기반 테이블의 모든 행을 변경·삭제할 수 있는 권한 상승이다.
   - 수정 : UPDATE/DELETE 대상 행을 뷰 질의 결과로 한정한다. 중첩 뷰의 조건도 모두 결합하고, 뷰의 계산된 WHERE(선택 목록에 없는 컬럼·식을 쓰는 조건 포함)를 기반 행에 적용할 수 있어야 한다. 기반 행 식별자로 변경하는 구조를 유지한다. 뷰 조건에 맞지 않는 `INSERT`는 `WITH CHECK OPTION`이 없으므로 지금처럼 허용한다.
   - 시험 : 뷰 안/밖 행, 선택 목록에 없는 컬럼을 조건으로 쓰는 뷰, 중첩 뷰, 뷰 전용 권한만 가진 사용자, `UPDATE ... WHERE`가 뷰 밖 행을 가리키는 경우, `DELETE`의 같은 경우를 넣는다. 기존 `test/exec/dml.test.ts`의 갱신 가능한 뷰 시험은 조건이 모든 행을 포함해 이 결함을 잡지 못하므로 조건을 보강한다.
 
-- [ ] **R-2 (높음, 확인됨) 컬럼 DEFAULT의 스칼라 서브쿼리가 SELECT 권한 검사를 우회한다.**
+- [x] **R-2 (높음, 확인됨) 컬럼 DEFAULT의 스칼라 서브쿼리가 SELECT 권한 검사를 우회한다.**
+  - 조치(2026-10-22) : `DEFAULT` 식은 상수 식만 받는다. `CREATE TABLE`·`ADD COLUMN`·`SET DEFAULT` 가 서브쿼리와 파라미터는 `0A000`, 열 참조는 `42703` 으로 정의할 때 거부한다(`ddl.ts` 의 `assertConstantDefault`). 기존 시험 `UPDATE의 여러 행은 변경 전 상태를 보고, DEFAULT 서브쿼리는 정의할 때 거부한다`(test/txn/rowDml.test.ts)는 DEFAULT 서브쿼리 허용을 전제로 했으므로 거부를 확인하도록 바꿨다. 시험 : test/auth/defaults-and-references.test.ts. 문서 : AGENTS 상세 1-3, accounts 8절.
   - 위치 : `src/auth/authorizer.ts:66-99`(CreateTable/AlterTable가 DEFAULT 식을 검사하지 않음), `src/exec/dml.ts:252-267`(`evaluateColumnDefaultSteps`), `src/exec/ddl.ts:629-640`(`evaluateAddedColumnDefault`).
   - 원인 : DEFAULT 식에 `(SELECT ...)`를 넣을 수 있고, DDL 권한 검사는 컬럼의 REFERENCES만 본다. INSERT 시점에도 INSERT 권한만 확인하고 저장된 DEFAULT 서브쿼리는 그대로 실행한다.
   - 재현 : ALICE가 `APP.SECRET(S)`에 `'top-secret-value'`를 두고 BOB에게 SELECT를 주지 않는다. APP에 CREATE 권한만 있는 BOB이 `CREATE TABLE ATTACK (ID INT, V VARCHAR(200) DEFAULT (SELECT S FROM SECRET))`을 만들고 `INSERT INTO ATTACK (ID) VALUES (1)`을 한 뒤 `SELECT V FROM ATTACK`을 하면 값을 읽는다. `ALTER TABLE ... ALTER COLUMN V SET DEFAULT (SELECT ...)`는 자기 테이블의 ALTER 권한만 있으면 되고, `INSERT ... DEFAULT VALUES`·`VALUES (DEFAULT)`·`UPDATE ... SET c = DEFAULT`도 같은 경로다.
@@ -84,14 +86,16 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ### 우선순위 2
 
-- [ ] **R-3 (중간~높음, 확인됨) 테이블 이름 변경이 뷰 정의·의존성을 갱신하지 않는다.**
+- [x] **R-3 (중간~높음, 확인됨) 테이블 이름 변경이 뷰 정의·의존성을 갱신하지 않는다.**
+  - 조치(2026-10-22) : 테이블 이름 변경은 그 테이블을 참조하는 뷰가 있으면 `55006` 으로 거부한다(`DROP TABLE ... RESTRICT` 와 같은 기준). FK 는 예전처럼 이름을 따라 고친다. 죽은 코드(`void dependentViews` 등)를 걷어냈다. 시험 : test/catalog/renameDependencies.test.ts. 문서 : AGENTS 상세 1-3, accounts 4-3·7절, sql-syntax.
   - 위치 : `src/exec/ddl.ts:917-951`(`renameTable`). 특히 `:930-934`의 `void dependentViews;`와 "뷰의 queryText는 그대로 두므로 다시 만들도록 안내한다"는 주석.
   - 원인 : 테이블·FK·인덱스·권한 기록은 새 이름으로 고치지만 뷰의 `queryText`와 `dependencies`는 그대로 둔다. 사용자에게 안내도 하지 않고, `DROP TABLE ... RESTRICT`의 의존 뷰 검사도 옛 이름을 본다.
   - 재현 : ALICE가 `P`와 `CREATE VIEW PV AS SELECT ... FROM P`, `GRANT SELECT ON VIEW PV TO CAROL`을 만든 뒤 `ALTER TABLE P RENAME TO P2`를 한다. `SELECT * FROM PV`는 42P01로 깨지고, `DROP TABLE P2`는 RESTRICT인데도 성공해 PV가 카탈로그에 남는다. 이어 BOB이 APP에 같은 이름 `P`를 만들고 데이터를 넣으면, BOB의 P에 권한이 없는 CAROL이 `SELECT * FROM PV`로 그 데이터를 읽는다.
   - 수정 : 이름 변경 시 의존 뷰의 정의·의존성을 함께 갱신하거나, 의존 뷰가 있으면 `ALTER TABLE ... RENAME`을 `RESTRICT`처럼 거부한다. `DROP TABLE`의 의존 검사와 같은 기준을 쓴다. 뷰 정의를 다시 쓰는 방식이면 `SYS_VIEWS`와 카탈로그 저장도 함께 갱신한다.
   - 시험 : 직접·간접 의존 뷰, 뷰 권한을 받은 제3자, 이름 재사용, `DROP TABLE` RESTRICT/CASCADE, 재구동 뒤 상태, 중첩 뷰와 컬럼 별칭을 넣는다.
 
-- [ ] **R-4 (중간, 확인됨) `ALTER TABLE ... ADD COLUMN ... REFERENCES`가 참조 테이블 SELECT 권한을 검사하지 않는다.**
+- [x] **R-4 (중간, 확인됨) `ALTER TABLE ... ADD COLUMN ... REFERENCES`가 참조 테이블 SELECT 권한을 검사하지 않는다.**
+  - 조치(2026-10-22) : `AlterTable` 의 `ADD COLUMN ... REFERENCES` 에 `requireReference` 를 적용했다. 자기 테이블 참조는 예외이고 `ADD CONSTRAINT FOREIGN KEY` 와 같은 규칙이다. 시험 : test/auth/defaults-and-references.test.ts. 문서 : accounts 표(ALTER TABLE).
   - 위치 : `src/auth/authorizer.ts:77-84`(`AlterTable` 분기). 실행은 `src/exec/ddl.ts:728-750`에서 FK를 만든다.
   - 원인 : `CREATE TABLE`의 인라인 REFERENCES와 `ADD CONSTRAINT FOREIGN KEY`는 `requireReference`로 SELECT를 확인하지만, `ADD COLUMN`의 `column.references`는 확인하지 않는다. 사양 상세 5("FK를 만들려면 참조되는 테이블에 SELECT 권한이 있어야 한다")에 어긋난다.
   - 재현 : BOB이 CHILD의 소유자이고 PARENT에 SELECT가 없어도 `ALTER TABLE CHILD ADD COLUMN P INT REFERENCES PARENT (ID)`가 성공하고 FK 검사까지 동작한다.
@@ -100,13 +104,15 @@ RDBMS 본체와 접속용 CLI 프로그램을 개발하는 프로젝트이다.
 
 ### 우선순위 3
 
-- [ ] **R-5 (낮음, 확인됨) 큰 숫자 리터럴을 BigInt로 만든 뒤에 길이를 검사해 이벤트 루프를 오래 잡는다.**
+- [x] **R-5 (낮음, 확인됨) 큰 숫자 리터럴을 BigInt로 만든 뒤에 길이를 검사해 이벤트 루프를 오래 잡는다.**
+  - 조치(2026-10-22) : `Decimal.parse` 가 BigInt 를 만들기 전에 가수의 유효 자릿수와 지수로 정수부 상한을 판정하고, 상한 밖의 자릿수는 문자열 단계에서 버린다(반올림 판정용 한 자리는 남긴다). 긴 입력도 22003 으로 빠르게 끝난다. 같은 수정으로, 1500자리 가수에 `e-1001` 을 붙인 값(10^499)이 0 이 되던 조용한 오답도 고쳤다. 시험 : test/types/numeric.test.ts 의 R-5 두 개.
   - 위치 : `src/types/numeric.ts:110`의 `BigInt(...)` 생성, `:133`의 `MAX_PARSE_INTEGER_DIGITS(1000)` 검사.
   - 재현 : `SELECT` 뒤에 1·10·100만 자리 정수를 붙여 실행하면 각각 약 0.005·0.025·0.47초, 400만 자리 약 2.38초가 걸린 뒤 22003이 난다. 메시지 상한 16MiB까지 보낼 수 있어 단일 스레드 서버가 수 초~10초대 정지할 수 있고, 인증된 사용자가 반복하면 다른 세션 전체가 영향을 받는다. 취소도 즉시 먹지 않는다.
   - 수정 : `BigInt` 생성 전에 정수부·소수부 자릿수를 먼저 검사하고, SQL 숫자 리터럴과 문자열 파라미터에도 같은 상한을 적용한다. 지수 표기의 상한 처리도 함께 본다.
   - 시험 : 1,000자리를 넘는 리터럴·문자열 파라미터·`CAST`가 빠르게 22003/22018로 끝나는지, 정상 경계값이 그대로 동작하는지 확인한다. 시간에 의존하는 단언보다 입력 길이 검사 위치를 검증하는 시험을 둔다.
 
-- [ ] **R-6 (낮음, 확인됨) `SUM(NULL)`·`AVG(NULL)`이 NULL이 아니라 42804 오류다.**
+- [x] **R-6 (낮음, 확인됨) `SUM(NULL)`·`AVG(NULL)`이 NULL이 아니라 42804 오류다.**
+  - 조치(2026-10-22) : `SUM`·`AVG` 는 타입 없는 `NULL`(NULL_LITERAL_TYPE)을 정수 계열로 보아 NULL 결과를 낸다(`functions.ts` 의 `aggregateResultType`). 문자열 인자는 여전히 거부한다. 시험 : test/exec/functions.test.ts 의 "SUM 과 AVG 는 타입 없는 NULL 에 NULL 을 돌려준다 (R-6)".
   - 위치 : `src/exec/functions.ts:671-685`(`aggregateResultType`).
   - 재현 : `MIN(NULL)`·`MAX(NULL)`은 NULL이지만 `SUM(NULL)`·`AVG(NULL)`은 `SUM is not defined for VARCHAR(1)`·`AVG is not defined for VARCHAR(1)`로 실패한다. 타입 없는 NULL 리터럴이 `NULL_LITERAL_TYPE(VARCHAR(1))`로 들어가기 때문이다.
   - 수정 : `NULL_LITERAL_TYPE`을 수 계열 미정 타입으로 취급해 SUM/AVG가 NULL을 돌려주게 하거나, 집계 인자 문맥에서 수 계열로 승격한다. 다른 집계·스칼라 함수의 NULL 처리와 일관되게 한다.
@@ -900,3 +906,4 @@ SQL 접속 (상세 14-2)
 - 2026-10-17 : 11단계 뒤의 마무리 (12단계 `nodejsDriver` 중에 한 수정). (1) bun 으로 통합 시험을 돌린 뒤 데몬이 남던 문제를 재현하고(`overviewNetwork` 상대 경로 시험 뒤 1개) 고쳤다 — 정리 훅 순서에 기대던 `Daemon.dispose` 를 지금까지 쓴 모든 데이터 디렉토리와 `makeExtraDir` 로 바꾸고, 고치는 중에 만든 PID 재사용 결함(끝난 데몬의 PID 에 `SIGKILL`)도 함께 바로잡았다. (2) `nodejsDriver` 의 통합 시험이 찾은 `CAST(? AS INTEGER)` 의 내부 오류(`XX000`)를 고치고 회귀 시험을 더했다. (3) 단위 시험의 임시 디렉토리 정리(`test/tempDirs.ts`). 시험 : Node.js `npm test` 889개 중 888 통과·1 건너뜀, bun 통합 85 통과·2 건너뜀, bun 단위 799 통과·2 실패(`t.mock` 미구현). 커밋은 하지 않았다.
 - 2026-10-20 : `rdbms` 코드 점검(수정 없음). 인증·카탈로그·권한·프로토콜·TLS 경로를 읽고 빌드 결과물에 재현했다. 발견 사항 P-1 ~ P-4 를 "점검 작업 사항" 절에 `[ ]` 작업으로 남겼고, 고치지는 않았다. `npm run build` 는 오류 없이 통과했다(`dist` 를 새로 만들었다. git 에는 들어가지 않는다). 시험 전체는 돌리지 않았다. 커밋은 하지 않았다.
 - 2026-10-20 : 후속 수정과 추가 점검. P-1 ~ P-4를 프로토타입 없는 이름 맵으로 수정하고 P-5(한정 이름·잠금 키 충돌), P-6(사용 불가 카탈로그 파일 누수), P-7(시험 도우미의 데몬 종료 생략)을 재현·수정했다. 회귀 시험 17개를 추가했다. Node.js 24.22.0 / TypeScript 6.0.3 `npm test`는 906개 중 905개 통과·1개 건너뜀·실패 0. Bun 1.3.14 관련 시험 241개와 정리 회귀 1개 통과. 최종 시험 후 남은 HelloWorldDB 데몬은 0개이다. 사양·통신 프로토콜·파일 포맷과 고정 호환성 자료는 바꾸지 않았고, 기존 고아 파일 복구는 수행하지 않았다. 두 PROGRESS.md와 트랜잭션 문서를 갱신했다. 커밋·푸시는 하지 않았다.
+- 2026-10-22 : 점검 결함 R-1 ~ R-6 수정. 뷰를 통한 UPDATE·DELETE 의 조건, DEFAULT 상수 식, 테이블 이름 변경의 뷰 의존, ADD COLUMN REFERENCES 의 권한, 큰 숫자 리터럴 판정과 지수 표기 오답, 타입 없는 NULL 의 SUM·AVG 를 고쳤고 회귀 시험을 더했다. 커밋·푸시는 하지 않았다.

@@ -25,6 +25,9 @@ export const AUTH_MECHANISM = "SCRAM-SHA-256";
 /** 메시지 하나의 최대 크기(바이트)이다. */
 export const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
+/** 인증을 마치기 전 메시지 하나의 최대 크기(바이트)이다. 인증 전에는 이 한도를 넘는 프레임이 접속을 끊는다. */
+export const PRE_AUTH_MAX_MESSAGE_BYTES = 64 * 1024;
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 /** `execute.params` 의 원소이다. */

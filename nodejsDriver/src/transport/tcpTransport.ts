@@ -18,7 +18,7 @@ import net from "node:net";
 import tls from "node:tls";
 import { DbError, ERROR_CODES, connectionFailure } from "../errors.js";
 import { FrameDecoder, FrameError, encodeFrame } from "../protocol/framing.js";
-import { MAX_MESSAGE_BYTES } from "../protocol/messages.js";
+import { MAX_MESSAGE_BYTES, PRE_AUTH_MAX_MESSAGE_BYTES } from "../protocol/messages.js";
 
 /** 메시지 하나씩 주고받는 전송 계층이다. */
 export interface MessageTransport {
@@ -30,6 +30,8 @@ export interface MessageTransport {
   setHandlers(handlers: TransportHandlers): void;
   /** `helloOk` 를 받은 직후에 부른다. UDP 전송이 서버의 패킷 크기에 맞추는 데 쓴다. */
   onHello?(info: { udp?: { sessionTimeoutMs: number; maxPacketSize: number } }): void;
+  /** 로그인을 마친 뒤에 부른다. 이때부터 메시지 크기 한도가 인증 후 값(16 MiB)으로 바뀐다. */
+  onAuthenticated?(): void;
 }
 
 export interface TransportHandlers {
@@ -102,7 +104,9 @@ export function isConnectionRefused(error: unknown): boolean {
 
 /** 스트림 소켓을 프레임 단위 전송 계층으로 감싼다. */
 export function streamTransport(socket: net.Socket): MessageTransport {
-  const decoder = new FrameDecoder(() => MAX_MESSAGE_BYTES);
+  // 인증 전에는 작은 한도를 쓰고, 로그인이 끝나면 onAuthenticated 가 큰 한도로 바꾼다.
+  let maxBytes = PRE_AUTH_MAX_MESSAGE_BYTES;
+  const decoder = new FrameDecoder(() => maxBytes);
   let handlers: TransportHandlers | null = null;
   let closed = false;
   let closeNotified = false;
@@ -153,6 +157,9 @@ export function streamTransport(socket: net.Socket): MessageTransport {
       for (const chunk of buffered.splice(0)) deliver(chunk);
       if (socket.destroyed) closed = true;
       notifyClose();
+    },
+    onAuthenticated(): void {
+      maxBytes = MAX_MESSAGE_BYTES;
     },
   };
 }

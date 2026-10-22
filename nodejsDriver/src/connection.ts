@@ -18,9 +18,9 @@
  */
 
 import { EventEmitter } from "node:events";
-import { DbError, connectionFailure } from "./errors.js";
+import { DbError, ERROR_CODES, connectionFailure } from "./errors.js";
 import { ProtocolConnection } from "./protocol/protocolConnection.js";
-import type { RawOutcome, Target } from "./protocol/protocolConnection.js";
+import type { RawBatch, RawOutcome, Target } from "./protocol/protocolConnection.js";
 import type { ColumnMeta, JsonValue, SessionInfoMessage } from "./protocol/messages.js";
 import type { InternalTransportOptions, SslOptions } from "./transport/tcpTransport.js";
 import { decodeRow, encodeParams } from "./values.js";
@@ -106,11 +106,14 @@ export class QueryResult {
   }
 }
 
-/** 낱말 사이의 주석도 건너뛰고 처음 세 낱말을 읽는다. 문자열·식별자 안까지 해석하지 않는다. */
-function leadingWords(sql: string): string[] {
+/**
+ * 낱말 사이의 주석도 건너뛰고 처음 몇 토큰을 읽는다. 낱말은 대문자로, 숫자와 `=` 도 토큰으로 본다.
+ * 문자열·식별자 안까지 해석하지 않는다. 서버가 받는 세션 문장의 형태를 알아보는 데만 쓴다.
+ */
+function leadingTokens(sql: string, limit: number): string[] {
   let rest = sql;
-  const words: string[] = [];
-  while (words.length < 3) {
+  const tokens: string[] = [];
+  while (tokens.length < limit) {
     rest = rest.trimStart();
     if (rest.startsWith("--")) {
       const end = rest.indexOf("\n");
@@ -119,14 +122,20 @@ function leadingWords(sql: string): string[] {
       const end = rest.indexOf("*/");
       rest = end < 0 ? "" : rest.slice(end + 2);
     } else {
-      const match = /^([A-Za-z_]+)/.exec(rest);
+      const match = /^([A-Za-z_]+|\d+|=)/.exec(rest);
       if (match === null) break;
-      words.push(match[1]!.toUpperCase());
-      rest = rest.slice(match[0].length);
+      tokens.push(match[1]!.toUpperCase());
+      rest = rest.slice(match[1]!.length);
     }
   }
-  return words;
+  return tokens;
 }
+
+/** `SET AUTOCOMMIT` 의 값 : 서버가 받는 ON, TRUE, 1 과 OFF, FALSE, 0 이다. */
+const AUTOCOMMIT_VALUES: ReadonlyMap<string, boolean> = new Map([
+  ["ON", true], ["TRUE", true], ["1", true],
+  ["OFF", false], ["FALSE", false], ["0", false],
+]);
 
 const SCHEMA_STATEMENTS: ReadonlySet<string> = new Set(["CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE"]);
 
@@ -248,6 +257,7 @@ export class Connection extends EventEmitter {
     try {
       while (hasMore && cursor !== null) {
         const batch = await this.protocol.fetch(cursor, fetchSize);
+        rejectEmptyBatch(this.protocol, batch);
         pages.push(batch.rows);
         cursor = batch.cursor;
         hasMore = batch.hasMore;
@@ -305,16 +315,30 @@ export class Connection extends EventEmitter {
     }
   }
 
-  /** 성공한 문장에서 자동 커밋과 트랜잭션 상태를 가늠한다. */
+  /**
+   * 성공한 문장에서 자동 커밋과 트랜잭션 상태를 가늠한다. 서버 문법의 형태를 알아볼 수 없으면 상태를 추정하지 않고
+   * `uncertainSession` 을 세워, 반납할 때 롤백과 자동 커밋 복원으로 서버 상태를 확정한다.
+   */
   private trackStatement(sql: string): void {
-    const [first = "", second, third] = leadingWords(sql);
+    const [first = "", second = "", third = "", fourth = ""] = leadingTokens(sql, 4);
     if (first === "BEGIN" || (first === "START" && second === "TRANSACTION")) {
       this.inTxn = true;
-    } else if (first === "COMMIT" || (first === "ROLLBACK" && second !== "TO")) {
+    } else if (first === "COMMIT") {
       this.inTxn = false;
+    } else if (first === "ROLLBACK") {
+      // `ROLLBACK [WORK] TO [SAVEPOINT] 이름` 은 저장점까지만 되돌리고 트랜잭션은 남는다.
+      const toWord = second === "WORK" ? third : second;
+      if (toWord !== "TO") this.inTxn = false;
     } else if (first === "SET" && second === "AUTOCOMMIT") {
-      this.autocommit = third !== "OFF";
-      if (this.autocommit) this.inTxn = false;
+      // 서버 문법은 `SET AUTOCOMMIT [= | TO] 값` 이다.
+      const value = third === "=" || third === "TO" ? fourth : third;
+      const autocommit = AUTOCOMMIT_VALUES.get(value);
+      if (autocommit === undefined) {
+        this.uncertainSession = true;
+      } else {
+        this.autocommit = autocommit;
+        if (autocommit) this.inTxn = false;
+      }
     } else if (first === "USE") {
       this.changedTablespace = true;
     } else if (first === "SET" && second === "TIME" && third === "ZONE") {
@@ -404,27 +428,54 @@ export class Connection extends EventEmitter {
   /** @internal 트랜잭션·설정·커서 또는 완료 여부가 불확실한 문장을 초기화해야 하는지이다. */
   get _needsReset(): boolean {
     return this.inTxn || this.autocommit !== this.defaultAutocommit || this.pendingStatements > 0 || this.uncertainSession ||
-      this.cursors.size > 0 || this.changedTablespace || this.changedTimeZone;
+      this.cursors.size > 0 || this.changedTablespace || this.changedTimeZone || this.protocol.serverStateUnknown;
   }
 
-  /** @internal 풀에 돌려주기 전에 접속을 로그인 직후의 상태로 되돌린다. */
-  async _reset(): Promise<void> {
-    // 추정값에 기대지 않고 선행 문장 뒤에 ROLLBACK을 보내 서버 상태를 확정한다.
-    await this.rollback();
-    for (const cursor of this.cursors) await cursor.close();
-    if (this.changedTablespace || this.uncertainSession) {
-      if (this.sessionInfo.tablespace === null) throw new Error("Cannot restore a session without a default tablespace.");
-      await this.query(`USE "${this.sessionInfo.tablespace.replace(/"/g, '""')}"`);
+  /**
+   * @internal 풀에 돌려주기 전에 접속을 로그인 직후의 상태로 되돌린다.
+   * `timeoutMs` 안에 끝나지 않거나 서버 상태를 알 수 없으면 접속을 끊는다. 반열림 연결이 풀 슬롯을 영원히 잡지 않게 하려는 것이다.
+   */
+  async _reset(timeoutMs: number = DEFAULT_RESET_TIMEOUT_MS): Promise<void> {
+    if (this.protocol.serverStateUnknown) {
+      this.protocol.abort();
+      throw connectionFailure("The server state is unknown after a request timed out; the connection was dropped.");
     }
-    if (this.changedTimeZone || this.uncertainSession) {
-      await this.query(`SET TIME ZONE '${this.sessionInfo.timeZone.replace(/'/g, "''")}'`);
+    // 시간이 넘으면 접속을 끊어, 기다리던 정리 요청을 모두 실패시킨다.
+    const timer = setTimeout(() => this.protocol.abort(), timeoutMs);
+    try {
+      // 추정값에 기대지 않고 선행 문장 뒤에 ROLLBACK을 보내 서버 상태를 확정한다.
+      await this.rollback();
+      for (const cursor of this.cursors) await cursor.close();
+      if (this.changedTablespace || this.uncertainSession) {
+        if (this.sessionInfo.tablespace === null) throw new Error("Cannot restore a session without a default tablespace.");
+        await this.query(`USE "${this.sessionInfo.tablespace.replace(/"/g, '""')}"`);
+      }
+      if (this.changedTimeZone || this.uncertainSession) {
+        await this.query(`SET TIME ZONE '${this.sessionInfo.timeZone.replace(/'/g, "''")}'`);
+      }
+      await this.setAutoCommit(this.defaultAutocommit);
+      this.uncertainSession = false;
+      this.changedTablespace = false;
+      this.changedTimeZone = false;
     }
-    await this.setAutoCommit(this.defaultAutocommit);
-    this.uncertainSession = false;
-    this.changedTablespace = false;
-    this.changedTimeZone = false;
+    finally {
+      clearTimeout(timer);
+    }
   }
 }
+
+/**
+ * 묶음에는 행이 하나 이상 있다. 행이 없는데 `hasMore` 가 이어지면 서버가 어긋난 것이므로, 접속을 끊고 프로토콜 위반으로 알린다.
+ * 그렇지 않으면 빈 묶음을 계속 받으며 무한히 기다린다. (P-6 과 같은 규칙)
+ */
+function rejectEmptyBatch(protocol: ProtocolConnection, batch: RawBatch): void {
+  if (!batch.hasMore || batch.rows.length > 0) return;
+  protocol.abort();
+  throw new DbError("08P01", ERROR_CODES.PROTOCOL_VIOLATION, "The server sent an empty batch with more rows.");
+}
+
+/** 반납할 때 접속을 되돌리는 제한 시간의 기본값이다. 서버의 잠금 대기 제한(30초)에 여유를 더했다. */
+export const DEFAULT_RESET_TIMEOUT_MS = 35_000;
 
 /** 조회 결과를 나누어 읽는 커서이다. `Connection.cursor` 가 만든다. */
 export class Cursor implements AsyncIterable<Row> {
@@ -468,6 +519,7 @@ export class Cursor implements AsyncIterable<Row> {
 
   /** 다음 묶음을 돌려준다. 처음에는 `execute` 로 받은 첫 묶음이다. 끝까지 읽었으면 빈 배열이다. */
   async fetch(size?: number): Promise<Row[]> {
+    checkFetchSize(size, "size");
     if (this.buffer.length > 0) {
       const rows = this.buffer;
       this.buffer = [];
@@ -476,6 +528,7 @@ export class Cursor implements AsyncIterable<Row> {
     }
     if (this.closed || !this.hasMore || this.cursorId === null) return [];
     const batch = await this.protocol.fetch(this.cursorId, size ?? this.fetchSize);
+    rejectEmptyBatch(this.protocol, batch);
     this.cursorId = batch.cursor;
     this.hasMore = batch.hasMore;
     if (!this.hasMore) this.notifyClosed();

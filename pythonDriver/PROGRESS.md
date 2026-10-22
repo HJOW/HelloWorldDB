@@ -16,7 +16,7 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - 착수 조건 : `rdbms` 11단계와 `nodejsDriver` 12단계 완료로 충족. 사용자의 작업 진행 지시에 따라 기존 설계 기본안의 배포 이름과 import 이름을 적용하고 AGENTS.md D절에 계획을 반영했다.
 - 최초 PY-3 검증 : Windows / Node.js 24.19.0 / Python **3.2, 3.12.4 각각 124개 통과**, 실패·건너뜀 0. 기존 77개에 PY-3 신규 47개(`test_types` 23개, `test_dbapi` 24개. 모듈 규약·접속 검증·Hello World·자동 커밋·트랜잭션·fetch·description·타입 왕복·스레드 공유)를 더했다.
 - 배포 구성 : Python 3.12.4에서 소스 배포본과 `py3-none-any` 휠을 생성했다. 휠의 `Requires-Python: >=3.2`와 실행 의존 없음도 확인하고, 깨끗한 임시 가상 환경에 `pip --no-index --no-deps`로 설치해 소스 트리 밖 import와 PBKDF2 실행을 검증했다. 빌드 도구는 setuptools를 사용한다.
-- 다음 작업 : **2026-10-22 점검에서 확인한 결함 P-1 ~ P-6의 수정**이 우선이다(아래 "다음 작업: 2026-10-22 점검 취약점 수정"). 그 뒤 **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
+- 다음 작업 : 2026-10-22 점검의 결함 P-1 ~ P-6 수정을 마쳤다(아래 "2026-10-22 점검 취약점 수정 (완료)"). 그 뒤 **PY-4 (TLS)**. `ssl` 모듈로 TCP를 감싸고 인증서 검증·재시도를 둔다. DB-API `connect(ssl=True, ssl_ca, ssl_verify)` 를 함께 연다.
 - 서버 구현 후 다음 작업 : prepare/describe·cancel 연동. [rdbms/PREPARE.md](../rdbms/PREPARE.md)를 선행 조건으로 하며, 기존 PY-4 ~ PY-6과 별도로 아래 미완료 작업을 추적한다.
 
 ## 다음 작업: 서버 prepare/describe·cancel 연동
@@ -31,44 +31,50 @@ AGENTS.md "구현 계획" D에 따라 **PY-1 ~ PY-6** 순서로 진행한다. `r
 - [ ] Cursor·Connection 종료 시 준비 문장과 커서를 해제한다. USE·DDL·권한 변경에 따른 무효화를 처리하고, 취소된 문장 이전의 수동 트랜잭션 변경이 보존되는지 확인한다.
 - [ ] Python 3.2와 당시 사용 가능한 상위 Python에서 실제 서버 회귀 시험을 수행한다. TCP와 PY-4·PY-5에서 구현한 TLS·UDP, 실행 없는 describe·타입 미정·반복 바인딩·잠금 대기/CPU 질의 취소·UDP 유실/중복·구형 서버를 검증한 뒤 README와 진행 기록을 갱신한다.
 
-## 다음 작업: 2026-10-22 점검 취약점 수정 (우선)
+## 2026-10-22 점검 취약점 수정 (완료)
 
-2026-10-22 코드 점검에서 확인한 결함이다. **아직 소스를 수정하지 않았고**, 다음 수행할 작업으로 등록한다. 점검 기준선은 Python 3.13.5에서 전체 **124/124 통과**이다. P-2·P-3은 실제 `rdbms` 데몬으로, P-1은 RST를 보내는 가짜 TCP 서버로 재현했다. Python 3.2에서도 같은 시험을 다시 수행한다.
+2026-10-22 코드 점검에서 확인한 결함이다. **수정을 마쳤다.** 기준선은 Python 3.13.5 에서 전체 124개 통과였다. P-2·P-3 은 실제 `rdbms` 데몬으로, 나머지는 가짜 소켓·가짜 wire 로 재현하고 시험했다. 각 항목의 조치는 항목 아래 `조치` 줄에 적었다.
 
-- [ ] **P-1 (중간, 확인됨) TCP RST 등 소켓 오류가 DB-API 예외로 변환되지 않는다.**
+- [x] **P-1 (중간, 확인됨) TCP RST 등 소켓 오류가 DB-API 예외로 변환되지 않는다.**
+  - 조치(2026-10-22) : `_recv_one` 이 수신 소켓 오류(RST 등)를 `connection_failure`(OperationalError, 08006)로 감싸고 접속을 닫는다. 시험 : `tests/test_review_2026_10_22.py` 의 ResetSocketTests(가짜 소켓).
   - 위치 : `helloworlddb/_tcp.py:66-75`(`_recv_chunk`), `:120-151`(`_recv_one`).
   - 원인 : `_recv_chunk`는 EINTR만 재시도하고 나머지 `socket.error`는 그대로 올린다. `_recv_one`은 `socket.timeout`만 변환하므로 `ECONNRESET`·`ECONNABORTED`·`EPIPE`가 원시 예외로 빠져나간다. 접속도 닫히지 않는다.
   - 재현 : `SO_LINGER(0)`으로 RST를 보내는 가짜 서버에 `helloworlddb.connect()`를 하면 `ConnectionResetError(104, 'Connection reset by peer')`가 나고, `isinstance(error, errors.Error)`는 False였다.
   - 수정 : `_recv_chunk`·`_send_all`·`_recv_one`의 모든 `socket.error`를 `connection_failure()`와 `_fail_closed()`로 감싸 `OperationalError`(또는 PEP 249에 맞는 하위 예외)로 바꾸고, `connect()`와 Cursor 경로에서도 소켓을 닫는다.
   - 시험 : hello 전·로그인 후·질의 중 RST/EOF/송신 오류 각각에서 DB-API 예외, 접속 닫힘, 자원 정리를 확인한다.
 
-- [ ] **P-2 (중간, 확인됨) 실패한 `execute()` 뒤 이전 결과가 남아 `fetch*`가 옛 행을 돌려준다.**
+- [x] **P-2 (중간, 확인됨) 실패한 `execute()` 뒤 이전 결과가 남아 `fetch*`가 옛 행을 돌려준다.**
+  - 조치(2026-10-22) : `execute()` 가 문장을 보내기 전에 이전 결과(`_clear_result`)를 모두 버린다. 실패한 문장 뒤에도 옛 행이 남지 않는다. 시험 : 실제 데몬의 ExecuteStateTests.
   - 위치 : `helloworlddb/cursor.py:72-108`(`execute`), `:110-122`(`_close_server_cursor`).
   - 원인 : `execute()`가 서버 커서만 닫고 `_buffer`·`description`·`rowcount`를 초기화하지 않는다. 새 문장이 실패하면 이전 결과가 그대로 남는다.
   - 재현(실제 서버) : `SELECT 1 UNION ALL SELECT 2`에서 `fetchone()`이 `[1]`을 돌려준 뒤 `SELECT no_such_column_xyz FROM DUAL`이 ProgrammingError로 실패했다. 이어 `fetchone()`이 `[2]`를, `description`이 이전 컬럼 1개를 그대로 돌려주었다.
   - 수정 : `execute()`·`executemany()` 진입 시 문장을 보내기 전에 `_buffer=[]`·`description=None`·`rowcount=-1`·`_server_cursor=None`·`_has_more=False`로 초기화한다. 실패 시에도 같은 상태를 유지한다.
   - 시험 : 성공 → 실패 → `fetchone/fetchmany/fetchall`이 PEP 249대로 예외 또는 빈 결과가 되는지, `description`·`rowcount`가 새 문장 기준인지 확인한다.
 
-- [ ] **P-3 (중간, 확인됨) 닫은 커서가 `Connection._cursors`에서 빠지지 않아 커밋마다 누적된다.**
+- [x] **P-3 (중간, 확인됨) 닫은 커서가 `Connection._cursors`에서 빠지지 않아 커밋마다 누적된다.**
+  - 조치(2026-10-22) : 접속의 커서 목록을 집합으로 바꾸고 `Cursor.close()` 가 `_forget_cursor` 로 등록을 뺀다. 시험 : 실제 데몬의 ConnectionCursorRegistryTests(커밋·롤백 20회 뒤 목록 크기).
   - 위치 : `helloworlddb/connection.py:89-97`(`cursor()`가 목록에 추가), `:120-130`(`close()`에서만 비움), `helloworlddb/cursor.py:207-214`(`Cursor.close()`가 목록에서 제거하지 않음).
   - 원인 : `commit()`·`rollback()`·`set_autocommit()`이 내부 `_run()`에서 매번 새 커서를 만들고 닫지만, 닫아도 `Connection._cursors`에 남는다. 장기 실행 프로그램에서 커밋 횟수만큼 메모리가 증가하고 `Connection.close()`가 O(n)이 된다.
   - 재현(실제 서버) : 커밋 20회 뒤 `len(conn._cursors)`가 1에서 21로 늘었다.
   - 수정 : `Cursor.close()`에서 `Connection`의 등록을 해제하거나 `WeakSet`을 쓴다. `_run()`은 커서를 만들지 말고 와이어를 직접 사용한다. `Connection.close()`의 순회도 함께 정리한다.
   - 시험 : 커밋·롤백·autocommit 변경을 반복해도 커서 수가 늘지 않는지, 사용자 커서는 `close()` 전까지 유지되는지 확인한다.
 
-- [ ] **P-4 (낮음) `rows` 응답의 `columns`/행 모양 검증이 부족하다.**
+- [x] **P-4 (낮음) `rows` 응답의 `columns`/행 모양 검증이 부족하다.**
+  - 조치(2026-10-22) : `decode_response` 가 `rows` 응답의 `columns`(목록, 이름·타입 문자열)와 행 모양(목록, 컬럼 수 일치)을 검사한다. fetch 응답의 행 폭은 커서가 자기 컬럼 수와 맞춰 본다. 위반은 접속을 끊고 `08P01`. 시험 : ResponseShapeTests, EmptyBatchTests.
   - 위치 : `helloworlddb/_protocol.py:101-104`, `helloworlddb/cursor.py:11-25`·`:72-79`·`:152-170`.
   - 문제 : `columns`가 문자열이거나 원소가 dict가 아니면 `_describe()`에서 `AttributeError`가 나고 접속이 abort되지 않는다. 행 폭이 컬럼 수와 달라도 초과 값을 원시 JSON으로 반환하거나 문자열을 문자 단위로 쪼갠다.
   - 수정 : `decode_response()`에서 `columns` 배열/각 필드 타입과 행 길이 일치를 검사하고, 위반 시 `protocol_violation()`과 접속 종료로 처리한다. Node 드라이버의 엄격한 검증과 계약을 맞춘다.
   - 시험 : `columns: "AB"`, `columns: [1]`, 행 폭 불일치, 문자열 행을 넣어 모두 DB-API 오류로 끝나는지 확인한다.
 
-- [ ] **P-5 (낮음) 결과 집합 없이 `fetch*`를 호출하면 PEP 249와 달리 `None`/`[]`을 돌려준다.**
+- [x] **P-5 (낮음) 결과 집합 없이 `fetch*`를 호출하면 PEP 249와 달리 `None`/`[]`을 돌려준다.**
+  - 조치(2026-10-22) : 결과 집합이 없으면(`description` 이 None) `fetch*` 가 `ProgrammingError` 를 던진다(`_require_result`). 결과 집합이 있는 빈 SELECT 는 빈 목록을 그대로 준다. 기존 시험의 빈 fetch 는 모두 SELECT 뒤라서 기대값을 바꾸지 않았다. 시험 : FetchStateTests.
   - 위치 : `helloworlddb/cursor.py:172-198`.
   - 문제 : `description is None`이면 `fetchone`은 None, `fetchmany`/`fetchall`은 []을 돌려준다. PEP 249는 이전 `execute*()`가 결과 집합을 만들지 않았거나 호출 자체가 없었으면 `Error`(보통 `ProgrammingError`)를 요구한다.
   - 수정 : `ProgrammingError("No result set ...")`를 던지고 기존 시험 기대값을 함께 조정한다.
   - 시험 : DML 직후, `execute` 없이, `executemany` 뒤의 fetch를 확인한다.
 
-- [ ] **P-6 (낮음) 서버가 `hasMore: true`에 빈 묶음을 계속 보내면 `fetchall`/`_fill`이 무한 루프한다.**
+- [x] **P-6 (낮음) 서버가 `hasMore: true`에 빈 묶음을 계속 보내면 `fetchall`/`_fill`이 무한 루프한다.**
+  - 조치(2026-10-22) : 빈 묶음에 `hasMore` 가 이어지면(`execute` 의 첫 응답 포함) 접속을 끊고 `08P01` 로 끝낸다. 무한히 기다리지 않는다. 시험 : EmptyBatchTests(가짜 wire). Node 드라이버에도 같은 규칙을 넣었다(nodejsDriver 진행 문서의 N 항목 아래).
   - 위치 : `helloworlddb/cursor.py:152-170`·`:195-205`. Node 드라이버도 같은 형태다(`nodejsDriver/src/connection.ts:249-254`).
   - 문제 : 빈 묶음을 받아도 진행 조건이 없어 다시 `fetch`를 보낸다. 프로토콜은 묶음에 항상 행이 하나 이상이라고 보장하지만, 버그 서버·중간자 조작 시 클라이언트가 CPU·네트워크를 무한히 쓴다.
   - 수정 : 빈 묶음 + `hasMore: true`를 프로토콜 위반으로 처리하거나, 총 수신 행·묶음 수 상한을 둔다.
@@ -350,3 +356,4 @@ PEP 249 의 계층(`Error` → `InterfaceError`, `DatabaseError` → `DataError`
 - 2026-10-20 : 생성한 휠의 Python 하한·태그·실행 의존 메타데이터와 깨끗한 Python 3.12.4 가상 환경의 오프라인 설치·import·PBKDF2 실행을 확인했다. 최종 Python 시험 데몬 0개를 확인했다. 실제 접속을 쓰는 Hello World 배포 시험은 PY-6에 남겨 두었다.
 - 2026-10-20 : **PY-2 완료** (`VM-W11-Codex`). `errors.py`, `_protocol.py`, `_scram.py`, `_tcp.py` 와 시험 43개를 구현했다 (SCRAM 8개, 프로토콜 18개, 가짜 TCP 14개, 실제 서버 3개). Python 3.2(`C:\Program Files\Python\302\python.exe`)와 3.12.4(`C:\Program Files\Python\312\python.exe`)에서 각각 77개 통과, 실패·건너뜀 0이다. RFC 7677 벡터, 프레임 길이 선검사, 요청 `id` 짝짓기와 `id: 0` 종료, nonce·반복 횟수·서명 검증, 커서 나누어 받기와 `bye.rolledBack`, 연결·응답 제한 시간을 확인했다. 오래된 `rdbms/dist` 로 실제 서버 시험이 구동 실패가 나 `rdbms` 를 다시 빌드한 뒤 통과했다. 다음은 PY-3이며 커밋·푸시는 하지 않았다.
 - 2026-10-20 : **PY-3 완료**. `types.py`, `cursor.py`, `connection.py` 와 모듈 수준을 구현하고 시험 47개를 더했다 (`test_types` 23개, `test_dbapi` 24개). Python 3.2·3.12.4 각각 124개 통과, 실패·건너뜀 0이다. 시험 중 인코딩된 Param의 이중 인코딩 결함(`_tcp.execute` 경로, `execute_encoded` 분리로 수정)과 3.2의 `utcoffset()` 분 단위 검증을 찾아 고쳤다. 미결 9(`float` 정수값 처리)는 서버 동작 확인으로 닫았다. 다음은 PY-4이며 커밋·푸시는 하지 않았다.
+- 2026-10-22 : 점검 결함 P-1 ~ P-6 수정. 소켓 오류의 DB-API 변환, 실패한 execute 의 결과 초기화, 커서 목록 정리, 응답 모양 검사, 결과 없는 fetch 의 오류, 빈 묶음 방어를 고쳤고 `tests/test_review_2026_10_22.py` 를 더했다. 커밋·푸시는 하지 않았다.

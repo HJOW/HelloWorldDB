@@ -151,7 +151,8 @@ final class JdbcStatement extends JdbcProxy {
         case "setQueryTimeout": if ((Integer) a[0] < 0) throw invalid("Invalid query timeout."); timeout = (Integer) a[0]; return null;
         case "getQueryTimeout": return timeout;
         case "setMaxRows": case "setLargeMaxRows": { long limit = ((Number) a[0]).longValue(); if (limit < 0) throw invalid("Invalid row limit."); maxRows = limit; return null; }
-        case "getMaxRows": return count(maxRows);
+        // int 로 된 행 수 제한은 넘치면 Integer.MAX_VALUE 로 포화한다. (SUCCESS_NO_INFO 는 갱신 개수 전용이다. J-3)
+        case "getMaxRows": return maxRows > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) maxRows;
         case "getLargeMaxRows": return maxRows;
         case "getResultSetType": return ResultSet.TYPE_FORWARD_ONLY;
         case "getResultSetConcurrency": return ResultSet.CONCUR_READ_ONLY;
@@ -302,7 +303,13 @@ final class JdbcStatement extends JdbcProxy {
     private static String hint(String setter, Object[] args, Object value) throws SQLException {
         if (value instanceof BigDecimal && ((BigDecimal) value).scale() > 38) throw new SQLDataException("Decimal scale exceeds the server limit.", "22003");
         int type = Types.OTHER;
-        if (setter.equals("setNull")) type = ((Integer) args[1]).intValue();
+        if (setter.equals("setNull")) {
+            // setNull(int, int) 과 setNull(int, SQLType) 을 모두 받는다. (J-1)
+            Object supplied = args[1];
+            Integer number = supplied instanceof SQLType ? ((SQLType) supplied).getVendorTypeNumber() : (Integer) supplied;
+            if (number == null) throw unsupported("Unknown SQLType");
+            type = number.intValue();
+        }
         else if (setter.equals("setObject") && args.length >= 3) {
             Object supplied = args[2];
             Integer number = supplied instanceof SQLType ? ((SQLType) supplied).getVendorTypeNumber() : (Integer) supplied;

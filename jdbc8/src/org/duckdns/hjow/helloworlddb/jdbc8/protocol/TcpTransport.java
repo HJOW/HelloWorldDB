@@ -46,6 +46,24 @@ public final class TcpTransport implements Transport {
      * @throws GeneralSecurityException SSL 컨텍스트 구성 실패 시
      */
     public static TcpTransport open(String host, int port, int timeout, boolean ssl, String ca, boolean verify) throws IOException, GeneralSecurityException {
+        return open(host, port, timeout, ssl, ca, verify, DEFAULT_TLS_MIN_VERSION);
+    }
+
+    /**
+     * 서버에 연결한다. TLS 를 쓰면 {@code minVersion} 이상의 프로토콜만 켠다. (J-6)
+     *
+     * @param host 서버 주소
+     * @param port 포트 번호
+     * @param timeout 연결·읽기 제한 시간(밀리초)
+     * @param ssl {@code true}이면 TLS로 연결한다
+     * @param ca 서버 검증에 쓸 CA 인증서(PEM) 경로. {@code null}이면 기본 CA를 쓴다
+     * @param verify {@code false}이면 서버 인증서 검증을 끈다
+     * @param minVersion 허용할 TLS 최소 버전. {@code TLSv1}, {@code TLSv1.1}, {@code TLSv1.2}, {@code TLSv1.3} 중 하나
+     * @return 연결된 전송 객체
+     * @throws IOException 연결·핸드셰이크 실패 시
+     * @throws GeneralSecurityException SSL 컨텍스트 구성 실패, 또는 이 JVM 에 최소 버전 이상의 TLS 가 없을 때
+     */
+    public static TcpTransport open(String host, int port, int timeout, boolean ssl, String ca, boolean verify, String minVersion) throws IOException, GeneralSecurityException {
         for (int attempt = 1; ; attempt++) {
             Socket s = new Socket();
             try {
@@ -53,9 +71,7 @@ public final class TcpTransport implements Transport {
                 if (ssl) {
                     s = context(ca, verify).getSocketFactory().createSocket(s, host, port, true);
                     SSLSocket tls = (SSLSocket) s;
-                    List<String> enabled = new ArrayList<String>();
-                    for (String protocol : tls.getSupportedProtocols()) if (protocol.startsWith("TLS")) enabled.add(protocol);
-                    tls.setEnabledProtocols(enabled.toArray(new String[enabled.size()]));
+                    tls.setEnabledProtocols(enabledProtocols(tls.getSupportedProtocols(), minVersion));
                     tls.startHandshake();
                     if (verify) try { verifyHost(host, (X509Certificate) tls.getSession().getPeerCertificates()[0]); }
                     catch (CertificateException e) { SSLHandshakeException error = new SSLHandshakeException("TLS certificate hostname mismatch."); error.initCause(e); throw error; }
@@ -69,6 +85,33 @@ public final class TcpTransport implements Transport {
             } catch (GeneralSecurityException e) { try { s.close(); } catch (IOException ignored) { } throw e; }
         }
     }
+    /** TLS 프로토콜 이름을 낮은 버전부터 적는다. 최소 버전의 순서를 정하는 데 쓴다. */
+    private static final List<String> TLS_VERSIONS = Arrays.asList("TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3");
+    /** 최소 버전의 기본값이다. 구버전 TLS 는 Java 6 사용자가 접속 속성으로 명시해야 쓴다. */
+    public static final String DEFAULT_TLS_MIN_VERSION = "TLSv1.2";
+
+    /** 이름이 알려진 TLS 프로토콜 버전인지 본다. 접속 속성 검사에 쓴다. */
+    public static boolean isTlsVersion(String name) {
+        return TLS_VERSIONS.contains(name);
+    }
+
+    /**
+     * 최소 버전 이상이면서 이 JVM 이 지원하는 TLS 프로토콜만 고른다. (J-6 : 예전에는 지원하는 TLS 를 모두 켰다)
+     *
+     * @param supported JVM 이 지원하는 프로토콜 이름
+     * @param minVersion 허용할 최소 버전
+     * @return 켤 프로토콜 이름
+     * @throws GeneralSecurityException 최소 버전 이상의 프로토콜이 이 JVM 에 없을 때
+     */
+    static String[] enabledProtocols(String[] supported, String minVersion) throws GeneralSecurityException {
+        int floor = TLS_VERSIONS.indexOf(minVersion);
+        if (floor < 0) throw new IllegalArgumentException("Unknown TLS version: " + minVersion);
+        List<String> enabled = new ArrayList<String>();
+        for (String protocol : supported) if (TLS_VERSIONS.indexOf(protocol) >= floor) enabled.add(protocol);
+        if (enabled.isEmpty()) throw new NoSuchAlgorithmException("No TLS protocol at or above " + minVersion + " is available on this Java runtime.");
+        return enabled.toArray(new String[enabled.size()]);
+    }
+
     /**
      * 예외 사슬에 인증서 관련 원인이 있는지 확인한다.
      *

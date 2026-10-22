@@ -43,11 +43,14 @@ import type { KeyColumn } from "../types/codec.js";
 import type { RowId, StorageBatch } from "../storage/format/format.js";
 import type { CatalogStore, StoredTable } from "../catalog/catalog.js";
 import type { TablespaceManager } from "../catalog/tablespaceManager.js";
-import { dataHandlers, executeQuery, scanTableForDml, typeHandlers, dataHandlersSteps, executeQuerySteps, scanTableForDmlSteps } from "./executor.js";
+import { dataHandlers, executeQuery, scanTableForDml, typeHandlers, dataHandlersSteps, executeQuerySteps, scanTableForDmlSteps, evalContextFor } from "./executor.js";
 import type { QueryContext } from "./executor.js";
-import { evaluateExpression, evaluateExpressionSteps } from "./expression.js";
+import { evaluateConditionSteps, evaluateExpression, evaluateExpressionSteps } from "./expression.js";
+import type { RowScope } from "./expression.js";
 import { atInnerLevel } from "./expression.js";
-import { rewriteViewColumns, viewColumnMapping } from "./analyzer.js";
+import { rewriteViewColumns, viewColumnMapping, viewFilterChain } from "./analyzer.js";
+import type { ViewFilterStep } from "./analyzer.js";
+import { objectKey } from "../common/objectKey.js";
 import { assertNotDictionaryObject, executeTruncateTable } from "./ddl.js";
 import { parseCommittedRowKey, tableSignature } from "../txn/transaction.js";
 import type { Transaction, TableOverlay } from "../txn/transaction.js";
@@ -76,7 +79,7 @@ function resolveTarget(
   manager: TablespaceManager,
   currentTablespace: string,
   target: ObjectName,
-): DmlTarget & { viewName: string | null; columnMap: Map<string, string | null> | null } {
+): DmlTarget & { viewName: string | null; columnMap: Map<string, string | null> | null; viewSteps: ViewFilterStep[] } {
   const tablespace = target.tablespace ?? currentTablespace;
   if (tablespace === NO_TABLESPACE) throw noCurrentTablespace(target.position);
   if (!manager.has(tablespace)) {
@@ -86,7 +89,7 @@ function resolveTarget(
   const catalog = manager.requireCatalog(tablespace);
   const table = catalog.data.tables[target.name];
   if (table !== undefined) {
-    return { catalog, tablespace, table, viewName: null, columnMap: null };
+    return { catalog, tablespace, table, viewName: null, columnMap: null, viewSteps: [] };
   }
   const view = catalog.data.views[target.name];
   if (view === undefined) {
@@ -98,7 +101,57 @@ function resolveTarget(
   if (baseTable === undefined) {
     fail("42P01", ERROR_CODES.TABLE_NOT_FOUND, `Object does not exist: "${mapping.baseTablespace}.${mapping.baseTable}".`, target.position);
   }
-  return { catalog: baseCatalog, tablespace: mapping.baseTablespace, table: baseTable, viewName: target.name, columnMap: mapping.map };
+  const chain = viewFilterChain(manager, tablespace, target.name);
+  return {
+    catalog: baseCatalog,
+    tablespace: mapping.baseTablespace,
+    table: baseTable,
+    viewName: target.name,
+    columnMap: mapping.map,
+    viewSteps: chain.steps,
+  };
+}
+
+/**
+ * 뷰를 통한 DML의 대상 행을 뷰 조건으로 거른다. 뷰 밖의 행은 바꾸거나 지우지 않는다.
+ * 중첩 뷰는 기반 테이블 행에서 아래 단계부터 뷰 행을 만들어 위 단계의 조건을 적용한다.
+ * 조건은 뷰 정의를 따르므로 뷰 안의 참조에는 기반 테이블의 권한을 따로 검사하지 않는다. (뷰 권한 규칙)
+ */
+function* keepViewRowsSteps<Row extends { scopes: RowScope[] }>(steps: readonly ViewFilterStep[], rows: Row[], ctx: QueryContext): Work<Row[]> {
+  const kept: Row[] = [];
+  const first = steps[0];
+  if (first === undefined) return rows;
+  for (const row of rows) {
+    yield;
+    const base = row.scopes[0] as RowScope;
+    // 기반 테이블 행을 가장 아래 단계의 FROM 항목으로 본다.
+    let scopes: RowScope[] = [{ ...base, alias: first.sourceAlias }];
+    let visible = true;
+    for (const [index, step] of steps.entries()) {
+      const stepCtx: QueryContext = {
+        ...ctx,
+        currentTablespace: step.tablespace,
+        viewStack: [...ctx.viewStack, objectKey(step.tablespace, step.view)],
+      };
+      const evalCtx = evalContextFor(scopes, stepCtx, false);
+      if (step.where !== null && (yield* evaluateConditionSteps(step.where, evalCtx)) !== true) {
+        visible = false;
+        break;
+      }
+      const next = steps[index + 1];
+      if (next === undefined) break;
+      // 이 뷰의 행을 만들어 다음 단계의 FROM 항목으로 넘긴다.
+      const slots: RowScope["slots"][number][] = [];
+      for (const [position, item] of step.items.entries()) {
+        yield;
+        const bound = yield* evaluateExpressionSteps(item, evalCtx);
+        slots.push({ column: step.columns[position] as string, value: bound.value, type: bound.type });
+      }
+      scopes = [{ tablespace: step.tablespace, table: step.view, alias: next.sourceAlias, slots }];
+    }
+    if (visible) kept.push(row);
+  }
+  return kept;
 }
 
 /** 뷰 열 이름을 기반 열 이름으로 바꾼다. 직접 참조가 아니면 오류이다. */
@@ -286,7 +339,8 @@ export function* executeUpdateSteps(manager: TablespaceManager, currentTablespac
   }))).size !== stmt.assignments.length) {
     fail("42701", ERROR_CODES.COLUMN_EXISTS, "Duplicate column in UPDATE SET list.", stmt.target.position);
   }
-  // 대입 열을 기반으로 푼다.
+  const alias = stmt.alias ?? resolved.viewName;
+  // 대입 열과 식을 기반으로 푼다. 뷰를 통하면 식의 뷰 열 참조도 기반 열로 바꾼다.
   const assignments = (yield* mapWork(stmt.assignments, function* (assignment) {
     const base = mapViewColumn(resolved.columnMap, assignment.column, stmt.target.position);
     const definition = (yield* findWork(table.columns, function* (entry) {
@@ -295,14 +349,17 @@ export function* executeUpdateSteps(manager: TablespaceManager, currentTablespac
     if (definition === undefined) {
       fail("42703", ERROR_CODES.COLUMN_NOT_FOUND, `Column does not exist: "${assignment.column}".`, stmt.target.position);
     }
-    return { column: definition as StoredTable["columns"][number], value: assignment.value };
+    const value = resolved.columnMap === null
+      ? assignment.value
+      : rewriteForBase(assignment.value, resolved.viewName as string, alias, table.name, resolved.columnMap);
+    return { column: definition as StoredTable["columns"][number], value };
   }));
-  const alias = stmt.alias ?? resolved.viewName;
   let where = stmt.where;
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const found = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx));
+  const scanned = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx, resolved.viewName ?? table.name));
+  const found = (yield* keepViewRowsSteps(resolved.viewSteps, scanned, ctx));
   // 서브쿼리와 DEFAULT는 문장 시작 상태에서 평가한다. 아직 오버레이를 바꾸지 않는다.
   const updates = (yield* mapWork(found, function* (row) {
     const newValues = [...row.values];
@@ -349,7 +406,8 @@ export function* executeDeleteSteps(manager: TablespaceManager, currentTablespac
   if (where !== null && resolved.columnMap !== null) {
     where = rewriteForBase(where, resolved.viewName as string, alias, table.name, resolved.columnMap);
   }
-  const found = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx));
+  const scanned = (yield* scanTableForDmlSteps(resolved.catalog, table, resolved.tablespace, alias, where, ctx, resolved.viewName ?? table.name));
+  const found = (yield* keepViewRowsSteps(resolved.viewSteps, scanned, ctx));
   const changes = new RowChanges(ctx.txn);
   for (const row of found) {
     yield;

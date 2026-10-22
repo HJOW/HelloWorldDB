@@ -50,9 +50,12 @@ URL은 `jdbc:helloworlddb://호스트[:포트][?키=값&키=값]`이다. IPv6는
 | `ssl` | `false` | TCP TLS 사용 |
 | `sslCa` | JDK 신뢰 저장소 | 신뢰할 PEM CA 파일 |
 | `sslVerify` | `true` | 인증서 체인·유효 기간·호스트 이름 검증 |
+| `sslMinVersion` | `TLSv1.2` | 켤 TLS 최소 버전. `TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3` 중 하나. Java 6 에서는 `TLSv1` 을 명시한다 |
 | `connectTimeoutMs` | `10000` | 연결·인증 요청 제한. DriverManager 로그인 제한이 있으면 그 값을 기본으로 사용 |
 | `socketTimeoutMs` | `30000` | 응답 제한. 0은 무제한 |
 | `fetchSize` | `500` | 1~100,000행 |
+
+URL 질의의 키와 값은 퍼센트 디코딩한다. `+`는 공백이 아니라 문자 그대로 `+`이며, 공백은 `%20`으로 적는다. (`password=a+b%2Bc%20d` 는 `a+b+c d`)
 
 포트 기본값은 7410이다. TLS에서 `ssl=true`와 필요 시 `sslCa`를 지정한다. 인증서 오류만 새 연결에서 100 ms 뒤 최대 두 번 재시도하며 최종 실패는 `08001`/8007이다. `sslVerify=false`는 명시했을 때만 검증을 끈다. `sslCa`와 검증 끄기는 함께 쓸 수 없고 SSL 옵션은 UDP에서 사용할 수 없다.
 
@@ -68,7 +71,7 @@ URL은 `jdbc:helloworlddb://호스트[:포트][?키=값&키=값]`이다. IPv6는
 
 | DB 타입 | `getObject()` | 추가 대응 |
 |---|---|---|
-| CHAR, VARCHAR | String | NCHAR·NVARCHAR도 동일한 UTF-8 규칙 |
+| CHAR, VARCHAR | String | NCHAR·NVARCHAR도 동일한 UTF-8 규칙. `getBytes()`는 UTF-8 바이트이다(BINARY 의 `getString` 이 16진 표기인 것과 짝을 이룬다) |
 | BINARY, VARBINARY | byte[] | getBytes·setBytes·스트림 |
 | SMALLINT, INTEGER | Integer | 정수 getter/setter |
 | BIGINT | Long | 문자열 전송으로 64비트 정밀도 보존 |
