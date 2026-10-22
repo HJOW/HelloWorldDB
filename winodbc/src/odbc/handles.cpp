@@ -1,5 +1,6 @@
 #include "hwdbodbc/handles.hpp"
 #include "hwdbodbc/statement.hpp"
+#include "hwdbodbc/descriptor.hpp"
 #include <limits>
 
 namespace hwdbodbc {
@@ -143,6 +144,7 @@ SQLRETURN free_handle(SQLSMALLINT type, SQLHANDLE input) {
             }
         }
         if (type == SQL_HANDLE_DESC) {
+            check_descriptor_mutation(static_cast<Descriptor&>(handle));
             for (const auto& statement : connection_statements(static_cast<Connection&>(*handle.parent))) {
                 for (std::size_t i = 0; i < 2; ++i) if (statement->descriptors[i].get() == &handle) {
                     statement->descriptors[i] = statement->automatic_descriptors[i];

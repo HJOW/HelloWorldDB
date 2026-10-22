@@ -49,6 +49,8 @@ extern "C" SQLRETURN SQL_API SQLBindParameter(SQLHSTMT handle, SQLUSMALLINT numb
     SQLULEN size, SQLSMALLINT scale, SQLPOINTER data, SQLLEN capacity, SQLLEN* indicator) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
         if (!number || number > static_cast<SQLUSMALLINT>((std::numeric_limits<SQLSMALLINT>::max)())) throw DriverError("07009", "Invalid parameter number.");
+        check_descriptor_mutation(*statement.descriptors[1]);
+        check_descriptor_mutation(*statement.descriptors[3]);
         if (direction != SQL_PARAM_INPUT) {
             if (direction == SQL_PARAM_OUTPUT || direction == SQL_PARAM_INPUT_OUTPUT || direction == SQL_RETURN_VALUE
                 || direction == SQL_PARAM_INPUT_OUTPUT_STREAM || direction == SQL_PARAM_OUTPUT_STREAM) throw DriverError("HYC00", "Only input parameters are supported.");

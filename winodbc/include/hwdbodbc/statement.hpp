@@ -11,6 +11,9 @@ void release_prepared(Statement& statement);
 void prepare_statement(Statement& statement, const std::string& sql);
 void describe_prepared(Statement& statement);
 SQLRETURN execute_prepared(Statement& statement);
+SQLRETURN continue_parameters(Statement& statement);
+SQLRETURN parameter_data(Statement& statement, SQLPOINTER* token);
+SQLRETURN put_parameter_data(Statement& statement, SQLPOINTER data, SQLLEN length);
 SQLRETURN fetch_rows(Statement& statement);
 SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQLPOINTER output, SQLINTEGER* length);
 }

@@ -102,6 +102,7 @@ void finish_field_change(Descriptor& descriptor, SQLSMALLINT number, DescriptorR
 template<class Character>
 SQLRETURN set_field(SQLHDESC handle, SQLSMALLINT number, SQLSMALLINT field, SQLPOINTER input, SQLINTEGER length) {
     return with_handle<Descriptor>(SQL_HANDLE_DESC,handle,true,[&](Descriptor& descriptor) -> SQLRETURN {
+        check_descriptor_mutation(descriptor);
         const bool application = descriptor.role == DescriptorRole::application;
         const auto value = reinterpret_cast<SQLULEN>(input);
         switch (field) {
@@ -210,6 +211,7 @@ extern "C" SQLRETURN SQL_API SQLGetDescRec(SQLHDESC handle, SQLSMALLINT number, 
 extern "C" SQLRETURN SQL_API SQLGetDescRecW(SQLHDESC handle, SQLSMALLINT number, SQLWCHAR* name, SQLSMALLINT capacity, SQLSMALLINT* needed, SQLSMALLINT* type, SQLSMALLINT* subtype, SQLLEN* octets, SQLSMALLINT* precision, SQLSMALLINT* scale, SQLSMALLINT* nullable) { return get_record(handle,number,name,capacity,needed,type,subtype,octets,precision,scale,nullable); }
 extern "C" SQLRETURN SQL_API SQLSetDescRec(SQLHDESC handle, SQLSMALLINT number, SQLSMALLINT type, SQLSMALLINT subtype, SQLLEN octets, SQLSMALLINT precision, SQLSMALLINT scale, SQLPOINTER data, SQLLEN* length, SQLLEN* indicator) {
     return with_handle<Descriptor>(SQL_HANDLE_DESC,handle,true,[&](Descriptor& descriptor) -> SQLRETURN {
+        check_descriptor_mutation(descriptor);
         if (descriptor.role == DescriptorRole::row) throw DriverError("HY016","Implementation row metadata is read-only.");
         if (number <= 0) throw DriverError("07009","Invalid descriptor record number.");
         DescriptorRecord record; if (static_cast<std::size_t>(number) <= descriptor.records.size()) record = descriptor.records[number - 1];
@@ -229,6 +231,7 @@ extern "C" SQLRETURN SQL_API SQLCopyDesc(SQLHDESC source_id, SQLHDESC target_id)
             if (!source->alive || !target->alive) return SQL_INVALID_HANDLE;
             target->diagnostic.clear();
             const auto result = entry_point(&target->diagnostic,[&]() -> SQLRETURN {
+                check_descriptor_mutation(*target);
                 if (target->role == DescriptorRole::row) throw DriverError("HY016","Implementation row metadata is read-only.");
                 descriptor_read_metadata(*source);
                 if (source == target) return SQL_SUCCESS;

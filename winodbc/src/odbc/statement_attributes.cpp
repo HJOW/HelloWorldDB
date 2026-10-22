@@ -48,6 +48,7 @@ SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQ
 namespace {
 SQLRETURN set_statement_attribute(SQLHSTMT handle, SQLINTEGER attribute, SQLPOINTER input) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
+        for (const auto& descriptor : statement.descriptors) check_descriptor_mutation(*descriptor);
         const auto value = reinterpret_cast<SQLULEN>(input);
         auto& ard = *statement.descriptors[0]; auto& apd = *statement.descriptors[1];
         auto& ird = *statement.descriptors[2]; auto& ipd = *statement.descriptors[3];

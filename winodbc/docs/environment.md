@@ -1,5 +1,11 @@
 # 개발 환경과 목표
 
+## 2026-10-22 VM-W11-CODEX 재확인
+
+Windows 11 Pro x64 10.0.26300에서 설치를 다시 조회했다. Build Tools 2022 17.14.37710.0은 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`, MSVC는 `VC\Tools\MSVC\14.44.35207\bin\Hostx64\x86\cl.exe` 및 `x64\cl.exe`이고 둘 다 19.44.35229.0이다. SDK는 10.0.26100.0이다. CMake/CTest 4.4.4는 `C:\Users\BUZZ\AppData\Local\Microsoft\WinGet\Links\`에, Node.js 24.19.0은 `C:\Program Files\nodejs\node.exe`에 있다. 절대 경로·설치 상태의 원본은 `build/wo0/environment.json`이다.
+
+WO-7 기본 행렬 x86/x64 Debug/Release CTest 60개와 교차 로드·PE·문서 검사가 통과했다. Windows 10에서 남았던 여러 STMT 공유 DESC 해제 오류는 이 Windows 11의 Manager 10.0.26100.9549에서도 별도로 재현했다. 단일 STMT 연결 해제는 통과하며 [근거와 한계](descriptors-arrays.md)를 따른다. 이 PC 재확인을 최소 OS·Office·전역 설치 시험으로 대신하지 않는다.
+
 ## PC별 확인 규칙
 
 **아래 설치 확인 결과는 VM-W11-Codex에만 해당한다. 다른 PC에 Visual Studio 또는 Visual Studio Build Tools가 설치되어 있다고 가정하지 않는다.** 다른 PC에서 처음 작업할 때와 도구 변경 후에는 `scripts/inspect-environment.ps1`을 다시 실행한다. 기록에는 확인일, PC 호스트명, OS, Visual Studio/Build Tools 설치 여부, 버전과 절대 경로, MSVC·SDK·CMake·CTest·대상 아키텍처를 함께 남긴다. 미설치도 호스트명과 함께 명시하고, 이전 PC의 성공 기록을 새 PC의 검증 결과로 사용하지 않는다. 호스트명은 OS 조회값을 쓰고 파일명이나 대화 내용으로 추정하지 않는다.

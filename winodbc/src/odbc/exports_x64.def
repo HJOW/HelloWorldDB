@@ -1,5 +1,8 @@
 LIBRARY hwdbodbc
 EXPORTS
+    SQLParamData
+    SQLPutData
+    SQLCancel
     SQLGetDescField
     SQLGetDescFieldW
     SQLSetDescField

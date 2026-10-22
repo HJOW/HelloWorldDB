@@ -177,6 +177,7 @@ extern "C" SQLRETURN SQL_API SQLColAttribute(SQLHSTMT handle, SQLUSMALLINT colum
 extern "C" SQLRETURN SQL_API SQLColAttributeW(SQLHSTMT handle, SQLUSMALLINT column, SQLUSMALLINT field, SQLPOINTER output, SQLSMALLINT capacity, SQLSMALLINT* length, ColumnNumericArgument numeric) { return column_attribute<SQLWCHAR>(handle, column, field, output, capacity, length, static_cast<SQLLEN*>(numeric)); }
 extern "C" SQLRETURN SQL_API SQLBindCol(SQLHSTMT handle, SQLUSMALLINT column, SQLSMALLINT type, SQLPOINTER output, SQLLEN capacity, SQLLEN* indicator) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
+        check_descriptor_mutation(*statement.descriptors[0]);
         if (!column || column > static_cast<SQLUSMALLINT>((std::numeric_limits<SQLSMALLINT>::max)())) throw DriverError("07009", "Invalid column number.");
         if (!valid_c_type(type)) throw DriverError("HY003", "Invalid C data type.");
         if (capacity < 0) throw DriverError("HY090", "Invalid buffer length.");
@@ -228,8 +229,9 @@ extern "C" SQLRETURN SQL_API SQLFreeStmt(SQLHSTMT handle, SQLUSMALLINT option) {
     return with_handle<Statement>(SQL_HANDLE_STMT, handle, true, [&](Statement& statement) -> SQLRETURN {
         switch (option) {
         case SQL_CLOSE: finish_statement_result(statement); break;
-        case SQL_UNBIND: statement.descriptors[0]->records.clear(); break;
+        case SQL_UNBIND: check_descriptor_mutation(*statement.descriptors[0]); statement.descriptors[0]->records.clear(); break;
         case SQL_RESET_PARAMS:
+            check_descriptor_mutation(*statement.descriptors[1]); check_descriptor_mutation(*statement.descriptors[3]);
             statement.descriptors[1]->records.clear(); statement.descriptors[3]->records.clear();
             statement.parameter_metadata_dirty = true; break;
         default: throw DriverError("HY092", "Invalid SQLFreeStmt option.");

@@ -1,5 +1,15 @@
 # 검증 기록과 후속 시험
 
+## VM-W11-CODEX — WO-7 분할 입력과 배열 검증
+
+2026-10-22 Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. 현재 PC의 설치 경로를 다시 조회했고 현재 서버 소스를 `build/server/`에 빌드했다. 오래된 `rdbms/dist/`에서는 준비 INSERT가 42804였으며 현재 소스에서는 통과했다. 서버 소스와 기존 dist는 바꾸지 않았다.
+
+`powershell -NoProfile -File winodbc/scripts/build-and-test.ps1` 결과는 x86/x64 Debug/Release 각각 CTest 15개, 합계 **60개 통과**이며 그 안의 실제 서버/결함 주입 Node 시험은 19개씩 76개이다. 별도의 교차 비트 수 거부 4개·PE 4개·문서/환경 10개도 통과했다. 기본 행렬 실패/건너뜀 0이며 62개 export·정적 CRT·Manager 역링크 부재를 검사했다. 다른 STMT의 속성·BindCol·UNBIND/RESET_PARAMS 경유 공유 descriptor 변경도 거부하도록 보완한 최종 재실행의 `build/native/summary.json` capturedAt은 `2026-10-22T00:08:01.9587537+00:00`이다.
+
+새 시험 `parameters.streaming_limits_sequence`는 네트워크 없이 분할 입력의 C 타입·바이트 길이·surrogate·NULL 결합·음수/과다 길이·16MiB를 검사한다. descriptor 시험은 NEED_DATA 중 필드 변경·복사 대상·DESC/STMT 해제를 거부하고 SQLCancel 뒤 정리한다. 실제 Manager의 `data_cases.cpp`는 단일/배열 NEED_DATA, token·여러 PutData·Unicode/이진/NULL/빈 값·60,000자·예고 길이 부족/초과·취소 후 재실행·배열 PK 오류·처리 수와 row count를 검사한다. 기본 descriptor 시험은 **한 STMT에 남겨 둔 명시 DESC를 해제한 뒤 Manager의 자동 복원**도 검사한다.
+
+**기본 행렬 밖의 공유 DESC 회귀는 x64 Debug에서 1개 실패**했다. `scripts/reproduce-descriptor-free.ps1`의 종료 코드 8과 `build/native/shared-descriptor-free-x64-debug.log`에 18개 통과·1개 실패, Manager 조회의 `0xC0000005`·fault address `0x10`을 보존했다. 여러 STMT에 공유된 채 해제하는 이 실패를 기본 통과 집계로 가리지 않는다. Manager 바이너리 분석 근거·버전/해시·단일/다중 연결 차이와 앱의 명시 분리 방법은 [상세](descriptors-arrays.md)에 있다. WO-7.1과 WO-13 최종 인수는 아직 미완료이며 WO-8 이후 구현을 계속한다.
+
 ## HJOW-ATHLON — WO-2·TCP·ODBC 접속 구현 검증
 
 2026-10-21, Windows 10 Pro x64 10.0.19045, MSVC 19.44.35229.0/v143, Windows SDK 10.0.26100.0, CMake/CTest 4.4.3, 개발용/실제 시험 서버 Node.js 24.21.0. 설치 조회의 절대 경로와 이전 호스트와의 차이는 [환경](environment.md)에 기록했다.

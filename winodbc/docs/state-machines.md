@@ -1,6 +1,6 @@
 # 핸들·진단·문자열의 현재 상태 규칙
 
-WO-2·WO-5·WO-6과 진행 중인 WO-7의 현재 구현 기준이다. 준비 문장은 [준비 규칙](prepared-statements.md), descriptor/배열은 [배열 규칙](descriptors-arrays.md)을 따르며 NEED_DATA·실행 중 취소는 WO-7/8의 잔여 작업이다.
+WO-2·WO-5·WO-6과 진행 중인 WO-7의 현재 구현 기준이다. 준비 문장은 [준비 규칙](prepared-statements.md), descriptor/배열·NEED_DATA의 순서는 [배열 규칙](descriptors-arrays.md)을 따른다. 실행 중 서버 취소는 WO-8 후속이다.
 
 ## 수명과 잠금
 

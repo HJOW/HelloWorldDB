@@ -38,7 +38,7 @@ try {
         Invoke-Checked 'cmake' @('--preset', $arch) "$arch-configure.log"
         foreach ($config in 'Debug', 'Release') {
             $preset = "$arch-$($config.ToLowerInvariant())"
-            Invoke-Checked 'cmake' @('--build', '--preset', $preset) "$preset-build.log"
+            Invoke-Checked 'cmake' @('--build', '--preset', $preset, '--parallel', '4') "$preset-build.log"
             Invoke-Checked 'ctest' @('--preset', $preset, '--verbose', '--output-junit', (Join-Path $evidenceDir "$preset-ctest.xml")) "$preset-ctest.log"
             [xml] $testResults = Get-Content -LiteralPath (Join-Path $evidenceDir "$preset-ctest.xml") -Encoding UTF8 -Raw
             if ([int]$testResults.testsuite.failures -ne 0 -or [int]$testResults.testsuite.skipped -ne 0) {

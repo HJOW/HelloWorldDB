@@ -1,5 +1,8 @@
 LIBRARY hwdbodbc
 EXPORTS
+    SQLParamData=_SQLParamData@8
+    SQLPutData=_SQLPutData@12
+    SQLCancel=_SQLCancel@4
     SQLGetDescField=_SQLGetDescField@24
     SQLGetDescFieldW=_SQLGetDescFieldW@24
     SQLSetDescField=_SQLSetDescField@20

@@ -104,8 +104,10 @@ void run_descriptor_cases(SQLHDBC connection) {
     sql(other,L"SELECT ID FROM Q7_ROWS WHERE ID=4"); expect(SQLFetch(other),SQL_HANDLE_STMT,other,"shared second fetch"); check(shared_value == 4,"same descriptor buffer used by second STMT");
     expect(SQLCloseCursor(statement),SQL_HANDLE_STMT,statement,"shared first close"); expect(SQLCloseCursor(other),SQL_HANDLE_STMT,other,"shared second close");
     // 해제 직후 Manager 조회의 별도 재현 경로를 남긴다. 드라이버 자동 복원은 단위 시험에서도 검사한다.
-    if (!GetEnvironmentVariableW(L"HWDB_DESC_FREE_REGRESSION",nullptr,0)) {
-        attribute(statement,SQL_ATTR_APP_ROW_DESC,nullptr); attribute(other,SQL_ATTR_APP_ROW_DESC,nullptr);
+    wchar_t regression[32]{};
+    const auto regression_length = GetEnvironmentVariableW(L"HWDB_DESC_FREE_REGRESSION",regression,32);
+    if (!regression_length) {
+        attribute(other,SQL_ATTR_APP_ROW_DESC,nullptr);
     }
     check(SQLFreeHandle(SQL_HANDLE_DESC,shared) == SQL_SUCCESS,"free shared ARD");
     std::cout << "descriptor: freed shared ARD\n";

@@ -9,8 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { Server } from '../../../rdbms/dist/src/daemon/server.js';
-import { loadConfig } from '../../../rdbms/dist/src/config/config.js';
+import { Server, loadConfig } from '../helpers/server.mjs';
 
 const project = fileURLToPath(new URL('../../', import.meta.url));
 const executable = process.env.HWDB_PROTOCOL_PROBE ?? path.join(project, 'build/x64/bin/Debug/hwdb_protocol_probe.exe');

@@ -92,6 +92,13 @@ int main() {
         std::thread forward([&] { for (int i = 0; i < 100; ++i) check(SQLCopyDesc(shared,foreign) == SQL_SUCCESS,"cross DBC forward copy"); });
         std::thread backward([&] { for (int i = 0; i < 100; ++i) check(SQLCopyDesc(foreign,shared) == SQL_SUCCESS,"cross DBC backward copy"); });
         forward.join(); backward.join();
+        first_statement->parameter_execution = std::make_unique<ParameterExecution>();
+        check(SQLSetStmtAttr(second,SQL_ATTR_ROW_ARRAY_SIZE,value(2),0) == SQL_ERROR,"other statement cannot mutate shared descriptor during input"); state(SQL_HANDLE_STMT,second,"HY010");
+        check(SQLSetDescField(shared,0,SQL_DESC_ARRAY_SIZE,value(2),0) == SQL_ERROR,"cannot mutate descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
+        check(SQLCopyDesc(copy,shared) == SQL_ERROR,"cannot copy over descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
+        check(SQLFreeHandle(SQL_HANDLE_DESC,shared) == SQL_ERROR,"cannot free descriptor during data input"); state(SQL_HANDLE_DESC,shared,"HY010");
+        check(SQLFreeHandle(SQL_HANDLE_STMT,first) == SQL_ERROR,"cannot free statement during data input"); state(SQL_HANDLE_STMT,first,"HY010");
+        check(SQLCancel(first) == SQL_SUCCESS,"cancel local input without a network request");
         check(SQLFreeHandle(SQL_HANDLE_STMT,first) == SQL_SUCCESS,"STMT free leaves explicit descriptor alive");
         check(SQLGetDescField(shared,0,SQL_DESC_ALLOC_TYPE,&small,0,nullptr) == SQL_SUCCESS,"shared descriptor survives STMT");
         check(SQLFreeHandle(SQL_HANDLE_DESC,shared) == SQL_SUCCESS,"free associated explicit descriptor");

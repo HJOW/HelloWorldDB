@@ -1,4 +1,5 @@
 #include "hwdbodbc/parameters.hpp"
+#include "hwdbodbc/descriptor.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstring>
@@ -186,10 +187,12 @@ Json parameter_value(const DescriptorRecord& application, const SqlType& target,
     SQLLEN length = length_pointer ? read<SQLLEN>(length_pointer) : ctype == SQL_C_BINARY ? application.capacity : SQL_NTS;
     if (length == SQL_NULL_DATA) return nullptr;
     if (length == SQL_DEFAULT_PARAM) throw DriverError("07S01", "Default parameter values are not supported.");
-    if (length == SQL_DATA_AT_EXEC || length <= SQL_LEN_DATA_AT_EXEC_OFFSET) throw DriverError("HYC00", "Data-at-execution parameters are not implemented yet.");
+    if (length == SQL_DATA_AT_EXEC || length <= SQL_LEN_DATA_AT_EXEC_OFFSET) throw DriverError("HY010", "Supply this parameter through SQLParamData and SQLPutData.");
     if (length < 0 && length != SQL_NTS) throw DriverError("HY090", "Invalid parameter length or indicator.");
     const auto data = shifted(static_cast<unsigned char*>(application.data), offset);
     if (!data) throw DriverError("HY009", "Parameter data pointer is null.");
+    const auto width = fixed_c_size(ctype);
+    validate_array_address(data,width ? width : length >= 0 ? static_cast<std::size_t>(length) : ctype == SQL_C_WCHAR ? 2U : 1U,1);
     auto input = input_value(ctype, data, length, application.capacity);
     auto text = input.value.get<std::string>();
     const bool character_input = ctype == SQL_C_CHAR || ctype == SQL_C_WCHAR;

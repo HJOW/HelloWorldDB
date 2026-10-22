@@ -1,6 +1,6 @@
 # HelloWorldDB Windows ODBC
 
-Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, 실행 전 메타데이터, descriptor·행/파라미터 배열, fetch·바인딩·분할 수신과 모든 DB 타입 getter**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함한다. 실행 시 데이터·취소·TLS·UDP·설치·Core 적합성과 descriptor 해제 후 Manager 조회의 재현 사례는 [PROGRESS.md](PROGRESS.md)의 후속이다.
+Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, 실행 전 메타데이터, descriptor·행/파라미터 배열, 실행 시 분할 입력과 로컬 입력 취소, fetch·바인딩·분할 수신과 모든 DB 타입 getter**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함한다. 서버 실행 중 취소·TLS·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)의 후속이다.
 
 - [개발 환경과 목표 앱](docs/environment.md)
 - [API·속성·descriptor·길이 단위 지원 계획](docs/api-support.md)
@@ -33,7 +33,7 @@ DLL과 시험 EXE는 `build/<x86 또는 x64>/bin/<Debug 또는 Release>/`에 생
 
 SQLConnect/W는 User/System DSN을 읽고 SQLDriverConnect/W는 명시 속성 > DSN > 기본값으로 접속한다. DSN에는 비밀번호를 기본 저장하지 않는다. SQLExecDirect/W·SQLPrepare/W·SQLExecute·SQLNumParams·SQLDescribeParam·SQLBindParameter·SQLNativeSql/W와 결과 메타데이터·fetch·커서 수명을 제공한다. SQLGetInfo/W·SQLGetFunctions는 현재 구현한 기능만 보고하며 ODBC Core·3.8 완성은 광고하지 않는다. 전체 목표와 현재 범위는 [API 계약](docs/api-support.md)을 따른다.
 
-전체 스크립트는 환경 JSON을 `build/wo0/`, 빌드·CTest/JUnit·dumpbin·교차 로드·PE 검사와 `summary.json`을 `build/native/`에 남긴다. 실제 서버 config/data/log는 `build/integration/` 아래 고유 임시 디렉토리를 사용하고 정상 종료 후 제거한다. 서버 빌드 `../rdbms/dist/`가 먼저 존재해야 한다.
+전체 스크립트는 환경 JSON을 `build/wo0/`, 빌드·CTest/JUnit·dumpbin·교차 로드·PE 검사와 `summary.json`을 `build/native/`에 남긴다. 실제 서버 config/data/log는 `build/integration/` 아래 고유 임시 디렉토리를 사용하고 정상 종료 후 제거한다. 시험은 설치된 `../rdbms/node_modules/typescript/`로 현재 서버 소스를 `build/server/`에 빌드한다. 기존 `../rdbms/dist/`와 서버 소스는 변경하지 않는다.
 
 접속 문자열은 다음 형식이다. 이 단계에서는 DLL을 직접 호출하거나 격리 Manager 시험 앱에서 사용한다. 일반 앱용 설치는 WO-12의 후속이다.
 

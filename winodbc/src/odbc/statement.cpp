@@ -28,7 +28,7 @@ void release_prepared(Statement& statement) {
     }
     statement.prepared = 0; statement.prepared_rows = false; statement.parameter_metadata.clear(); statement.parameter_metadata_dirty = false;
 }
-void release_statement(Statement& statement) { close_statement_cursor(statement); release_prepared(statement); }
+void release_statement(Statement& statement) { statement.parameter_execution.reset(); close_statement_cursor(statement); release_prepared(statement); }
 namespace {
 Json parameter_hints(const Statement& statement, std::size_t count) {
     Json hints = Json::array();
@@ -99,7 +99,7 @@ void describe_prepared(Statement& statement) {
     prepared_metadata(statement, response);
 }
 SQLRETURN execute_prepared(Statement& statement) {
-    auto& connection = statement_connection(statement);
+    static_cast<void>(statement_connection(statement));
     if (!statement.prepared) throw DriverError("HY010", "No statement has been prepared.");
     if (statement.cursor_open) throw DriverError("24000", "Close the current cursor before executing another statement.");
     statement.executed = false; statement.row_count = 0;
@@ -111,45 +111,8 @@ SQLRETURN execute_prepared(Statement& statement) {
     if (ipd.array_status) std::fill_n(ipd.array_status,apd.array_size,static_cast<SQLUSMALLINT>(SQL_PARAM_UNUSED));
     if (statement.parameter_metadata_dirty) describe_prepared(statement);
     if (apd.array_size > 1 && statement.prepared_rows) throw DriverError("HYC00", "Result-producing parameter arrays are not supported.");
-    SQLLEN affected = 0; SQLULEN successful = 0; bool failed = false, warnings = false, fatal = false;
-    for (SQLULEN row = 0; row < apd.array_size; ++row) {
-        SQLINTEGER column = SQL_COLUMN_NUMBER_UNKNOWN;
-        try {
-            if (apd.array_status && apd.array_status[row] == SQL_PARAM_IGNORE) { if (ipd.rows_processed) *ipd.rows_processed = row + 1; continue; }
-            if (apd.array_status && apd.array_status[row] != SQL_PARAM_PROCEED) throw DriverError("HY024", "Invalid parameter operation value.");
-            const auto previous_diagnostics = statement.diagnostic.size();
-            Json parameters = Json::array();
-            for (std::size_t i = 0; i < statement.parameter_metadata.size(); ++i) {
-                column = static_cast<SQLINTEGER>(i + 1);
-                if (i >= apd.records.size() || !apd.records[i].bound || i >= ipd.records.size()) throw DriverError("07002", "A parameter marker has no bound value.");
-                const auto target = descriptor_parameter_type(ipd.records[i]);
-                parameters.push_back(parameter_value(binding_record(apd,apd.records[i],row,target.default_c),target,statement.diagnostic,0,column,static_cast<SQLLEN>(row + 1)));
-            }
-            column = SQL_COLUMN_NUMBER_UNKNOWN;
-            const auto response = connection.session->request({{"type","executePrepared"},{"statement",statement.prepared},{"params",parameters},{"fetchSize",connection.fetch_size}},"result",connection.connection_timeout);
-            if (apd.array_size > 1 && string_field(response,"type") != "ok") { connection.session->abort(); throw DriverError("08S01","Parameter array response kind does not match prepared metadata.",8000); }
-            accept_result(statement,response);
-            if (statement.row_count >= 0) {
-                if (statement.row_count > (std::numeric_limits<SQLLEN>::max)() - affected) throw DriverError("22003", "Aggregated affected row count exceeds SQLLEN range.");
-                affected += statement.row_count;
-            }
-            const bool row_warning = statement.diagnostic.size() != previous_diagnostics;
-            warnings = warnings || row_warning; ++successful;
-            if (ipd.array_status) ipd.array_status[row] = row_warning ? SQL_PARAM_SUCCESS_WITH_INFO : SQL_PARAM_SUCCESS;
-        } catch (const DriverError& error) {
-            statement.diagnostic.append(error.state,error.what(),error.native,static_cast<SQLLEN>(row + 1),column);
-            failed = true; if (ipd.array_status) ipd.array_status[row] = SQL_PARAM_ERROR;
-            fatal = connection.session->dead() || error.state.substr(0,2) == "08" || error.state.substr(0,2) == "40"
-                || error.state.substr(0,2) == "25" || error.state == "0A000" || error.state == "26000";
-        }
-        if (ipd.rows_processed) *ipd.rows_processed = row + 1;
-        if (fatal) break;
-    }
-    if (apd.array_size > 1 || !statement.cursor_open) {
-        statement.row_count = affected; statement.diagnostic.row_count = affected;
-        statement.executed = successful != 0 || !failed;
-    }
-    return fatal || (failed && !successful) ? SQL_ERROR : failed || warnings ? SQL_SUCCESS_WITH_INFO : SQL_SUCCESS;
+    statement.parameter_execution = std::make_unique<ParameterExecution>();
+    return continue_parameters(statement);
 }
 void finish_statement_result(Statement& statement) {
     close_statement_cursor(statement);

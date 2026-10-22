@@ -3,6 +3,12 @@
 #include <cstring>
 
 namespace hwdbodbc {
+void check_descriptor_mutation(const Descriptor& descriptor) {
+    for (const auto& statement : connection_statements(static_cast<Connection&>(*descriptor.parent)))
+        if (statement->parameter_execution && std::any_of(statement->descriptors.begin(),statement->descriptors.end(),
+            [&](const auto& attached) { return attached.get() == &descriptor; }))
+            throw DriverError("HY010", "A statement using this descriptor is receiving parameter data.");
+}
 SQLSMALLINT descriptor_subtype(SQLSMALLINT concise) {
     if (concise >= SQL_INTERVAL_YEAR && concise <= SQL_INTERVAL_MINUTE_TO_SECOND) return static_cast<SQLSMALLINT>(concise - 100);
     if (concise == SQL_TYPE_DATE || concise == SQL_C_DATE) return SQL_CODE_DATE;
@@ -120,6 +126,8 @@ DescriptorRecord binding_record(const Descriptor& descriptor, const DescriptorRe
     result.data = binding_address(record.data, data_stride, row, offset);
     result.indicator = static_cast<SQLLEN*>(binding_address(record.indicator, indicator_stride, row, offset));
     result.octet_length_pointer = static_cast<SQLLEN*>(binding_address(record.octet_length_pointer, indicator_stride, row, offset));
+    validate_array_address(result.indicator,1,sizeof(SQLLEN));
+    validate_array_address(result.octet_length_pointer,1,sizeof(SQLLEN));
     result.conversion.fractional_precision = record.conversion.precision;
     return result;
 }

@@ -1,6 +1,6 @@
 # Descriptor와 배열 바인딩
 
-현재 WO-7의 descriptor·행 배열·파라미터 배열 구현을 설명한다. SQLParamData/SQLPutData·NEED_DATA·로컬 취소는 아직 후속이며, 아래의 Manager 재현 사례도 전체 완료 전에 확인해야 한다.
+현재 WO-7의 descriptor·행 배열·파라미터 배열·실행 시 데이터 구현을 설명한다. SQLCancel의 서버 실행 취소는 WO-8 후속이며, 여러 STMT에 공유된 DESC의 Manager 해제에는 아래의 플랫폼 제약이 있다.
 
 ## Descriptor 수명과 필드
 
@@ -32,10 +32,26 @@ PARAMSET_SIZE·PARAM_BIND_TYPE·PARAM_BIND_OFFSET_PTR·PARAM_STATUS_PTR·PARAMS_
 
 SQLRowCount는 성공한 DML의 영향 행 수를 합산한다. SQL_PARAM_ARRAY_ROW_COUNTS는 SQL_PARC_NO_BATCH이며 별도 set별 row count 결과를 만들지 않는다. 결과를 내는 배열 질의는 실행 전에 HYC00으로 거부하고 SQL_PARAM_ARRAY_SELECTS는 SQL_PAS_NO_SELECT이다. [배열과 오류/처리 수 규칙](https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/using-arrays-of-parameters?view=sql-server-ver17).
 
-## 확인한 경로와 남은 재현 사례
+## 실행 시 데이터
+
+SQLExecute와 파라미터가 있는 SQLExecDirect는 SQL_DATA_AT_EXEC 또는 SQL_LEN_DATA_AT_EXEC의 바인딩을 만나면 SQL_NEED_DATA를 반환한다. SQLParamData는 실제 배열 offset/stride를 적용한 DATA_PTR token을 돌려주고, SQLPutData는 현재 파라미터의 C 표현을 소유 버퍼로 복사한다. 앱 token은 역참조하거나 해제하지 않는다. 마지막 SQLParamData에서 변환과 서버 실행을 진행한다. SQLPrepare/describe를 실행으로 대체하지 않는다. [SQLParamData](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlparamdata-function?view=sql-server-ver17), [SQLPutData](https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlputdata-function?view=sql-server-ver17).
+
+문자/이진 → 문자/이진은 여러 조각을 허용한다. UTF-16 코드 단위의 경계를 지키면 surrogate 쌍 사이에서도 나눌 수 있으며 최종 문자열을 엄격하게 검증한다. 고정 C 타입은 SDK 구조체 폭을 읽고 두 번째 PutData는 HY019, NULL과 조각의 결합은 HY020이다. SQL_NULL_DATA와 길이 0은 다르다. 길이 예고는 바이트이며 초과는 22001, 최종 부족은 22026이다. SQL_NEED_LONG_DATA_LEN은 Y이다.
+
+입력 행별 16MiB와 최종 JSON 인코딩 크기, 문자/이진 타입 한도를 검사한다. 오류를 낸 PutData의 바이트는 누적하지 않는다. 오류 뒤에는 SQLCancel로 입력 대화를 정리하고 재실행한다. 로컬 SQLCancel은 서버 요청을 보내지 않고 누적 입력만 폐기하며 준비 문장·바인딩은 유지한다. 이미 실행한 배열 set을 되돌리는 기능은 아니다. 배열 set별 성공/오류/미처리 상태, 처리 위치, 합계 row count와 행/열 진단을 유지한다.
+
+입력 중 STMT의 재실행·재바인딩·닫기·해제는 HY010이다. 그 STMT에 연결된 descriptor의 필드 변경·복사 대상 지정·해제도 HY010이다. 변경을 시도하기 전에 검사하므로 다른 STMT가 공유하는 주소를 중간에 바꾸지 않는다. 단위 시험 `parameters.streaming_limits_sequence`와 실제 Manager `data_cases.cpp`는 분할 surrogate·이진 0·NULL/빈 값·60,000자·예고 길이 오류·취소 뒤 재실행·배열 중간 PK 오류를 검사한다.
+
+## Windows Driver Manager의 공유 DESC 해제
 
 `descriptors.fields_sharing_lifetime` 내부 시험은 필드 폭·W 길이·복사 후 앱 주소·일관성·교차 연결 복사 경합·자동 복원·주소 오버플로를 검사한다. 네트워크 없이 연결 상태를 주입하는 시험이다. 실제 Manager/서버의 `descriptor_cases.cpp`는 열/packed 행 배열·부분 묶음·분리 indicator/length·NULL·경고 행/열·명시 ARD 공유/복사·자동 IPD·열/packed 파라미터 배열의 중간 PK 오류와 일부 성공/IGNORE를 검사한다.
 
 HJOW-ATHLON의 Windows 10 10.0.19045에서 **연결된 명시 DESC를 해제한 직후 SQLGetStmtAttr(APP_ROW_DESC)**를 호출하면 시스템 Manager가 드라이버의 조회 함수에 진입하기 전 ntdll.dll에서 접근 위반(0xC0000005, fault address 0x10)을 일으켰다. 자기 문장의 원래 자동 DESC를 받는 드라이버 검사를 수정했지만 이 재현 사례는 남았다. 드라이버 직접 호출의 자동 복원은 통과하며, 기본 Manager 시험은 먼저 두 STMT에서 명시 DESC를 분리한 뒤 해제한다. 이 결과로 해제 직후의 Manager 조회까지 통과했다고 주장하지 않는다.
 
-별도 재현은 `HWDB_DESC_FREE_REGRESSION=1`을 설정하고 실제 서버 시험을 실행한다. 예외 모듈/offset을 native probe가 출력한다. 실패 시 종료한 시험의 고유 HKCU 키가 남을 수 있으므로, 해당 프로세스의 종료와 Driver 경로가 이 프로젝트 build 아래인지 검증한 뒤 그 키만 제거한다. 제품 기준인 Windows 11에서의 동일 경로와 Manager 캐시 동작을 WO-13에서 다시 확인해야 하며, 현재 WO-7.1과 전체 적합성을 완료로 표시하지 않는다.
+2026-10-22 VM-W11-CODEX / Windows 11 10.0.26300에서도 같은 오류를 재현했다. 현재 기본 Manager 시험은 다른 STMT에서 먼저 분리하여 **한 STMT에 연결된 DESC의 해제 → 자동 복원 → 조회**를 실제로 검사하며 통과한다. 직접 드라이버는 여러 STMT의 자동 복원을 단위 시험에서 검사한다. 여러 STMT에 공유된 채 해제하는 별도 재현은 `HWDB_DESC_FREE_REGRESSION=1`이다. 이 경로는 아직 실패하며 기본 통과 집계에 넣지 않는다.
+
+REA/Ghidra로 `C:\Windows\System32\odbc32.dll` 버전 10.0.26100.9549, SHA-256 `8a120c65049e31b26cf1608e9d9e3253f386d29539a508b345e30390542b88d7`을 읽었다. SQLFreeHandle의 DESC 복원 루프는 원래 연결 목록의 다음 포인터를 저장하지 않고 자동 DESC의 연결 목록에 현재 STMT를 삽입한 뒤 같은 필드를 따라간다. 삽입 함수가 그 다음 포인터를 바꾸는 정적 코드와, 두 문장 공유에서만 발생하는 실제 실패가 일치한다. 이후 SQLGetStmtAttr는 드라이버 조회 전에 Manager가 캐시한 DESC의 잠금에 접근한다. Manager 목록 순회가 끊겨 다른 STMT에 해제된 DESC가 남는다는 것은 이 두 증거에 근거한 추론이다. 시스템 DLL을 수정하지 않았다.
+
+분석 증거: SQLGetStmtAttrW `ev_94ae411b0edd5886ed8345577f18b642e61d2a2dacf61f4165a49dcb8b23a962`, 내부 조회 `ev_49da199b36809e0fc0a86c5b8612a9c3952bf33ebc2dcef83b7529f43e535236`, SQLFreeHandle `ev_f9b304a3582ec2101c803273d14454171d302bbb5867a4efc18bd56a05973044`, 목록 삽입 `ev_3247169bf6fc7fc4c6fe5560475277ec8885fbf41c8bb3f86631a292c18ecf4c` 및 `ev_2705307fc5fbfe3b6bc82941d27efbb78605ecb035a8f4d29066b0396d507d1a`이다. 분석 세션은 닫았다. 원본 코드나 동적 관측으로 정적 분석을 오해하지 않는다.
+
+앱에서는 공유한 DESC를 해제하기 전에 관련 STMT의 APP_ROW_DESC/APP_PARAM_DESC를 NULL로 복원한다. 모든 관련 STMT를 명시적으로 분리하는 방식이 가장 분명하다. 이 플랫폼 제약과 WO-7.1의 미해결 검증을 숨기지 않으며 WO-13에서도 추적한다. 실패 시 남은 시험 HKCU 키는 해당 프로세스 종료와 GUID 경로·Driver가 프로젝트 build 안임을 확인한 후에만 제거한다.

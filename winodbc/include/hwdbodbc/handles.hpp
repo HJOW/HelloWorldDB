@@ -64,7 +64,22 @@ struct Descriptor : Handle {
     SQLULEN* rows_processed = nullptr;
     Descriptor() : Handle(SQL_HANDLE_DESC) {}
 };
+// 실행 중인 배열 위치와 분할 입력만 소유한다. 앱의 바인딩 주소는 해제하지 않는다.
+struct ParameterExecution {
+    SQLULEN row = 0, successful = 0;
+    SQLLEN affected = 0;
+    std::size_t parameter = 0, bytes = 0;
+    bool failed = false, warnings = false, row_warning = false, pending = false;
+    bool requested = false, supplied = false, null_value = false;
+    SQLLEN expected = -1;
+    DescriptorRecord binding;
+    SqlType target;
+    std::vector<unsigned char> input;
+    Json parameters = Json::array();
+    Diagnostic diagnostic;
+};
 struct Statement : Handle {
+    std::unique_ptr<ParameterExecution> parameter_execution;
     std::array<std::shared_ptr<Descriptor>, 4> descriptors;
     std::array<std::shared_ptr<Descriptor>, 4> automatic_descriptors;
     bool auto_ipd = false;
@@ -103,7 +118,7 @@ SQLRETURN allocate_handle(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE* output);
 SQLRETURN free_handle(SQLSMALLINT type, SQLHANDLE input);
 
 template<class T, class Function>
-SQLRETURN with_handle(SQLSMALLINT type, SQLHANDLE id, bool clear, Function&& function) noexcept {
+SQLRETURN with_handle(SQLSMALLINT type, SQLHANDLE id, bool clear, Function&& function, bool allow_data = false) noexcept {
     return entry_point(nullptr, [&]() -> SQLRETURN {
         auto handle = find_handle(type, id);
         if (!handle) return SQL_INVALID_HANDLE;
@@ -111,7 +126,11 @@ SQLRETURN with_handle(SQLSMALLINT type, SQLHANDLE id, bool clear, Function&& fun
         if (!handle->alive) return SQL_INVALID_HANDLE;
         if (clear) handle->diagnostic.clear();
         const auto result = entry_point(clear ? &handle->diagnostic : nullptr,
-            [&] { return function(static_cast<T&>(*handle)); });
+            [&] {
+                if (clear && !allow_data && type == SQL_HANDLE_STMT && static_cast<Statement&>(*handle).parameter_execution)
+                    throw DriverError("HY010", "Complete or cancel the data-at-execution operation first.");
+                return function(static_cast<T&>(*handle));
+            });
         if (clear) handle->diagnostic.return_code = result;
         return result;
     });

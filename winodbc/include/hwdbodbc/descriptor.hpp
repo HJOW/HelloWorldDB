@@ -2,6 +2,7 @@
 #include "hwdbodbc/statement.hpp"
 
 namespace hwdbodbc {
+void check_descriptor_mutation(const Descriptor& descriptor);
 SQLSMALLINT descriptor_general_type(SQLSMALLINT concise);
 SQLSMALLINT descriptor_subtype(SQLSMALLINT concise);
 void descriptor_concise_type(DescriptorRecord& record, SQLSMALLINT type, bool application);
