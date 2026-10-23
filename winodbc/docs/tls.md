@@ -44,6 +44,9 @@ OpenSSL DLL을 추가하지 않으며 `secur32.lib`·`crypt32.lib`(Windows 제�
 
 ## 송수신과 수명
 
+- 송신할 길이는 `EncryptMessage`가 갱신한 헤더·데이터·트레일러 버퍼 크기의 합이다. `SecPkgContext_StreamSizes`의 `cbTrailer`는 최대값이어서
+  CBC 계열 스위트처럼 패딩이 달라지면 실제 트레일러가 더 짧을 수 있고, 고정값으로 보내면 레코드 뒤에 남은 바이트가 붙어 상대가 레코드를 거부한다.
+  서버 기본 스위트(AES-GCM·ChaCha20)에서는 두 값이 같아 시험으로는 드러나지 않으므로 이 규칙은 코드 검토로 확인한다.
 - 송신은 평문을 `cbMaximumMessage` 단위로 나누어 `EncryptMessage`로 보내고,
   수신은 `DecryptMessage`로 풀어 프레임 단위로 돌려준다. 분할 TLS 레코드·남는 입력(`SECBUFFER_EXTRA`)·
   미완성 메시지(`SEC_E_INCOMPLETE_MESSAGE`)를 처리한다. 재협상(`SEC_I_RENEGOTIATE`)은 지원하지 않고
@@ -54,6 +57,13 @@ OpenSSL DLL을 추가하지 않으며 `secur32.lib`·`crypt32.lib`(Windows 제�
 - 종료는 TCP와 같이 소켓 종료로 하며 별도 close_notify 왕복을 요구하지 않는다. 서버(Node.js TLS)도 이를 허용한다.
 - `abort()`는 진행 중인 select·recv를 깨우고, 소멸자에서 컨텍스트·자격 증명·소켓을 순서대로 닫는다.
   읽기 스레드가 먼저 끝나므로(`Session`이 join 뒤에 전송 객체를 버린다) use-after-free가 없다.
+
+## 알려진 한계
+
+- 핸드셰이크가 끝나는 입력 묶음 뒤에 응용 데이터(`SECBUFFER_EXTRA`)가 붙어 오면 그 바이트를 전송 객체로 넘기지 않는다. HelloWorldDB 서버는 클라이언트의 첫 요청 전에는 아무것도 보내지 않으므로
+  현재 서버와는 발생하지 않는다. 다른 서버를 대상으로 삼거나 서버가 먼저 메시지를 보내도록 바뀌면 남는 입력을 `encrypted_`로 넘겨 먼저 복호화해야 한다.
+- 인증서 폐기(CRL·OCSP) 확인은 하지 않는다. 서버 TLS 규약(protocol.md 2-2절)도 요구하지 않는다.
+- `SSLCA`는 자체 서명 루트(또는 신뢰 루트)를 담은 PEM을 가정한다. 중간 인증서만 담은 파일은 신뢰 루트로 쓰지 못한다.
 
 ## 검증 경로
 

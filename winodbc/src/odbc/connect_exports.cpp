@@ -54,6 +54,9 @@ SQLRETURN get_attribute(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER output,
         case SQL_ATTR_CONNECTION_DEAD: value = !connection.connected || (connection.session && connection.session->dead()) ? SQL_CD_TRUE : SQL_CD_FALSE; break;
         case SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: value = SQL_ASYNC_DBC_ENABLE_OFF; break;
         case SQL_ATTR_AUTO_IPD: value = connection.session && connection.session->capabilities.count("prepareDescribe") ? SQL_TRUE : SQL_FALSE; break;
+        // 유효한 ODBC 연결 속성이지만 이 드라이버가 지원하지 않는 것은 잘못된 식별자(HY092)가 아니라 선택 기능 미구현(HYC00)이다.
+        case SQL_ATTR_PACKET_SIZE: case SQL_ATTR_TRANSLATE_LIB: case SQL_ATTR_TRANSLATE_OPTION: case SQL_ATTR_ENLIST_IN_DTC:
+            throw DriverError("HYC00", "This connection attribute is not supported.");
         default: throw DriverError("HY092", "Invalid attribute identifier.");
         }
         *static_cast<SQLUINTEGER*>(output) = value;
@@ -109,6 +112,9 @@ SQLRETURN set_attribute(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER input, 
             if (value != SQL_RESET_CONNECTION_YES) throw DriverError("HY024", "Invalid reset connection value.");
             reset_connection(connection); return SQL_SUCCESS;
         }
+        if (attribute == SQL_ATTR_PACKET_SIZE || attribute == SQL_ATTR_TRANSLATE_LIB || attribute == SQL_ATTR_TRANSLATE_OPTION
+            || attribute == SQL_ATTR_ENLIST_IN_DTC)
+            throw DriverError("HYC00", "This connection attribute is not supported.");
         throw DriverError("HY092", "Invalid attribute identifier.");
     });
 }

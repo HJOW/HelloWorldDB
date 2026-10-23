@@ -1,5 +1,33 @@
 # 검증 기록과 후속 시험
 
+## VM-W11-CODEX — 2026-10-22·23 작업(WO-7 ~ WO-10) 점검과 보완
+
+2026-10-23, 같은 VM(Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0)에서 WO-7 ~ WO-10 커밋(11190b4, 4669268, aa89d3b, e8e96cc)의 코드·문서·시험을 대조했다.
+
+**기준선(수정 전)**: `build-and-test.ps1`을 두 번 실행했다. 첫 실행은 x64 Debug의 `integration.protocol_manager`가 실제 서버 시나리오 한 곳에서 `HYT01`로 실패했다(프로브의 단일 요청 3초 제한을 DDL 한 건이 넘김). 같은 시험을 3번 다시 돌리면 모두 통과했고(24~27초), 두 번째 전체 실행은 CTest 68개·교차 4개·PE 4개·문서/환경 10개가 모두 통과했다. PROGRESS.md의 기록과 일치한다. 프로브의 일반 시나리오 요청 제한을 10초로 올려 이 간헐 실패를 막았고 제한 시간 동작을 시험하는 시나리오의 값은 그대로 두었다.
+
+**점검에서 찾아 고친 것**
+
+| 영역 | 문제 | 수정과 시험 |
+|---|---|---|
+| WO-10 TLS 송신 | `EncryptMessage`가 갱신한 트레일러 크기가 아니라 `cbTrailer` 고정값만큼 보냄. CBC 계열 스위트에서는 레코드 뒤에 쓰레기 바이트가 붙음 | 세 버퍼 크기의 합을 보내도록 수정. 서버 기본 스위트(AES-GCM·ChaCha20)에서는 두 값이 같아 시험으로 드러나지 않는다 |
+| WO-9 `SQLColumns` | `TIMESTAMP(0)`을 기본값 6자리로 보고(COLUMN_SIZE 26, DECIMAL_DIGITS 6). 서버는 항상 `TIMESTAMP(p)`로 적으므로 0자리가 6자리로 둔갑 | 명시 여부를 구분. 단위 시험과 `SQLDescribeCol` 대조로 확인 |
+| WO-9 `SQLSpecialColumns` | `SQL_SCOPE_CURROW`·`TRANSACTION` 요청에 빈 결과(범위는 "최소 범위"이므로 SESSION 범위 PK가 모두 만족) | 세 범위 모두 PK를 반환 |
+| WO-9 PK/FK/통계/특수컬럼 | 스키마·테이블 일반 인자를 패턴으로 비교. `ORDER_ITEMS`가 `ORDERXITEMS`와 섞임 | 일반 인자는 문자 그대로 비교. 식별자 모드는 따옴표 식별자·대문자 접기 적용 |
+| WO-9 `SQLGetInfo` | 문서(api-support.md)가 반환한다고 적은 `SQL_ASYNC_MODE`·`SQL_ASYNC_DBC_FUNCTIONS`가 없어 `HY096`. `SQL_ASYNC_NOTIFICATION`도 추가 | 비동기 미지원 값 반환. 직접 DLL에서 확인 |
+| WO-9.7 속성 | 유효하지만 미지원인 연결 속성(PACKET_SIZE, TRANSLATE_LIB/OPTION, ENLIST_IN_DTC)과 문장 속성(KEYSET_SIZE, SIMULATE_CURSOR, ASYNC_STMT_EVENT)이 `HY092` | `HYC00` 또는 기본값만 받고 `01S02`. 직접 DLL에서 확인 |
+
+**시험 공백을 메운 것**: 기존 `catalog_cases.cpp`는 DBA 접속과 단일 컬럼 키·ASC 인덱스만 다뤘고, `catalog-info.md`가 "복합 PK/FK·ASC/DESC·특수 식별자·타입 생략/명시를 포함한다"고 적은 것은 사실과 달랐다. 다음을 새로 시험한다.
+- 복합 PK(제약조건 순서 KEY_SEQ)·복합 FK(PK 쪽·FK 쪽 어느 테이블로 물어도 같은 행)·`DESC` 인덱스·따옴표 식별자(공백·`$`·예약어)·식별자 모드·타입 인자 생략/명시 9종과 `SQLDescribeCol` 대조·일반 인자의 `_` 비패턴 비교.
+- 권한이 없고 기본 테이블스페이스도 없는 사용자 / 뷰 권한만 있는 사용자 / 테이블스페이스 수준 SELECT 사용자의 탐색 결과, 그리고 보이는 것과 실제 실행 가능 범위(보이면 읽히고 안 보이면 `42501`)의 일치.
+- 직접 DLL에서 `SQLGetFunctions` true 55개와 실제 export(ANSI·W)의 양방향 대조, 단일 ID·`SQL_API_ALL_FUNCTIONS`·`SQL_API_ODBC3_ALL_FUNCTIONS` 일치, 제외 함수 5개의 보고·export 부재.
+
+**결함 주입 확인**: 수정을 하나씩 되돌려 새 시험이 실패하는지 확인했다. `TIMESTAMP(0)` 복원(`TIMESTAMP(0) keeps zero fractional digits`·단위 시험), 특수컬럼 범위 필터 복원(`best rowid is returned for every minimum scope`), PK 테이블 이름 패턴 비교 복원(`primary key lookup does not treat _ as a wildcard`)이 각각 실패했고 되돌린 뒤 모두 통과했다.
+
+**수정 후 실행**: 저장소 루트에서 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`을 실행했다. x64 Debug/Release·x86 Debug/Release 각각 CTest 17개, 합계 **68개 통과**이며 그 안의 Node 실제 서버/결함 주입은 구성당 32개(총 128개)이다. 새 시험은 기존 CTest 항목 안(`catalog.helpers_types`, `integration.protocol_manager`)에 들어 있어 CTest 수는 그대로다. 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 10개도 통과했고 실패·건너뜀은 0이다. `build/native/summary.json`의 capturedAt은 `2026-10-23T08:50:39.2715320+00:00`이다.
+
+**남은 한계**: 핸드셰이크 직후 붙어 오는 응용 데이터(`SECBUFFER_EXTRA`)를 전송 객체로 넘기지 않는 점은 현재 서버와는 발생하지 않아 고치지 않고 [TLS 문서](tls.md)에 적었다. CBC 스위트 송신 수정은 실제 CBC 협상 서버로 확인하지 못했다. `SQLGetFunctions` 대조는 보고와 export의 정합성을 보장하며, 각 함수의 동작은 기존 시험이 호출한다. WO-8.7 실제 Manager 풀과 WO-7.1 공유 DESC 해제는 이번 점검으로 해결되지 않았다.
+
 ## VM-W11-CODEX — WO-10 TCP TLS
 
 2026-10-23, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다. 시험용 만료·시작 전 인증서는 `test/fixtures/tls/`의 자체 서명 인증서이며 서버 `server-a` 계열은 `rdbms/test/fixtures/tls/`를 참조한다.

@@ -39,6 +39,7 @@ SQLRETURN get_statement_attribute(Statement& statement, SQLINTEGER attribute, SQ
     case SQL_ATTR_USE_BOOKMARKS: return number(SQL_UB_OFF);
     case SQL_ATTR_FETCH_BOOKMARK_PTR: return pointer(nullptr);
     case SQL_ATTR_ASYNC_ENABLE: return number(SQL_ASYNC_ENABLE_OFF);
+    case SQL_ATTR_ASYNC_STMT_EVENT: return pointer(nullptr);
     case SQL_ATTR_ENABLE_AUTO_IPD: return number(statement.auto_ipd ? SQL_TRUE : SQL_FALSE);
     case SQL_ATTR_KEYSET_SIZE: return number(0);
     case SQL_ATTR_SIMULATE_CURSOR: return number(SQL_SC_NON_UNIQUE);
@@ -100,6 +101,12 @@ SQLRETURN set_statement_attribute(SQLHSTMT handle, SQLINTEGER attribute, SQLPOIN
         case SQL_ATTR_USE_BOOKMARKS: if (value != SQL_UB_OFF) throw DriverError("HYC00", "Bookmarks are not supported."); break;
         case SQL_ATTR_FETCH_BOOKMARK_PTR: if (input) throw DriverError("HYC00", "Bookmarks are not supported."); break;
         case SQL_ATTR_ASYNC_ENABLE: if (value != SQL_ASYNC_ENABLE_OFF) throw DriverError("HYC00", "Asynchronous execution is not supported."); break;
+        case SQL_ATTR_ASYNC_STMT_EVENT: if (input) throw DriverError("HYC00", "Asynchronous completion events are not supported."); break;
+        // 전진 전용 읽기 커서에는 키셋과 커서 시뮬레이션이 의미가 없다. 기본값만 받고 다른 값은 대체했다고 알린다.
+        case SQL_ATTR_KEYSET_SIZE: if (value) return changed(); break;
+        case SQL_ATTR_SIMULATE_CURSOR:
+            if (value != SQL_SC_NON_UNIQUE && value != SQL_SC_TRY_UNIQUE && value != SQL_SC_UNIQUE) throw DriverError("HY024", "Invalid cursor simulation option.");
+            if (value != SQL_SC_NON_UNIQUE) return changed(); break;
         case SQL_ATTR_ENABLE_AUTO_IPD:
             if (value > SQL_TRUE) throw DriverError("HY024", "Invalid automatic IPD setting.");
             if (value && !statement_connection(statement).session->capabilities.count("prepareDescribe")) throw DriverError("HYC00", "The server does not support automatic IPD.");

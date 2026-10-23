@@ -8,10 +8,10 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 
 - 최종 갱신: 2026-10-23.
 - 진행 단계: **WO-10까지 구현·검증 완료**. WO-0 ~ WO-9 및 WO-7.2 ~ WO-7.7, WO-8.1 ~ WO-8.6·WO-8.8, WO-10.1 ~ WO-10.5는 완료했다. WO-8.7의 reset 구현과 직접 DLL 시험은 통과했으나 실제 Manager 풀 재사용은 미검증이어서 체크하지 않았다. WO-7.1의 여러 STMT 공유 DESC 해제 재현과 전체 Core/3.8 적합성도 남아 있다.
-- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 68개**(신규 tls.options_ca_validation 1개 포함), 그 안의 실제 서버/결함 주입 **32개 × 4구성 = 128개**(기존 24개 + TLS 8개), 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. `build/native/summary.json`은 2026-10-23T08:14:43.1047873+00:00이며 export는 85개이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
+- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 68개**(신규 tls.options_ca_validation 1개 포함), 그 안의 실제 서버/결함 주입 **32개 × 4구성 = 128개**(기존 24개 + TLS 8개), 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. 2026-10-23 점검 보완(카탈로그·정보·속성·TLS 송신 수정과 시험 보강) 뒤 같은 행렬을 재실행해 같은 수가 통과했고 `build/native/summary.json`은 2026-10-23T08:50:39.2715320+00:00이며 export는 85개이다. 점검 내용은 [검증 기록](docs/verification.md)의 첫 절이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
 - 다음 작업: WO-11 UDP부터 WO-13 인수까지 남아 있다. WO-8.7의 실제 Manager 풀 검증을 ODBC 3.8 보고·전체 적합성 감사와 함께 완료하고 WO-7.1의 외부 Manager 제약을 추적한다. [트랜잭션·취소·초기화 규칙](docs/transactions-cancel-reset.md), [준비 규칙](docs/prepared-statements.md), [descriptor/배열/분할 입력 규칙](docs/descriptors-arrays.md), [카탈로그·기능 보고 규칙](docs/catalog-info.md), [TLS 전송 규칙](docs/tls.md)을 따른다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
-- 생성·변경 파일과 조회 결과는 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지한다. **2026-10-22 현재 요청에 따라 WO 번호별로 검증 후 간결한 한 줄 메시지로 커밋하며, 이전 커밋 금지 지시보다 현재 요청을 우선한다. 푸시는 하지 않는다.**
+- 생성·변경 파일과 조회 결과는 `winodbc/` 안에 둔다. 루트 PROGRESS.md에는 프로젝트 전체 현황 표의 winodbc 줄만 단계가 바뀔 때 갱신한다. **커밋과 푸시는 AI가 하지 않는다(AGENTS.md 지켜야 할 사항 3).** 2026-10-22 작업에는 그날 사용자 요청에 따라 WO 번호별로 커밋했다는 기록이 있으나 그 요청에 한정된 예외이며 이후 작업으로 이어지지 않는다. 변경은 작업 트리에 두고 저장소 소유자가 커밋한다.
 - TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화·트랜잭션·잠금/CPU 실행 취소·시간 제한을 검증했다. reset은 직접 DLL과 실제 서버로 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. Manager 풀과 Core 완료는 후속이다.
 
 ## 1. 이 문서를 따라 작업하는 방법
@@ -23,9 +23,9 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 5. 완료 조건을 전부 충족한 항목만 `[x]`로 바꾼다. 함수 이름만 export했거나 항상 성공을 반환하는 스텁은 구현 완료가 아니다.
 6. 문서에 없는 선택을 했다면 "결정 사항"에 근거를 남긴다. 서버 사양·프로토콜 변경이 필요하면 AGENTS.md와 서버 문서를 먼저 고친 뒤 구현한다.
 7. 작업 종료 전 현재 상태·작업 이력·다음 작업을 갱신하고 루트 PROGRESS.md에도 요약한다. 실행한 명령·컴파일러·OS·비트 수·서버 런타임·통과/실패/건너뜀 수를 남긴다.
-8. 코드와 Markdown은 UTF-8, 주석·설명은 한국어로 작성한다. DB 오류 메시지는 영문으로 유지한다. 현재 요청의 WO 단계별 commit을 수행하며 push는 하지 않는다.
+8. 코드와 Markdown은 UTF-8, 주석·설명은 한국어로 작성한다. DB 오류 메시지는 영문으로 유지한다. 커밋과 푸시는 하지 않는다(AGENTS.md 지켜야 할 사항 3). 변경은 작업 트리에 두고 저장소 소유자가 커밋한다.
 9. **PC가 바뀌면 Visual Studio/Build Tools 설치를 다시 확인한다. 설치/미설치·버전·절대 경로와 PC 호스트명을 함께 문서화한다.** VM-W11-Codex에서 확인한 설치를 다른 PC의 설치 근거로 사용하지 않는다. [호스트별 기록 규칙](docs/environment.md)을 따른다.
-10. 사용자 지정 작업 범위에 따라 winodbc 관련 새 파일·생성물·임시 자료는 모두 이 디렉토리에 둔다. 현재 작업은 루트 문서를 변경하지 않고 이 문서에서 인수인계한다.
+10. 사용자 지정 작업 범위에 따라 winodbc 관련 새 파일·생성물·임시 자료는 모두 이 디렉토리에 둔다. 상세 인수인계는 이 문서에 쓰고, 프로젝트 전체 현황은 AGENTS.md 지켜야 할 사항 4에 따라 루트 PROGRESS.md의 winodbc 줄에 요약한다.
 
 ## 2. 목표와 설계 기본안
 
@@ -267,6 +267,8 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 
 완료 기준: 탐색에 보이는 객체·타입·기능과 실제 실행 가능 범위가 일치한다. SQLGetFunctions가 true라는 이유만으로 해당 함수 시험을 생략하지 않는다.
 
+2026-10-23 점검 보완: 최초 구현의 카탈로그 시험은 DBA 접속과 단일 컬럼 키뿐이어서 위 필수 시험 중 복합 PK/FK·DESC 인덱스·특수 식별자·타입 인자 생략/명시·제한 사용자·뷰 전용 권한 사용자·기본 테이블스페이스 없는 사용자는 비어 있었다. 점검에서 이를 시험으로 채웠고, 그 과정에서 `TIMESTAMP(0)` 보고, `SQL_BEST_ROWID` 범위, 일반 인자의 패턴 비교, `SQL_ASYNC_*` 보고, 미지원 속성의 SQLSTATE 결함을 찾아 고쳤다. `SQLGetFunctions`는 직접 DLL에서 true 55개와 export를 양방향으로 대조한다(각 함수의 동작은 기존 시험이 호출). [상세](docs/catalog-info.md)
+
 ### WO-10. TCP TLS
 
 - [x] WO-10.1: Schannel 전송을 공통 메시지 전송 인터페이스에 연결한다. 핸드셰이크의 추가 입력·남는 입력·분할 TLS 레코드·연결 종료와 전송 버퍼 수명을 처리한다.
@@ -420,6 +422,8 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
 
 ## 작업 이력
+
+- 2026-10-23: 사용자 요청으로 10-22(WO-7·WO-8)·10-23(WO-9·WO-10) 작업을 AGENTS.md·이 문서와 대조해 점검하고 고쳤다. 전체 행렬은 수정 전후 모두 통과(CTest 68개·교차 4개·PE 4개·문서/환경 10개)이며 수정 전 첫 실행에서 프로브의 3초 요청 제한으로 `HYT01` 간헐 실패가 한 번 있었다. 코드 결함 7건: TLS 송신이 `EncryptMessage`가 갱신한 트레일러 크기 대신 `cbTrailer` 고정값을 보냄(CBC 스위트에서 레코드 손상), `SQLColumns`가 `TIMESTAMP(0)`을 6자리로 보고, `SQLSpecialColumns`가 `CURROW`·`TRANSACTION` 요청에 빈 결과, PK/FK/통계/특수컬럼의 일반 인자를 패턴으로 비교(`_`가 다른 테이블과 섞임), 식별자 모드의 따옴표·대문자 접기 부재, 문서에만 있던 `SQL_ASYNC_*` 정보 보고 부재, 유효하지만 미지원인 속성이 `HY092`(`HYC00`·`01S02`로 정정). WO-9의 필수 시험(복합 PK/FK·DESC 인덱스·특수 식별자·타입 인자·제한/뷰 전용/기본 테이블스페이스 없는 사용자·`SQLGetFunctions` true 항목)이 실제로는 빠져 있었고 `catalog-info.md`가 포함한다고 적은 것이 사실과 달랐다. 해당 시험을 추가하고 결함을 일부러 되돌려 실패하는 것을 확인했다([검증 기록](docs/verification.md)). 문서 불일치도 바로잡았다: 커밋을 지시하던 본 문서의 문구가 AGENTS.md 지켜야 할 사항 3과 충돌해 정정했고, 10-23 항목의 "커밋·푸시는 하지 않았다"는 작성 시점의 서술이며 이후 WO-9(aa89d3b)·WO-10(e8e96cc)이 커밋되었다. 루트 PROGRESS.md의 winodbc 줄이 WO-8 기준으로 낡아 갱신했다. 이번 작업도 AI는 커밋·푸시를 하지 않았다. 해결하지 못한 것: 핸드셰이크 직후 응용 데이터 처리(현재 서버와 무관, tls.md에 한계로 기록), CBC 협상 서버로의 실제 확인, WO-8.7 Manager 풀, WO-7.1 공유 DESC 해제, `tcp.cpp`·`tls.cpp`의 연결 코드 중복.
 
 - 2026-10-23: WO-10 TCP TLS를 구현했다. Schannel 수동 검증 전송(`src/transport/tls.cpp`)을 공통 Transport에 연결하고 TLS 1.2·1.3, 시스템 저장소 또는 SSLCA 배타적 루트 신뢰, SSL 정책의 기간·이름 확인, 만료/시작 전 방향 구분, 검증 끄기 명시 허용, 옵션 조합 오류(HY024), 인증서 오류만 100ms 뒤 최대 2회 재시도(08001/8007)를 넣었다. 평문 서버·연결 거부·버전 불일치는 재시도 없이 바로 실패한다. 단위 tls.options_ca_validation·connection 옵션 시험과 Manager 경유 가짜 서버 연결 수 세기(인증서 오류 3회·평문/거부 1회, 원인 코드 확인) 및 실제 TLS 서버의 CA 지정 CRUD·분할 fetch·트랜잭션·잠금 취소·검증 끄기 시험(TLS 8개)을 추가했다. 만료·시작 전 인증서는 `test/fixtures/tls/`에 자체 서명으로 두었다. 네 구성 CTest 68개(내부 Node 32개×4=128개), 교차 로드 4개·PE 4개·문서/환경 10개가 실패/건너뜀 없이 통과했다. WO-8.7 실제 풀 재사용과 WO-7.1 공유 DESC 해제는 미완료로 남겼다. 커밋·푸시는 하지 않았다.
 

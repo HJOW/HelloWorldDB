@@ -54,9 +54,278 @@ int count_rows(SQLHSTMT statement) {
     return rows;
 }
 void close_cursor(SQLHSTMT statement) { expect_stmt(SQLCloseCursor(statement), statement, "catalog close"); }
+
+using Row = std::vector<std::wstring>;
+// 열린 카탈로그 결과의 모든 행에서 지정한 열(오름차순)을 문자열로 읽고 커서를 닫는다.
+std::vector<Row> collect(SQLHSTMT statement, std::initializer_list<SQLUSMALLINT> columns) {
+    std::vector<Row> rows;
+    SQLRETURN result = SQL_SUCCESS;
+    while ((result = SQLFetch(statement)) == SQL_SUCCESS || result == SQL_SUCCESS_WITH_INFO) {
+        Row row;
+        for (const auto column : columns) row.push_back(gettext(statement, column));
+        rows.push_back(std::move(row));
+    }
+    check(result == SQL_NO_DATA, "catalog fetch ends with SQL_NO_DATA");
+    close_cursor(statement);
+    return rows;
+}
+// 지정한 열이 값과 같은 행만 남긴다.
+std::vector<Row> where(const std::vector<Row>& rows, std::size_t column, const std::wstring& value) {
+    std::vector<Row> result;
+    for (const auto& row : rows) if (row.at(column) == value) result.push_back(row);
+    return result;
+}
+// 시험 사용자로 접속한다. settings는 SYSTEM 접속 문자열이며 UID 앞의 DRIVER/Server/Port 부분만 재사용한다.
+SQLHDBC connect_as(SQLHENV environment, const std::wstring& settings, const std::wstring& user, const std::wstring& password) {
+    const auto position = settings.find(L"UID=");
+    check(position != std::wstring::npos, "catalog connection string has UID");
+    const auto text = settings.substr(0, position) + L"UID=" + user + L";PWD=" + password + L";";
+    SQLHDBC result = nullptr;
+    check(SQLAllocHandle(SQL_HANDLE_DBC, environment, &result) == SQL_SUCCESS, "catalog user DBC");
+    expect_dbc(SQLDriverConnectW(result, nullptr, wide(text), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT), result, "catalog user login");
+    return result;
+}
+void disconnect(SQLHDBC connection, SQLHSTMT statement) {
+    check(SQLFreeHandle(SQL_HANDLE_STMT, statement) == SQL_SUCCESS, "catalog user STMT free");
+    expect_dbc(SQLDisconnect(connection), connection, "catalog user disconnect");
+    check(SQLFreeHandle(SQL_HANDLE_DBC, connection) == SQL_SUCCESS, "catalog user DBC free");
+}
+bool starts_with(const std::wstring& text, const std::wstring& prefix) { return text.compare(0, prefix.size(), prefix) == 0; }
+std::size_t count_prefixed(const std::vector<Row>& rows, std::size_t column, const std::wstring& prefix) {
+    std::size_t count = 0;
+    for (const auto& row : rows) if (starts_with(row.at(column), prefix)) ++count;
+    return count;
+}
+std::vector<Row> tables_of(SQLHSTMT statement, const std::wstring& name_pattern) {
+    expect_stmt(SQLTablesW(statement, wide(L""), 0, wide(L""), 0, wide(name_pattern), SQL_NTS, wide(L""), 0), statement, "catalog user SQLTables");
+    return collect(statement, {2, 3, 4});
+}
+std::vector<Row> columns_of(SQLHSTMT statement, const std::wstring& table) {
+    expect_stmt(SQLColumnsW(statement, wide(L""), 0, wide(L""), 0, wide(table), SQL_NTS, wide(L""), 0), statement, "catalog user SQLColumns");
+    return collect(statement, {3, 4, 6});
+}
+std::vector<Row> primary_keys_of(SQLHSTMT statement, const std::wstring& table) {
+    expect_stmt(SQLPrimaryKeysW(statement, wide(L""), 0, wide(L""), 0, wide(table), SQL_NTS), statement, "catalog user SQLPrimaryKeys");
+    return collect(statement, {3, 4, 5});
+}
+std::vector<Row> statistics_of(SQLHSTMT statement, const std::wstring& table) {
+    expect_stmt(SQLStatisticsW(statement, wide(L""), 0, wide(L""), 0, wide(table), SQL_NTS, SQL_INDEX_ALL, SQL_ENSURE), statement, "catalog user SQLStatistics");
+    return collect(statement, {3, 6, 8, 9, 10});
+}
+std::vector<Row> special_columns_of(SQLHSTMT statement, SQLUSMALLINT scope, const std::wstring& table) {
+    expect_stmt(SQLSpecialColumnsW(statement, SQL_BEST_ROWID, wide(L""), 0, wide(L""), 0, wide(table), SQL_NTS, scope, SQL_NULLABLE), statement, "catalog user SQLSpecialColumns");
+    return collect(statement, {1, 2, 3});
+}
+// 실행이 주어진 SQLSTATE로 실패하는지 본다.
+void expect_failure(SQLHSTMT statement, const std::wstring& text, const char* state) {
+    check(SQLExecDirectW(statement, wide(text), SQL_NTS) == SQL_ERROR, "catalog user statement must fail");
+    stmt_state(statement, state);
+}
+long long scalar_of(SQLHSTMT statement, const std::wstring& text) {
+    sql(statement, text);
+    check(SQLFetch(statement) == SQL_SUCCESS, "catalog scalar fetch");
+    const auto value = getint(statement, 1);
+    close_cursor(statement);
+    return value;
 }
 
-void run_catalog_cases(SQLHDBC connection) {
+// 복합 키·DESC 인덱스·특수 식별자·타입 인자 생략/명시·일반 인자의 정확한 비교를 확인한다. 기본 단계가 만든 Q9_VIEW 등을 이어서 쓴다.
+void run_catalog_shape_cases(SQLHSTMT statement) {
+    sql(statement, L"CREATE TABLE Q9_COMP_P (A INTEGER, B INTEGER, TXT VARCHAR, PRIMARY KEY (B, A))");
+    sql(statement, L"CREATE TABLE Q9_COMP_C (ID INTEGER PRIMARY KEY, PA INTEGER, PB INTEGER, FOREIGN KEY (PB, PA) REFERENCES Q9_COMP_P (B, A))");
+    sql(statement, L"CREATE INDEX Q9_COMP_IDX ON Q9_COMP_C (PB DESC, PA)");
+
+    // 복합 PK는 컬럼 정의 순서(A, B)가 아니라 제약조건 순서(B, A)가 KEY_SEQ이다.
+    {
+        const auto keys = primary_keys_of(statement, L"Q9_COMP_P");
+        check(keys.size() == 2, "composite primary key has two rows");
+        check(keys[0][1] == L"B" && keys[0][2] == L"1" && keys[1][1] == L"A" && keys[1][2] == L"2", "composite primary key follows the constraint order");
+    }
+    // 복합 FK는 KEY_SEQ마다 참조되는 PK 컬럼과 FK 컬럼이 짝지어진다. 어느 쪽 테이블로 물어도 같은 행이다.
+    for (const bool by_fk_table : {true, false}) {
+        if (by_fk_table)
+            expect_stmt(SQLForeignKeysW(statement, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L"Q9_COMP_C"), SQL_NTS), statement, "composite FK by FK table");
+        else
+            expect_stmt(SQLForeignKeysW(statement, wide(L""), 0, wide(L""), 0, wide(L"Q9_COMP_P"), SQL_NTS, wide(L""), 0, wide(L""), 0, wide(L""), 0), statement, "composite FK by PK table");
+        const auto fk = collect(statement, {3, 4, 7, 8, 9, 10, 11, 12, 13});
+        check(fk.size() == 2, "composite foreign key has two rows");
+        check(fk[0][0] == L"Q9_COMP_P" && fk[0][1] == L"B" && fk[0][2] == L"Q9_COMP_C" && fk[0][3] == L"PB" && fk[0][4] == L"1", "composite FK pair 1");
+        check(fk[1][0] == L"Q9_COMP_P" && fk[1][1] == L"A" && fk[1][2] == L"Q9_COMP_C" && fk[1][3] == L"PA" && fk[1][4] == L"2", "composite FK pair 2");
+        check(fk[0][5] == std::to_wstring(SQL_NO_ACTION) && fk[0][6] == std::to_wstring(SQL_NO_ACTION), "default FK rules are NO ACTION");
+        check(fk[0][7] == fk[1][7] && fk[0][7] != L"<NULL>" && fk[0][8] != L"<NULL>", "FK and PK names are reported");
+    }
+    // DESC 인덱스: 컬럼마다 ASC_OR_DESC가 다르고 ORDINAL_POSITION이 정의 순서이다.
+    {
+        const auto stats = where(statistics_of(statement, L"Q9_COMP_C"), 1, L"Q9_COMP_IDX");
+        check(stats.size() == 2, "composite index has two columns");
+        check(stats[0][2] == L"1" && stats[0][3] == L"PB" && stats[0][4] == L"D", "first index column is descending");
+        check(stats[1][2] == L"2" && stats[1][3] == L"PA" && stats[1][4] == L"A", "second index column is ascending");
+    }
+    // 특수 식별자: 공백, $, 예약어 이름은 따옴표로 만든 그대로 보존된다.
+    sql(statement, L"CREATE TABLE \"Q9 Mixed$Name\" (\"select\" INTEGER PRIMARY KEY, \"Val Col\" DECIMAL)");
+    {
+        const auto columns = columns_of(statement, L"Q9 Mixed$Name");
+        check(columns.size() == 2 && columns[0][1] == L"select" && columns[1][1] == L"Val Col", "quoted identifiers are preserved");
+        const auto keys = primary_keys_of(statement, L"Q9 Mixed$Name");
+        check(keys.size() == 1 && keys[0][1] == L"select", "primary key of a quoted identifier table");
+        // 식별자 모드: 따옴표 없는 이름은 대문자로 접히므로 대소문자가 섞인 이름과 맞지 않는다.
+        expect_stmt(SQLSetStmtAttr(statement, SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0), statement, "identifier mode on");
+        expect_stmt(SQLColumnsW(statement, wide(L""), 0, wide(L""), 0, wide(L"\"Q9 Mixed$Name\""), SQL_NTS, wide(L""), 0), statement, "quoted identifier argument");
+        check(collect(statement, {4}).size() == 2, "quoted identifier argument matches");
+        expect_stmt(SQLColumnsW(statement, wide(L""), 0, wide(L""), 0, wide(L"q9 mixed$name"), SQL_NTS, wide(L""), 0), statement, "folded identifier argument");
+        check(collect(statement, {4}).empty(), "unquoted identifier folds to upper case and misses a mixed case name");
+        expect_stmt(SQLColumnsW(statement, wide(L""), 0, wide(L""), 0, wide(L"q9_parent"), SQL_NTS, wide(L"id"), SQL_NTS), statement, "folded plain identifier");
+        check(collect(statement, {4}).size() == 1, "unquoted identifier folds to upper case and matches");
+        expect_stmt(SQLSetStmtAttr(statement, SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_FALSE), 0), statement, "identifier mode off");
+    }
+    // 타입 인자 생략과 명시는 서버가 확정한 선언 그대로 ODBC 크기·자릿수가 된다.
+    sql(statement, L"CREATE TABLE Q9_TYPES (C1 CHAR, C2 VARCHAR, C3 DECIMAL, C4 DECIMAL(7), C5 NUMERIC(12,4), C6 TIMESTAMP, C7 TIMESTAMP(0), C8 TIME, C9 TIMESTAMP(3) WITH TIME ZONE)");
+    {
+        expect_stmt(SQLColumnsW(statement, wide(L""), 0, wide(L""), 0, wide(L"Q9_TYPES"), SQL_NTS, wide(L""), 0), statement, "type argument columns");
+        // 4 COLUMN_NAME, 5 DATA_TYPE, 7 COLUMN_SIZE, 9 DECIMAL_DIGITS
+        const auto columns = collect(statement, {4, 5, 7, 9});
+        check(columns.size() == 9, "all type columns are listed");
+        // 문자 타입의 DECIMAL_DIGITS는 해당 없음(NULL)이다.
+        const std::wstring none = L"<NULL>";
+        const auto expected = [&](std::size_t index, int type, int size, const std::wstring& digits, const char* what) {
+            const auto& row = columns.at(index);
+            if (row[1] != std::to_wstring(type) || row[2] != std::to_wstring(size) || row[3] != digits)
+                std::wcerr << what << L": type=" << row[1] << L" size=" << row[2] << L" digits=" << row[3] << L'\n';
+            check(row[1] == std::to_wstring(type) && row[2] == std::to_wstring(size) && row[3] == digits, what);
+        };
+        expected(0, SQL_WCHAR, 1, none, "CHAR without length is CHAR(1)");
+        expected(1, SQL_WVARCHAR, 65535, none, "VARCHAR without length is 65535");
+        expected(2, SQL_DECIMAL, 10, L"3", "DECIMAL without arguments is (10,3)");
+        expected(3, SQL_DECIMAL, 7, L"0", "DECIMAL(p) has scale 0");
+        expected(4, SQL_DECIMAL, 12, L"4", "NUMERIC(p,s) is reported as DECIMAL(p,s)");
+        expected(5, SQL_TYPE_TIMESTAMP, 26, L"6", "TIMESTAMP defaults to 6 fractional digits");
+        expected(6, SQL_TYPE_TIMESTAMP, 19, L"0", "TIMESTAMP(0) keeps zero fractional digits");
+        expected(7, SQL_TYPE_TIME, 8, L"0", "TIME defaults to 0 fractional digits");
+        expected(8, SQL_WVARCHAR, 29, L"3", "TIMESTAMP(3) WITH TIME ZONE is exposed as a string");
+        // 카탈로그의 자릿수·타입은 실행 결과 메타데이터(SQLDescribeCol)와 같아야 한다.
+        sql(statement, L"SELECT C1, C2, C3, C4, C5, C6, C7, C8, C9 FROM Q9_TYPES");
+        for (SQLUSMALLINT column = 1; column <= 9; ++column) {
+            SQLWCHAR name[64]{}; SQLSMALLINT name_length = 0, type = 0, digits = 0, nullable = 0; SQLULEN size = 0;
+            expect_stmt(SQLDescribeColW(statement, column, name, 64, &name_length, &type, &size, &digits, &nullable), statement, "describe type column");
+            const auto& row = columns.at(column - 1);
+            // 카탈로그가 해당 없음(NULL)으로 보고한 자릿수는 결과 메타데이터에서 0이다.
+            const auto catalog_digits = row[3] == none ? std::wstring(L"0") : row[3];
+            if (row[1] != std::to_wstring(type) || catalog_digits != std::to_wstring(digits))
+                std::wcerr << L"C" << column << L": catalog type=" << row[1] << L" digits=" << row[3] << L" result type=" << type << L" digits=" << digits << L'\n';
+            check(row[1] == std::to_wstring(type), "catalog data type equals result set data type");
+            check(catalog_digits == std::to_wstring(digits), "catalog decimal digits equal result set decimal digits");
+        }
+        close_cursor(statement);
+    }
+    // SQL_BEST_ROWID: 요청한 범위는 최소 범위이며 PK(SESSION 범위)는 어느 요청도 만족한다.
+    for (const int scope : {SQL_SCOPE_CURROW, SQL_SCOPE_TRANSACTION, SQL_SCOPE_SESSION}) {
+        const auto rowid = special_columns_of(statement, static_cast<SQLUSMALLINT>(scope), L"Q9_COMP_P");
+        check(rowid.size() == 2, "best rowid is returned for every minimum scope");
+        check(rowid[0][1] == L"B" && rowid[1][1] == L"A", "best rowid lists the composite primary key in order");
+        check(std::stoi(rowid[0][0]) >= scope, "returned scope is not narrower than requested");
+    }
+    // 일반 인자는 패턴이 아니다. Q9_AB의 _ 가 Q9XAB와 맞아서는 안 되지만 패턴 값 인자(SQLTables)는 맞아야 한다.
+    sql(statement, L"CREATE TABLE Q9_AB (ID INTEGER PRIMARY KEY)");
+    sql(statement, L"CREATE TABLE Q9XAB (ID INTEGER PRIMARY KEY)");
+    sql(statement, L"CREATE TABLE Q9_AB_CHILD (ID INTEGER PRIMARY KEY, P INTEGER REFERENCES Q9_AB)");
+    sql(statement, L"CREATE TABLE Q9XAB_CHILD (ID INTEGER PRIMARY KEY, P INTEGER REFERENCES Q9XAB)");
+    {
+        const auto matched = tables_of(statement, L"Q9_AB");
+        check(where(matched, 1, L"Q9_AB").size() == 1 && where(matched, 1, L"Q9XAB").size() == 1, "table name pattern treats _ as a wildcard");
+        const auto keys = primary_keys_of(statement, L"Q9_AB");
+        check(keys.size() == 1 && keys[0][0] == L"Q9_AB", "primary key lookup does not treat _ as a wildcard");
+        const auto stats = statistics_of(statement, L"Q9_AB");
+        check(!stats.empty() && count_prefixed(stats, 0, L"Q9XAB") == 0, "statistics lookup does not treat _ as a wildcard");
+        const auto rowid = special_columns_of(statement, SQL_SCOPE_SESSION, L"Q9_AB");
+        check(rowid.size() == 1, "special columns lookup does not treat _ as a wildcard");
+        expect_stmt(SQLForeignKeysW(statement, wide(L""), 0, wide(L""), 0, wide(L"Q9_AB"), SQL_NTS, wide(L""), 0, wide(L""), 0, wide(L""), 0), statement, "FK lookup by PK table");
+        const auto fk = collect(statement, {3, 7});
+        check(fk.size() == 1 && fk[0][0] == L"Q9_AB" && fk[0][1] == L"Q9_AB_CHILD", "foreign key lookup does not treat _ as a wildcard");
+    }
+    sql(statement, L"DROP TABLE Q9XAB_CHILD");
+    sql(statement, L"DROP TABLE Q9_AB_CHILD");
+    sql(statement, L"DROP TABLE Q9XAB");
+    sql(statement, L"DROP TABLE Q9_AB");
+    sql(statement, L"DROP TABLE Q9_TYPES");
+    sql(statement, L"DROP TABLE \"Q9 Mixed$Name\"");
+    sql(statement, L"DROP TABLE Q9_COMP_C");
+    sql(statement, L"DROP TABLE Q9_COMP_P");
+}
+
+// 권한이 다른 사용자가 보는 카탈로그와 실제 실행 가능 범위가 일치하는지 확인한다.
+// 아무 권한 없는(기본 테이블스페이스도 없는) 사용자, 뷰 권한만 있는 사용자, 테이블스페이스 수준 SELECT 사용자이다.
+void run_catalog_visibility_cases(SQLHDBC connection, SQLHSTMT statement, SQLHENV environment, const std::wstring& settings) {
+    sql(statement, L"CREATE USER Q9_LIMITED IDENTIFIED BY 'q9-limited'");
+    sql(statement, L"CREATE USER Q9_VIEWER IDENTIFIED BY 'q9-viewer'");
+    sql(statement, L"GRANT SELECT ON VIEW Q9_VIEW TO Q9_VIEWER");
+    sql(statement, L"CREATE USER Q9_READER IDENTIFIED BY 'q9-reader' DEFAULT TABLESPACE SYSTEM");
+    sql(statement, L"GRANT SELECT ON TABLESPACE SYSTEM TO Q9_READER");
+    // 비교 기준: SYSTEM(DBA)은 Q9_ 객체를 모두 본다.
+    {
+        const auto all = tables_of(statement, L"Q9_%");
+        check(where(all, 1, L"Q9_PARENT").size() == 1 && where(all, 1, L"Q9_CHILD").size() == 1 && where(all, 1, L"Q9_VIEW").size() == 1, "DBA sees every Q9 object");
+    }
+    // 1) 권한이 없고 기본 테이블스페이스도 없는 사용자는 SYSTEM의 Q9 객체를 탐색에서 볼 수 없고 실행도 못 한다.
+    {
+        auto session = connect_as(environment, settings, L"Q9_LIMITED", L"q9-limited");
+        auto limited = allocate(session);
+        char user[64]{}; SQLSMALLINT length = 0;
+        expect_dbc(SQLGetInfo(session, SQL_USER_NAME, user, sizeof(user), &length), session, "limited user name");
+        check(std::string(user) == "Q9_LIMITED", "connected as the limited user");
+        check(count_prefixed(tables_of(limited, L"Q9_%"), 1, L"Q9_") == 0, "limited user sees no Q9 table or view");
+        check(columns_of(limited, L"Q9_PARENT").empty() && columns_of(limited, L"Q9_VIEW").empty(), "limited user sees no Q9 columns");
+        check(primary_keys_of(limited, L"Q9_PARENT").empty(), "limited user sees no primary key");
+        check(statistics_of(limited, L"Q9_CHILD").empty(), "limited user sees no index");
+        check(special_columns_of(limited, SQL_SCOPE_CURROW, L"Q9_PARENT").empty(), "limited user sees no row identifier");
+        expect_stmt(SQLForeignKeysW(limited, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L""), 0, wide(L"Q9_CHILD"), SQL_NTS), limited, "limited FK");
+        check(collect(limited, {3}).empty(), "limited user sees no foreign key");
+        expect_stmt(SQLTablePrivilegesW(limited, wide(L""), 0, wide(L""), 0, wide(L"Q9_%"), SQL_NTS), limited, "limited privileges");
+        check(collect(limited, {3}).empty(), "limited user sees no privilege rows for Q9 objects");
+        expect_stmt(SQLTablesW(limited, wide(L""), 0, wide(L"%"), SQL_NTS, wide(L""), 0, wide(L""), 0), limited, "limited schemas");
+        check(where(collect(limited, {1}), 0, L"SYSTEM").empty(), "limited user does not see the SYSTEM tablespace");
+        // 탐색에 보이지 않는 것은 실행도 안 된다.
+        expect_failure(limited, L"SELECT COUNT(*) FROM SYSTEM.Q9_PARENT", "42501");
+        expect_failure(limited, L"SELECT COUNT(*) FROM SYSTEM.Q9_VIEW", "42501");
+        disconnect(session, limited);
+    }
+    // 2) 뷰 권한만 있는 사용자는 뷰와 그 컬럼만 보고, 기반 테이블은 보지도 읽지도 못한다.
+    {
+        auto session = connect_as(environment, settings, L"Q9_VIEWER", L"q9-viewer");
+        auto viewer = allocate(session);
+        const auto visible = tables_of(viewer, L"Q9_%");
+        check(count_prefixed(visible, 1, L"Q9_") == 1 && where(visible, 1, L"Q9_VIEW").size() == 1 && visible[0][2] == L"VIEW", "view-only user sees just the view");
+        const auto view_columns = columns_of(viewer, L"Q9_VIEW");
+        check(view_columns.size() == 2 && view_columns[0][1] == L"ID" && view_columns[1][1] == L"NAME", "view-only user sees the view columns");
+        check(columns_of(viewer, L"Q9_PARENT").empty(), "view-only user does not see base table columns");
+        check(primary_keys_of(viewer, L"Q9_PARENT").empty() && statistics_of(viewer, L"Q9_PARENT").empty(), "view-only user does not see base table keys or indexes");
+        expect_stmt(SQLTablePrivilegesW(viewer, wide(L""), 0, wide(L""), 0, wide(L"Q9_VIEW"), SQL_NTS), viewer, "viewer privileges");
+        const auto grants = collect(viewer, {3, 5, 6});
+        check(grants.size() == 1 && grants[0][1] == L"Q9_VIEWER" && grants[0][2] == L"SELECT", "view-only user sees its own grant");
+        // 뷰 권한이 있으면 기반 테이블 권한 없이 뷰를 읽을 수 있고, 기반 테이블은 읽을 수 없다. 탐색 결과와 같다.
+        check(scalar_of(viewer, L"SELECT COUNT(*) FROM SYSTEM.Q9_VIEW") == 2, "view-only user reads through the view");
+        expect_failure(viewer, L"SELECT COUNT(*) FROM SYSTEM.Q9_PARENT", "42501");
+        disconnect(session, viewer);
+    }
+    // 3) 테이블스페이스 수준 SELECT 사용자는 그 안의 모든 테이블과 뷰를 보고 읽는다. 기본 테이블스페이스가 있어도 권한은 따로이다.
+    {
+        auto session = connect_as(environment, settings, L"Q9_READER", L"q9-reader");
+        auto reader = allocate(session);
+        const auto visible = tables_of(reader, L"Q9_%");
+        check(where(visible, 1, L"Q9_PARENT").size() == 1 && where(visible, 1, L"Q9_CHILD").size() == 1 && where(visible, 1, L"Q9_VIEW").size() == 1, "tablespace reader sees every Q9 object");
+        check(columns_of(reader, L"Q9_PARENT").size() == 2 && primary_keys_of(reader, L"Q9_PARENT").size() == 1, "tablespace reader sees columns and keys");
+        expect_stmt(SQLTablesW(reader, wide(L""), 0, wide(L"%"), SQL_NTS, wide(L""), 0, wide(L""), 0), reader, "reader schemas");
+        check(!where(collect(reader, {1}), 0, L"SYSTEM").empty(), "tablespace reader sees the SYSTEM tablespace");
+        check(scalar_of(reader, L"SELECT COUNT(*) FROM SYSTEM.Q9_PARENT") == 2, "tablespace reader reads the table");
+        disconnect(session, reader);
+    }
+    sql(statement, L"DROP USER Q9_READER");
+    sql(statement, L"DROP USER Q9_VIEWER");
+    sql(statement, L"DROP USER Q9_LIMITED");
+    (void)connection;
+}
+}
+
+void run_catalog_cases(SQLHDBC connection, SQLHENV environment, const std::wstring& settings) {
     auto statement = allocate(connection);
     auto other = allocate(connection);
     // 준비: 카탈로그 시험용 객체이다. 기존 Q5/Q6/Q7과 이름이 겹치지 않는다.
@@ -363,6 +632,9 @@ void run_catalog_cases(SQLHDBC connection) {
         expect_dbc(SQLGetFunctions(connection, SQL_API_ODBC3_ALL_FUNCTIONS, bitmap.data()), connection, "functions bitmap");
         check((bitmap[SQL_API_SQLTABLES >> 4] & (1U << (SQL_API_SQLTABLES & 15))) != 0, "bitmap tables");
     }
+
+    run_catalog_shape_cases(statement);
+    run_catalog_visibility_cases(connection, statement, environment, settings);
 
     sql(statement, L"DROP VIEW Q9_VIEW");
     sql(statement, L"DROP TABLE Q9_CHILD");

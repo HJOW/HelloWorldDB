@@ -21,11 +21,18 @@ bool no_catalog_filter(const std::optional<std::string>& catalog) {
     if (!catalog || catalog->empty() || *catalog == "%") return true;
     return false;
 }
+// 패턴 값 인자(SQLTables, SQLColumns, SQLTablePrivileges의 스키마·테이블 이름 등)의 비교이다.
 bool matches_filter(const std::string& value, const std::optional<std::string>& pattern, bool metadata_id) {
     if (!pattern || pattern->empty()) return true;
-    if (metadata_id) return value == *pattern;
+    if (metadata_id) return catalog_match(value, *pattern, true);
     if (*pattern == "%") return true;
     return catalog_match(value, *pattern, false);
+}
+// 일반 인자(SQLStatistics, SQLSpecialColumns, SQLPrimaryKeys, SQLForeignKeys)의 비교이다. ODBC 규약상 패턴이 아니므로
+// ORDER_ITEMS 같은 이름의 _가 다른 테이블 ORDERXITEMS와 섞이지 않게 문자 그대로 비교한다. NULL과 빈 문자열은 필터 없음이다.
+bool matches_ordinary(const std::string& value, const std::optional<std::string>& argument, bool metadata_id) {
+    if (!argument || argument->empty()) return true;
+    return catalog_ordinary_match(value, *argument, metadata_id);
 }
 bool effective_metadata_id(Statement& statement) {
     if (statement.metadata_id == SQL_TRUE) return true;
@@ -290,7 +297,7 @@ void catalog_statistics_impl(Statement& statement,
         make_catalog_integer("PAGES", SQL_NULLABLE),
         make_catalog_varchar("FILTER_CONDITION", 1024, SQL_NULLABLE)};
     if (!no_catalog_filter(catalog)) { set_catalog_result(statement, std::move(cols), Json::array()); return; }
-    // 테이블 이름은 패턴이 아니라 단일 테이블 지정을 기대한다. 패턴이면 일치하는 첫 테이블이 아니라 모두 반환한다.
+    // 스키마와 테이블 이름은 패턴이 아닌 일반 인자이다. 이름을 주면 그 테이블만, 비우면 가시적인 모든 테이블을 대상으로 한다.
     auto indexes = fetch_all_rows(connection, "SELECT TABLESPACE_NAME, INDEX_NAME, TABLE_NAME, IS_UNIQUE FROM SYSTEM.SYS_INDEXES");
     auto columns = fetch_all_rows(connection, "SELECT TABLESPACE_NAME, INDEX_NAME, ORDINAL_POSITION, COLUMN_NAME, IS_DESCENDING FROM SYSTEM.SYS_INDEX_COLUMNS");
     std::map<std::pair<std::string, std::string>, std::vector<Json>> by_index;
@@ -309,8 +316,8 @@ void catalog_statistics_impl(Statement& statement,
         const std::string unique_text = json_is_null(row[3]) ? "NO" : json_string(row[3]);
         const bool is_unique = unique_text == "YES";
         if (unique == SQL_INDEX_UNIQUE && !is_unique) continue;
-        if (!matches_filter(schem, schema, metadata_id)) continue;
-        if (!matches_filter(tname, table, metadata_id)) continue;
+        if (!matches_ordinary(schem, schema, metadata_id)) continue;
+        if (!matches_ordinary(tname, table, metadata_id)) continue;
         const auto found = by_index.find({schem, iname});
         if (found == by_index.end()) continue;
         auto parts = found->second;
@@ -400,8 +407,8 @@ void catalog_special_columns_impl(Statement& statement, SQLUSMALLINT identifier,
         const auto table_it = constraint_table.find({schem, cname});
         if (table_it == constraint_table.end()) continue;
         const std::string tname = table_it->second;
-        if (!matches_filter(schem, schema, metadata_id)) continue;
-        if (!matches_filter(tname, table, metadata_id)) continue;
+        if (!matches_ordinary(schem, schema, metadata_id)) continue;
+        if (!matches_ordinary(tname, table, metadata_id)) continue;
         const auto declared_it = column_declared.find({schem + "." + tname, col});
         const std::string declared = declared_it == column_declared.end() ? "INTEGER" : declared_it->second;
         const auto info = catalog_type_info(declared);
@@ -413,10 +420,10 @@ void catalog_special_columns_impl(Statement& statement, SQLUSMALLINT identifier,
             decimal_digits, static_cast<long long>(SQL_PC_NOT_PSEUDO)}));
         (void)ordinal;
     }
-    // SCOPE 인자는 최소 범위이다. SESSION만 제공하므로 CURROW/TRANSACTION 요청에는 빈 결과를 낸다.
-    if (scope != SQL_SCOPE_SESSION) out = Json::array();
-    // NULL 허용 여부는 PK이므로 NOT NULL이다. nullable 인자가 SQL_NO_NULLS가 아니면 그대로 둔다.
-    (void)nullable;
+    // SCOPE 인자는 요구하는 "최소" 범위이고 돌려주는 rowid의 범위는 더 넓어도 된다. PK는 SESSION 범위로 보고하므로
+    // CURROW와 TRANSACTION 요청에도 같은 PK 컬럼을 돌려준다. (빈 결과를 내면 이 범위를 요청하는 앱이 행 식별자를 잃는다.)
+    // PK는 NOT NULL이므로 nullable 인자(SQL_NO_NULLS 포함)와 무관하게 모든 행이 조건을 만족한다.
+    (void)scope; (void)nullable;
     set_catalog_result(statement, std::move(cols), std::move(out));
 }
 
@@ -448,8 +455,8 @@ void catalog_primary_keys_impl(Statement& statement,
         const auto table_it = table_of.find({schem, cname});
         if (table_it == table_of.end()) continue;
         const std::string tname = table_it->second;
-        if (!matches_filter(schem, schema, metadata_id)) continue;
-        if (!matches_filter(tname, table, metadata_id)) continue;
+        if (!matches_ordinary(schem, schema, metadata_id)) continue;
+        if (!matches_ordinary(tname, table, metadata_id)) continue;
         out.push_back(Json::array({nullptr, schem, tname, json_string(row[3]), json_integer(row[2]), cname}));
     }
     std::sort(out.begin(), out.end(), [](const Json& a, const Json& b) {
@@ -486,24 +493,7 @@ void catalog_foreign_keys_impl(Statement& statement,
     auto& connection = static_cast<Connection&>(*statement.parent);
     auto constraints = fetch_all_rows(connection, "SELECT TABLESPACE_NAME, CONSTRAINT_NAME, TABLE_NAME, CONSTRAINT_TYPE, REFERENCED_TABLE, DELETE_RULE, UPDATE_RULE FROM SYSTEM.SYS_CONSTRAINTS");
     auto constraint_columns = fetch_all_rows(connection, "SELECT TABLESPACE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION, COLUMN_NAME, REFERENCED_COLUMN FROM SYSTEM.SYS_CONSTRAINT_COLUMNS");
-    // PK 이름에서 PK 컬럼 순서를 찾는다. 참조 테이블의 PK 정의를 기준으로 PK 컬럼을 구한다.
-    std::map<std::pair<std::string, std::string>, std::vector<std::string>> pk_columns;
-    std::map<std::pair<std::string, std::string>, std::string> pk_table_of;
-    for (const auto& row : constraints) {
-        if (row.size() < 4) continue;
-        if (json_string(row[3]) != "PRIMARY KEY") continue;
-        pk_table_of[{json_string(row[0]), json_string(row[1])}] = json_string(row[2]);
-    }
-    for (const auto& row : constraint_columns) {
-        if (row.size() < 5) continue;
-        const std::string schem = json_string(row[0]);
-        const std::string cname = json_string(row[1]);
-        const auto table_it = pk_table_of.find({schem, cname});
-        if (table_it == pk_table_of.end()) continue;
-        // 순서대로 넣기 위해 일단 모은다.
-        (void)table_it;
-    }
-    // FK별로 PK 테이블·컬럼을 찾는다. 같은 테이블스페이스만 참조할 수 있다.
+    // FK별로 PK 테이블·컬럼을 찾는다. 같은 테이블스페이스만 참조할 수 있고, PK 컬럼은 FK 컬럼 행의 REFERENCED_COLUMN이다.
     Json out = Json::array();
     auto rule_code = [](const std::string& rule) -> long long {
         if (rule == "CASCADE") return SQL_CASCADE;
@@ -522,10 +512,10 @@ void catalog_foreign_keys_impl(Statement& statement,
         const std::string update_rule = json_is_null(row[6]) ? "NO ACTION" : json_string(row[6]);
         const std::string pk_schem = fk_schem;
         const std::string pk_tname = ref_table;
-        if (!matches_filter(pk_schem, pk_schema, metadata_id)) continue;
-        if (!matches_filter(pk_tname, pk_table, metadata_id)) continue;
-        if (!matches_filter(fk_schem, fk_schema, metadata_id)) continue;
-        if (!matches_filter(fk_tname, fk_table, metadata_id)) continue;
+        if (!matches_ordinary(pk_schem, pk_schema, metadata_id)) continue;
+        if (!matches_ordinary(pk_tname, pk_table, metadata_id)) continue;
+        if (!matches_ordinary(fk_schem, fk_schema, metadata_id)) continue;
+        if (!matches_ordinary(fk_tname, fk_table, metadata_id)) continue;
         // 이 FK의 컬럼 목록을 순서대로 찾는다.
         std::vector<Json> parts;
         for (const auto& crow : constraint_columns) {

@@ -127,12 +127,12 @@ SQLCancelHandle·SQLCompleteAsync·SQLBrowseConnect·SQLBulkOperations·SQLSetPo
 | SQL_ATTR_METADATA_ID | SQL_FALSE; TRUE이면 카탈로그 인자를 패턴 대신 식별자로 처리 | WO-9 T-CATALOG |
 | SQL_ATTR_AUTO_IPD | get 전용 SQL_TRUE 목표, prepare/describe로 채움 | WO-6/7 T-DESC |
 | SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE | SQL_ASYNC_DBC_ENABLE_OFF만 | WO-8 T-VERSION |
-| SQL_ATTR_PACKET_SIZE | 전송 기본 크기, 비default 요청은 미지원/01S02 정책 검증 | WO-4 T-ATTR |
+| SQL_ATTR_PACKET_SIZE | 미지원: get·set 모두 HYC00 (유효한 ODBC 속성이므로 HY092가 아니다) | WO-9 T-ATTR |
 | SQL_ATTR_ODBC_CURSORS | Manager 담당; SQL_CUR_USE_DRIVER 경로 | WO-4 T-ATTR |
 | SQL_ATTR_TRACE / SQL_ATTR_TRACEFILE | Manager 담당, 제품 자체 비밀 로그와 구분 | WO-12 T-INSTALL |
-| SQL_ATTR_TRANSLATE_LIB / SQL_ATTR_TRANSLATE_OPTION | 변환 라이브러리 미지원 | WO-4 T-ATTR |
+| SQL_ATTR_TRANSLATE_LIB / SQL_ATTR_TRANSLATE_OPTION | 변환 라이브러리 미지원: get·set 모두 HYC00 | WO-9 T-ATTR |
 | SQL_ATTR_QUIET_MODE | HWND 보관, UI는 WO-12 | WO-12 T-INSTALL |
-| SQL_ATTR_ENLIST_IN_DTC | 분산 트랜잭션 미지원 | WO-8 T-TXN |
+| SQL_ATTR_ENLIST_IN_DTC | 분산 트랜잭션 미지원: get·set 모두 HYC00 | WO-9 T-ATTR |
 
 ## STMT 속성 표
 
@@ -161,8 +161,8 @@ SQLSetStmtAttr와 descriptor가 동일 상태를 공유한다. 가변 주소는 
 | SQL_ATTR_ROW_NUMBER | get 전용; 현재 행 없으면 0 | WO-5 T-CURSOR |
 | SQL_ATTR_NOSCAN | SQL_NOSCAN_OFF; 지원 SQL escape는 변환, ON은 원문 경로 | WO-6 T-ESCAPE |
 | SQL_ATTR_ENABLE_AUTO_IPD | SQL_FALSE 기본; TRUE로 자동 IPD 요청 지원 | WO-6/7 T-DESC |
-| SQL_ATTR_ASYNC_ENABLE / SQL_ATTR_ASYNC_STMT_EVENT | OFF/NULL만, 비동기 미지원 | WO-8 T-VERSION |
-| SQL_ATTR_KEYSET_SIZE / SQL_ATTR_SIMULATE_CURSOR | 전진 커서에 의미 없음, 기본 get·미지원 set 진단 | WO-5 T-ATTR |
+| SQL_ATTR_ASYNC_ENABLE / SQL_ATTR_ASYNC_STMT_EVENT | OFF/NULL만 받고 그 밖은 HYC00, 비동기 미지원. get은 OFF/NULL | WO-9 T-VERSION |
+| SQL_ATTR_KEYSET_SIZE / SQL_ATTR_SIMULATE_CURSOR | 전진 커서에 의미 없음. 기본값(0, SQL_SC_NON_UNIQUE)만 받고 다른 유효값은 01S02로 대체했음을 알리며 범위 밖은 HY024 | WO-9 T-ATTR |
 
 ## Descriptor 필드 표
 

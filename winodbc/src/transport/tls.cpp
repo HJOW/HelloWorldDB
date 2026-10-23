@@ -358,7 +358,9 @@ public:
             std::memcpy(message.data() + sizes_.cbHeader, frame.data() + offset, chunk);
             if (EncryptMessage(&context_, 0, &desc, 0) != SEC_E_OK)
                 throw DriverError("08S01", "Could not encrypt the TLS record.", 8006);
-            raw_send_all(message.data(), sizes_.cbHeader + buffers[1].cbBuffer + sizes_.cbTrailer, deadline);
+            // EncryptMessage가 헤더·데이터·트레일러 크기를 실제 값으로 갱신한다. CBC 계열 스위트는 패딩 때문에
+            // 트레일러가 cbTrailer보다 짧을 수 있어 고정값으로 보내면 뒤에 쓰레기 바이트가 붙어 레코드가 깨진다.
+            raw_send_all(message.data(), buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer, deadline);
             offset += chunk;
         }
     }

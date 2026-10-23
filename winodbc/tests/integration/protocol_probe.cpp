@@ -8,6 +8,9 @@ int main(int argc, char** argv) {
         check(argc == 3, "usage: hwdb_protocol_probe PORT scenario");
         const auto port = static_cast<unsigned short>(std::stoul(argv[1]));
         const std::string scenario = argv[2];
+        // 일반 시나리오의 요청 제한 시간이다. 제한 시간 동작을 시험하는 경로(login-budget, *-timeout 등)는 아래에서 값을 따로 쓴다.
+        // fsync가 느린 VM에서 DDL 한 건이 3초를 넘어도 이 시험이 실패하지 않게 넉넉하게 둔다.
+        const unsigned step = 10;
         Session session(tcp_transport("127.0.0.1", port, 3));
         if (scenario == "hello") {
             const auto result = session.request({{"type", "hello"}, {"versions", {1}}}, "helloOk", 2);
@@ -16,7 +19,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (scenario == "wrong") {
-            try { session.login("SYSTEM", "wrong-test-password", {}, {}, 3); }
+            try { session.login("SYSTEM", "wrong-test-password", {}, {}, step); }
             catch (const DriverError& error) {
                 check(error.state == "28000" && error.native == 7000, "wrong password diagnostic");
                 std::cout << "PASS wrong password\n";
@@ -47,28 +50,28 @@ int main(int argc, char** argv) {
             std::cout << "PASS " << scenario << '\n'; return 0;
         }
         session.login(scenario == "nullspace" ? "NO_DEFAULT" : "SYSTEM",
-            scenario == "nfkc" ? "Ａ①가\u0301😀" : scenario == "nullspace" ? "no-default-test" : "HelloWorldDB", {}, {}, 3);
+            scenario == "nfkc" ? "Ａ①가\u0301😀" : scenario == "nullspace" ? "no-default-test" : "HelloWorldDB", {}, {}, step);
         if (scenario == "auth") { session.close(); std::cout << "PASS auth\n"; return 0; }
         if (scenario == "nullspace") check(session.information["tablespace"].is_null(), "null default tablespace");
-        const auto result = session.request({{"type", "execute"}, {"sql", "SELECT 1"}}, "result", 3);
+        const auto result = session.request({{"type", "execute"}, {"sql", "SELECT 1"}}, "result", step);
         check(result["rows"] == Json::array({Json::array({1})}), "SELECT 1 result");
         if (scenario == "basic") {
-            session.request({{"type", "execute"}, {"sql", "CREATE USER NO_DEFAULT IDENTIFIED BY 'no-default-test'"}}, "result", 3);
-            session.request({{"type", "execute"}, {"sql", "CREATE TABLE PROTO_TEST (ID INTEGER PRIMARY KEY, TXT VARCHAR)"}}, "result", 3);
+            session.request({{"type", "execute"}, {"sql", "CREATE USER NO_DEFAULT IDENTIFIED BY 'no-default-test'"}}, "result", step);
+            session.request({{"type", "execute"}, {"sql", "CREATE TABLE PROTO_TEST (ID INTEGER PRIMARY KEY, TXT VARCHAR)"}}, "result", step);
             for (int i = 0; i < 9; ++i)
-                session.request({{"type", "execute"}, {"sql", "INSERT INTO PROTO_TEST VALUES (?, ?)"}, {"params", {i, "한글😀"}}}, "result", 3);
-            auto rows = session.request({{"type", "execute"}, {"sql", "SELECT * FROM PROTO_TEST ORDER BY ID"}, {"fetchSize", 3}}, "result", 3);
+                session.request({{"type", "execute"}, {"sql", "INSERT INTO PROTO_TEST VALUES (?, ?)"}, {"params", {i, "한글😀"}}}, "result", step);
+            auto rows = session.request({{"type", "execute"}, {"sql", "SELECT * FROM PROTO_TEST ORDER BY ID"}, {"fetchSize", 3}}, "result", step);
             std::size_t count = rows["rows"].size();
             while (rows["hasMore"].get<bool>()) {
-                rows = session.request({{"type", "fetch"}, {"cursor", rows["cursor"]}, {"fetchSize", 3}}, "rows", 3);
+                rows = session.request({{"type", "fetch"}, {"cursor", rows["cursor"]}, {"fetchSize", 3}}, "rows", step);
                 count += rows["rows"].size();
             }
             check(count == 9, "fetch multiple batches");
-            auto early = session.request({{"type", "execute"}, {"sql", "SELECT * FROM PROTO_TEST"}, {"fetchSize", 1}}, "result", 3);
-            session.request({{"type", "closeCursor"}, {"cursor", early["cursor"]}}, "cursorClosed", 3);
-            try { session.request({{"type", "execute"}, {"sql", "SELECT MISSING_COLUMN FROM PROTO_TEST"}}, "result", 3); check(false, "missing column accepted"); }
+            auto early = session.request({{"type", "execute"}, {"sql", "SELECT * FROM PROTO_TEST"}, {"fetchSize", 1}}, "result", step);
+            session.request({{"type", "closeCursor"}, {"cursor", early["cursor"]}}, "cursorClosed", step);
+            try { session.request({{"type", "execute"}, {"sql", "SELECT MISSING_COLUMN FROM PROTO_TEST"}}, "result", step); check(false, "missing column accepted"); }
             catch (const DriverError& error) { check(error.state == "42703", "SQL diagnostic preserved"); }
-            session.request({{"type", "ping"}}, "pong", 3);
+            session.request({{"type", "ping"}}, "pong", step);
         }
         session.close();
         std::cout << "PASS " << scenario << '\n';

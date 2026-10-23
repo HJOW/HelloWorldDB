@@ -44,6 +44,46 @@ int main() {
             const auto ym = hwdbodbc::catalog_type_info("INTERVAL YEAR(2) TO MONTH");
             check(ym.sql_type == SQL_INTERVAL_YEAR_TO_MONTH, "interval typeinfo");
         }
+        // 소수 초 자릿수: 서버는 항상 TIMESTAMP(p)로 적는다. 0은 명시한 값이며 생략 기본값 6과 다르다.
+        {
+            const auto p6 = hwdbodbc::catalog_type_info("TIMESTAMP(6)");
+            check(p6.column_size == 26 && p6.decimal_digits == 6, "timestamp(6) size and digits");
+            const auto p0 = hwdbodbc::catalog_type_info("TIMESTAMP(0)");
+            check(p0.sql_type == SQL_TYPE_TIMESTAMP && p0.column_size == 19 && p0.decimal_digits == 0, "timestamp(0) is not the default 6");
+            const auto p3 = hwdbodbc::catalog_type_info("TIMESTAMP(3)");
+            check(p3.column_size == 23 && p3.decimal_digits == 3, "timestamp(3) size and digits");
+            const auto omitted = hwdbodbc::catalog_type_info("TIMESTAMP");
+            check(omitted.column_size == 26 && omitted.decimal_digits == 6, "omitted timestamp precision defaults to 6");
+            const auto tz0 = hwdbodbc::catalog_type_info("TIMESTAMP(0) WITH TIME ZONE");
+            check(tz0.sql_type == SQL_WVARCHAR && tz0.column_size == 25 && tz0.decimal_digits == 0, "timestamp(0) with time zone");
+            const auto tz6 = hwdbodbc::catalog_type_info("TIMESTAMP(6) WITH TIME ZONE");
+            check(tz6.column_size == 32 && tz6.decimal_digits == 6, "timestamp(6) with time zone");
+            const auto t0 = hwdbodbc::catalog_type_info("TIME(0)");
+            check(t0.sql_type == SQL_TYPE_TIME && t0.column_size == 8 && t0.decimal_digits == 0, "time(0)");
+            const auto t6 = hwdbodbc::catalog_type_info("TIME(6)");
+            check(t6.column_size == 15 && t6.decimal_digits == 6, "time(6)");
+            check(hwdbodbc::parse_declared_type("TIMESTAMP(0)").has_fractional, "explicit zero precision is recorded");
+            check(!hwdbodbc::parse_declared_type("TIMESTAMP").has_fractional, "omitted precision is recorded");
+        }
+        // 식별자 인자(METADATA_ID=TRUE)와 일반 인자(FALSE)의 비교 규칙이다.
+        {
+            using hwdbodbc::catalog_identifier_equals;
+            using hwdbodbc::catalog_ordinary_match;
+            check(catalog_identifier_equals("Q9_PARENT", "q9_parent"), "unquoted identifier folds to upper case");
+            check(catalog_identifier_equals("Q9_PARENT", "Q9_PARENT   "), "trailing spaces are ignored");
+            check(!catalog_identifier_equals("Q9_PARENT", "Q9%"), "percent is literal in identifier mode");
+            check(catalog_identifier_equals("lower", "\"lower\""), "quoted identifier keeps case");
+            check(!catalog_identifier_equals("LOWER", "\"lower\""), "quoted identifier is case sensitive");
+            check(!catalog_identifier_equals("lower", "lower"), "unquoted lower case does not match a lower case name");
+            check(catalog_identifier_equals("a\"b", "\"a\"\"b\""), "doubled quote inside a quoted identifier");
+            check(catalog_identifier_equals("Q9 Mixed$Name", "\"Q9 Mixed$Name\""), "special characters inside quotes");
+            // 일반 인자는 패턴이 아니다. _ 가 다른 글자와 맞아서는 안 된다.
+            check(catalog_ordinary_match("ORDER_ITEMS", "ORDER_ITEMS", false), "ordinary exact match");
+            check(!catalog_ordinary_match("ORDERXITEMS", "ORDER_ITEMS", false), "underscore is not a wildcard for an ordinary argument");
+            check(!catalog_ordinary_match("ORDER_ITEMS", "ORDER%", false), "percent is not a wildcard for an ordinary argument");
+            check(!catalog_ordinary_match("ORDER_ITEMS", "order_items", false), "ordinary argument is case sensitive");
+            check(catalog_ordinary_match("ORDER_ITEMS", "order_items", true), "identifier mode folds an ordinary argument");
+        }
         std::cout << "catalog helpers PASS\n";
     });
 }

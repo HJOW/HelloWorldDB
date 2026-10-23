@@ -24,6 +24,10 @@ SQLRETURN info(SQLHDBC handle, SQLUSMALLINT field, SQLPOINTER output, SQLSMALLIN
         case SQL_TXN_CAPABLE: return number(static_cast<SQLUSMALLINT>(SQL_TC_DDL_COMMIT));
         case SQL_DEFAULT_TXN_ISOLATION: case SQL_TXN_ISOLATION_OPTION: return number(static_cast<SQLUINTEGER>(SQL_TXN_READ_COMMITTED));
         case SQL_MULTIPLE_ACTIVE_TXN: return string("Y");
+        // 비동기 실행은 지원하지 않는다. api-support.md의 3.8 능력 보고 계약과 같은 값을 낸다.
+        case SQL_ASYNC_MODE: return number(static_cast<SQLUINTEGER>(SQL_AM_NONE));
+        case SQL_ASYNC_DBC_FUNCTIONS: return number(static_cast<SQLUINTEGER>(SQL_ASYNC_DBC_NOT_CAPABLE));
+        case SQL_ASYNC_NOTIFICATION: return number(static_cast<SQLUINTEGER>(SQL_ASYNC_NOTIFICATION_NOT_CAPABLE));
         case SQL_PARAM_ARRAY_ROW_COUNTS: return number(static_cast<SQLUINTEGER>(SQL_PARC_NO_BATCH));
         case SQL_PARAM_ARRAY_SELECTS: return number(static_cast<SQLUINTEGER>(SQL_PAS_NO_SELECT));
         case SQL_MAX_CONCURRENT_ACTIVITIES: return number(static_cast<SQLUSMALLINT>(16));

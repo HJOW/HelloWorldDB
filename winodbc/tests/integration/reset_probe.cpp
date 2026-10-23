@@ -1,10 +1,15 @@
 #include "hwdbodbc/odbc.hpp"
 #include "../helpers/check.hpp"
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
+#include <set>
 #include <string>
+#include <vector>
 
-// Manager 전용 reset 속성을 직접 DLL에서 시험한다. Manager 풀 시험과 구분한다.
+// 직접 DLL 시험이다. Manager 전용 reset 속성과, SQLGetFunctions 보고와 실제 export의 일치를 확인한다.
+// Manager 풀 시험이나 Manager가 대신 답하는 능력 보고와는 구분한다.
 class Driver {
     HMODULE module = nullptr;
     template<class Function> void resolve(Function& function, const char* name) {
@@ -15,7 +20,7 @@ public:
 #define HWDB_APIS(X) X(SQLAllocHandle) X(SQLFreeHandle) X(SQLSetEnvAttr) X(SQLDriverConnectW) X(SQLDisconnect) \
     X(SQLSetConnectAttr) X(SQLGetConnectAttr) X(SQLGetDiagRec) X(SQLExecDirectW) X(SQLPrepareW) X(SQLExecute) \
     X(SQLBindParameter) X(SQLBindCol) X(SQLFetch) X(SQLGetData) X(SQLCloseCursor) X(SQLGetStmtAttr) X(SQLSetStmtAttr) \
-    X(SQLGetDescField) X(SQLGetCursorNameW) X(SQLSetCursorNameW)
+    X(SQLGetDescField) X(SQLGetCursorNameW) X(SQLSetCursorNameW) X(SQLGetFunctions) X(SQLGetInfo)
 #define HWDB_DECLARE(name) decltype(&::name) name = nullptr;
     HWDB_APIS(HWDB_DECLARE)
 #undef HWDB_DECLARE
@@ -27,6 +32,7 @@ public:
 #undef HWDB_RESOLVE
     }
     ~Driver() { if (module) FreeLibrary(module); }
+    bool exports(const std::string& name) const { return GetProcAddress(module,name.c_str()) != nullptr; }
 #undef HWDB_APIS
 };
 namespace {
@@ -58,6 +64,110 @@ std::wstring scalar(Driver& driver, SQLHSTMT statement, const std::wstring& quer
 void close(Driver& driver, SQLHDBC connection, SQLHSTMT statement) {
     check(driver.SQLFreeHandle(SQL_HANDLE_STMT,statement) == SQL_SUCCESS,"reset STMT free");
     expect(driver,driver.SQLDisconnect(connection),SQL_HANDLE_DBC,connection,"reset disconnect"); check(driver.SQLFreeHandle(SQL_HANDLE_DBC,connection) == SQL_SUCCESS,"reset DBC free");
+}
+struct ApiName { SQLUSMALLINT id; const char* name; bool wide; };
+// 드라이버가 SQLGetFunctions로 true를 보고해야 하는 함수와 export 이름(wide이면 W 이름도)이다. 새 함수를 true로 보고하려면 여기도 추가해야 한다.
+const ApiName reported_functions[] = {
+    {SQL_API_SQLALLOCHANDLE,"SQLAllocHandle",false}, {SQL_API_SQLFREEHANDLE,"SQLFreeHandle",false}, {SQL_API_SQLSETENVATTR,"SQLSetEnvAttr",false},
+    {SQL_API_SQLGETENVATTR,"SQLGetEnvAttr",false}, {SQL_API_SQLGETDIAGREC,"SQLGetDiagRec",true}, {SQL_API_SQLGETDIAGFIELD,"SQLGetDiagField",true},
+    {SQL_API_SQLCONNECT,"SQLConnect",true}, {SQL_API_SQLDRIVERCONNECT,"SQLDriverConnect",true}, {SQL_API_SQLDISCONNECT,"SQLDisconnect",false},
+    {SQL_API_SQLGETFUNCTIONS,"SQLGetFunctions",false}, {SQL_API_SQLGETCONNECTATTR,"SQLGetConnectAttr",true}, {SQL_API_SQLSETCONNECTATTR,"SQLSetConnectAttr",true},
+    {SQL_API_SQLGETSTMTATTR,"SQLGetStmtAttr",true}, {SQL_API_SQLGETINFO,"SQLGetInfo",true}, {SQL_API_SQLEXECDIRECT,"SQLExecDirect",true},
+    {SQL_API_SQLNUMRESULTCOLS,"SQLNumResultCols",false}, {SQL_API_SQLROWCOUNT,"SQLRowCount",false}, {SQL_API_SQLDESCRIBECOL,"SQLDescribeCol",true},
+    {SQL_API_SQLCOLATTRIBUTE,"SQLColAttribute",true}, {SQL_API_SQLBINDCOL,"SQLBindCol",false}, {SQL_API_SQLFETCH,"SQLFetch",false},
+    {SQL_API_SQLFETCHSCROLL,"SQLFetchScroll",false}, {SQL_API_SQLGETDATA,"SQLGetData",false}, {SQL_API_SQLCLOSECURSOR,"SQLCloseCursor",false},
+    {SQL_API_SQLFREESTMT,"SQLFreeStmt",false}, {SQL_API_SQLMORERESULTS,"SQLMoreResults",false}, {SQL_API_SQLGETCURSORNAME,"SQLGetCursorName",true},
+    {SQL_API_SQLSETCURSORNAME,"SQLSetCursorName",true}, {SQL_API_SQLSETSTMTATTR,"SQLSetStmtAttr",true}, {SQL_API_SQLPREPARE,"SQLPrepare",true},
+    {SQL_API_SQLEXECUTE,"SQLExecute",false}, {SQL_API_SQLNUMPARAMS,"SQLNumParams",false}, {SQL_API_SQLDESCRIBEPARAM,"SQLDescribeParam",false},
+    {SQL_API_SQLBINDPARAMETER,"SQLBindParameter",false}, {SQL_API_SQLNATIVESQL,"SQLNativeSql",true}, {SQL_API_SQLGETDESCFIELD,"SQLGetDescField",true},
+    {SQL_API_SQLSETDESCFIELD,"SQLSetDescField",true}, {SQL_API_SQLGETDESCREC,"SQLGetDescRec",true}, {SQL_API_SQLSETDESCREC,"SQLSetDescRec",false},
+    {SQL_API_SQLCOPYDESC,"SQLCopyDesc",false}, {SQL_API_SQLPARAMDATA,"SQLParamData",false}, {SQL_API_SQLPUTDATA,"SQLPutData",false},
+    {SQL_API_SQLCANCEL,"SQLCancel",false}, {SQL_API_SQLENDTRAN,"SQLEndTran",false}, {SQL_API_SQLTABLES,"SQLTables",true},
+    {SQL_API_SQLCOLUMNS,"SQLColumns",true}, {SQL_API_SQLSTATISTICS,"SQLStatistics",true}, {SQL_API_SQLSPECIALCOLUMNS,"SQLSpecialColumns",true},
+    {SQL_API_SQLPRIMARYKEYS,"SQLPrimaryKeys",true}, {SQL_API_SQLFOREIGNKEYS,"SQLForeignKeys",true}, {SQL_API_SQLTABLEPRIVILEGES,"SQLTablePrivileges",true},
+    {SQL_API_SQLCOLUMNPRIVILEGES,"SQLColumnPrivileges",true}, {SQL_API_SQLPROCEDURES,"SQLProcedures",true}, {SQL_API_SQLPROCEDURECOLUMNS,"SQLProcedureColumns",true},
+    {SQL_API_SQLGETTYPEINFO,"SQLGetTypeInfo",true},
+};
+// 초기 범위에서 제외한다고 api-support.md가 밝힌 함수이다. 보고도 export도 없어야 한다.
+const ApiName excluded_functions[] = {
+    {SQL_API_SQLBROWSECONNECT,"SQLBrowseConnect",true}, {SQL_API_SQLBULKOPERATIONS,"SQLBulkOperations",false}, {SQL_API_SQLSETPOS,"SQLSetPos",false},
+    {SQL_API_SQLCANCELHANDLE,"SQLCancelHandle",false}, {SQL_API_SQLCOMPLETEASYNC,"SQLCompleteAsync",false},
+};
+bool bit_set(const std::vector<SQLUSMALLINT>& bitmap, SQLUSMALLINT id) { return (bitmap[id >> 4] & (1U << (id & 15))) != 0; }
+// SQLGetFunctions의 세 형태(단일 ID, 배열, ODBC 3 비트맵)가 서로 일치하고 실제 export와도 일치하는지 직접 DLL에서 대조한다.
+// 이 대조는 보고와 export의 정합성을 보장한다. 각 함수를 실제로 호출하는 시험은 단위·Manager·통합 시험 쪽에 있다.
+void check_function_reporting(Driver& driver, SQLHDBC connection) {
+    std::set<SQLUSMALLINT> reported;
+    for (SQLUSMALLINT id = 1; id <= 1100; ++id) {
+        // SQL_API_ODBC3_ALL_FUNCTIONS(999)는 250개 원소의 비트맵을 쓰는 형태이므로 단일 조회 반복에서 제외한다. 아래에서 따로 시험한다.
+        if (id == SQL_API_ODBC3_ALL_FUNCTIONS) continue;
+        SQLUSMALLINT supported = 99;
+        check(driver.SQLGetFunctions(connection,id,&supported) == SQL_SUCCESS,"single function query succeeds");
+        check(supported == SQL_TRUE || supported == SQL_FALSE,"single function answer is a boolean");
+        if (supported == SQL_TRUE) reported.insert(id);
+    }
+    for (const auto& api : reported_functions) {
+        if (!reported.count(api.id)) { std::cerr << "not reported: " << api.name << '\n'; check(false,"function with an export is reported as supported"); }
+        if (!driver.exports(api.name)) { std::cerr << "not exported: " << api.name << '\n'; check(false,"reported function is exported"); }
+        if (api.wide && !driver.exports(std::string(api.name) + "W")) { std::cerr << "not exported: " << api.name << "W\n"; check(false,"reported function has a W export"); }
+    }
+    for (const auto id : reported) {
+        const auto known = std::any_of(std::begin(reported_functions),std::end(reported_functions),[&](const ApiName& api) { return api.id == id; });
+        if (!known) std::cerr << "unlisted reported function id " << id << '\n';
+        check(known,"every function reported as supported is in the verified table");
+    }
+    check(reported.size() == std::size(reported_functions),"reported function count matches the table");
+    for (const auto& api : excluded_functions) {
+        if (reported.count(api.id)) std::cerr << "reported although excluded: " << api.name << '\n';
+        check(!reported.count(api.id),"excluded function is not reported");
+        check(!driver.exports(api.name) && !driver.exports(std::string(api.name) + "W"),"excluded function is not exported");
+    }
+    std::vector<SQLUSMALLINT> bitmap(SQL_API_ODBC3_ALL_FUNCTIONS_SIZE,0);
+    check(driver.SQLGetFunctions(connection,SQL_API_ODBC3_ALL_FUNCTIONS,bitmap.data()) == SQL_SUCCESS,"ODBC 3 function bitmap");
+    for (SQLUSMALLINT id = 1; id <= 1100; ++id) {
+        if (id == SQL_API_ODBC3_ALL_FUNCTIONS) continue;
+        check(bit_set(bitmap,id) == (reported.count(id) != 0),"bitmap agrees with the single queries");
+    }
+    SQLUSMALLINT legacy[100]{};
+    check(driver.SQLGetFunctions(connection,SQL_API_ALL_FUNCTIONS,legacy) == SQL_SUCCESS,"ODBC 2 function array");
+    for (SQLUSMALLINT id = 1; id < 100; ++id) check((legacy[id] == SQL_TRUE) == (reported.count(id) != 0),"legacy array agrees with the single queries");
+}
+// 유효한 ODBC 속성이지만 지원하지 않는 것은 HYC00(또는 기본값만 받는 01S02), 모르는 식별자는 HY092이다.
+void check_unsupported_attributes(Driver& driver, SQLHDBC connection, SQLHSTMT statement) {
+    for (const int attribute : {SQL_ATTR_PACKET_SIZE, SQL_ATTR_TRANSLATE_LIB, SQL_ATTR_TRANSLATE_OPTION, SQL_ATTR_ENLIST_IN_DTC}) {
+        error(driver,driver.SQLSetConnectAttr(connection,attribute,number(0),0),SQL_HANDLE_DBC,connection,"HYC00");
+        SQLUINTEGER value = 0;
+        error(driver,driver.SQLGetConnectAttr(connection,attribute,&value,0,nullptr),SQL_HANDLE_DBC,connection,"HYC00");
+    }
+    error(driver,driver.SQLSetConnectAttr(connection,99999,number(0),0),SQL_HANDLE_DBC,connection,"HY092");
+    error(driver,driver.SQLSetStmtAttr(statement,99999,number(0),0),SQL_HANDLE_STMT,statement,"HY092");
+    // 키셋 크기와 커서 시뮬레이션은 전진 읽기 커서에 의미가 없다. 기본값만 받고 다른 값은 01S02로 대체했음을 알린다.
+    SQLULEN value = 99;
+    check(driver.SQLSetStmtAttr(statement,SQL_ATTR_KEYSET_SIZE,number(0),0) == SQL_SUCCESS,"default keyset size is accepted");
+    check(driver.SQLSetStmtAttr(statement,SQL_ATTR_KEYSET_SIZE,number(5),0) == SQL_SUCCESS_WITH_INFO,"non-default keyset size is substituted");
+    SQLCHAR state[6]{};
+    check(driver.SQLGetDiagRec(SQL_HANDLE_STMT,statement,1,state,nullptr,nullptr,0,nullptr) == SQL_SUCCESS && !std::strcmp(reinterpret_cast<char*>(state),"01S02"),"keyset substitution is reported as 01S02");
+    expect(driver,driver.SQLGetStmtAttr(statement,SQL_ATTR_KEYSET_SIZE,&value,0,nullptr),SQL_HANDLE_STMT,statement,"keyset size getter");
+    check(value == 0,"keyset size stays at the default");
+    expect(driver,driver.SQLGetStmtAttr(statement,SQL_ATTR_SIMULATE_CURSOR,&value,0,nullptr),SQL_HANDLE_STMT,statement,"simulate cursor getter");
+    check(value == SQL_SC_NON_UNIQUE,"cursor simulation defaults to non unique");
+    check(driver.SQLSetStmtAttr(statement,SQL_ATTR_SIMULATE_CURSOR,number(SQL_SC_UNIQUE),0) == SQL_SUCCESS_WITH_INFO,"unique cursor simulation is substituted");
+    error(driver,driver.SQLSetStmtAttr(statement,SQL_ATTR_SIMULATE_CURSOR,number(99),0),SQL_HANDLE_STMT,statement,"HY024");
+    // 비동기 완료 이벤트는 지원하지 않는다. NULL(해제)만 받는다.
+    check(driver.SQLSetStmtAttr(statement,SQL_ATTR_ASYNC_STMT_EVENT,nullptr,0) == SQL_SUCCESS,"clearing the async event is accepted");
+    error(driver,driver.SQLSetStmtAttr(statement,SQL_ATTR_ASYNC_STMT_EVENT,number(1),0),SQL_HANDLE_STMT,statement,"HYC00");
+    SQLPOINTER event = number(7);
+    expect(driver,driver.SQLGetStmtAttr(statement,SQL_ATTR_ASYNC_STMT_EVENT,&event,0,nullptr),SQL_HANDLE_STMT,statement,"async event getter");
+    check(event == nullptr,"no async event is registered");
+}
+// 비동기를 지원하지 않는다는 능력 보고가 드라이버 자신의 답인지 직접 DLL에서 확인한다. Manager 경유 조회는 Manager가 대신 답할 수 있다.
+void check_async_reporting(Driver& driver, SQLHDBC connection) {
+    SQLUINTEGER value = 99;
+    check(driver.SQLGetInfo(connection,SQL_ASYNC_MODE,&value,0,nullptr) == SQL_SUCCESS && value == SQL_AM_NONE,"SQL_ASYNC_MODE reports no asynchronous execution");
+    value = 99;
+    check(driver.SQLGetInfo(connection,SQL_ASYNC_DBC_FUNCTIONS,&value,0,nullptr) == SQL_SUCCESS && value == SQL_ASYNC_DBC_NOT_CAPABLE,"SQL_ASYNC_DBC_FUNCTIONS reports not capable");
+    value = 99;
+    check(driver.SQLGetInfo(connection,SQL_ASYNC_NOTIFICATION,&value,0,nullptr) == SQL_SUCCESS && value == SQL_ASYNC_NOTIFICATION_NOT_CAPABLE,"SQL_ASYNC_NOTIFICATION reports not capable");
 }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -107,8 +217,11 @@ int wmain(int argc, wchar_t** argv) {
         SQLUINTEGER dead = SQL_CD_FALSE; expect(driver,driver.SQLGetConnectAttr(user_connection,SQL_ATTR_CONNECTION_DEAD,&dead,0,nullptr),SQL_HANDLE_DBC,user_connection,"failed reset dead flag"); check(dead == SQL_CD_TRUE,"failed reset discarded");
         error(driver,driver.SQLExecDirectW(user,wide(L"SELECT 1"),SQL_NTS),SQL_HANDLE_STMT,user,"08S01");
         check(driver.SQLFreeHandle(SQL_HANDLE_STMT,prepared) == SQL_SUCCESS,"reset prepared handle free"); close(driver,user_connection,user);
+        check_function_reporting(driver,master_connection);
+        check_async_reporting(driver,master_connection);
+        check_unsupported_attributes(driver,master_connection,master);
         sql(driver,master,L"DROP USER Q8_NULL_RESET"); close(driver,master_connection,master);
         check(driver.SQLFreeHandle(SQL_HANDLE_ENV,environment) == SQL_SUCCESS,"reset ENV free");
-        std::cout << "DIRECT DLL reset/rollback/NULL tablespace/timezone/buffers/relogin failure PASS\n";
+        std::cout << "DIRECT DLL reset/rollback/NULL tablespace/timezone/buffers/relogin failure/function reporting PASS\n";
     });
 }

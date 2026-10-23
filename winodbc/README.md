@@ -1,6 +1,6 @@
 # HelloWorldDB Windows ODBC
 
-Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, TLS(Schannel) 접속·인증서 검증·재시도, 직접/준비 SQL, descriptor·배열·실행 시 분할 입력, fetch·바인딩·모든 DB 타입 getter, 트랜잭션·서버 취소·시간 제한·재인증 초기화, 카탈로그·기능 보고**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함하며 초기화는 직접 DLL 호출로 검증했다. 실제 Manager 풀 재사용·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)에 남겨 두었다. WO-10까지의 변경은 검증했으며 커밋·푸시는 하지 않았다.
+Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, TLS(Schannel) 접속·인증서 검증·재시도, 직접/준비 SQL, descriptor·배열·실행 시 분할 입력, fetch·바인딩·모든 DB 타입 getter, 트랜잭션·서버 취소·시간 제한·재인증 초기화, 카탈로그·기능 보고**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함하며 초기화는 직접 DLL 호출로 검증했다. 실제 Manager 풀 재사용·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)에 남겨 두었다. WO-10까지의 변경을 검증했다. 커밋과 푸시는 AI가 하지 않는다.
 
 - [개발 환경과 목표 앱](docs/environment.md)
 - [API·속성·descriptor·길이 단위 지원 계획](docs/api-support.md)

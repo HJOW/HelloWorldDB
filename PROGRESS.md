@@ -30,7 +30,7 @@
   구현 범위는 다음과 같다. Hello World 샘플을 포함한 CRUD와 내장 함수, 파라미터, 규칙 기반 인덱스, 트랜잭션(커밋·롤백·세이브포인트, 행 잠금, 교착 감지), 사용자 계정(SCRAM-SHA-256 검증 정보), 권한과 권한 그룹, 문장별 권한 검사, **로컬 전용 채널, TCP(TLS 포함), UDP(신뢰성 계층 포함)** 접속과 접속용 클라이언트 라이브러리(`rdbms/src/client`)에 더해,
   10단계에서 **`hwdb` 명령**을 완성했다 : `hwdb start`(분리된 데몬), `hwdb stop`, `hwdb status`, 그리고 SQL 접속(대화형·스크립트 모드, 로컬 전용 채널·TCP·SSL·UDP, 화면에 보이지 않는 비밀번호 입력, 한글 폭을 맞춘 표 출력, 초기 암호 변경 안내, 종료 때 롤백 안내). 동작은 [rdbms/docs/cli.md](rdbms/docs/cli.md)에 있다.
 - 이번 `rdbms`·`jdbc6` 및 추가 `jdbc8` 서버 확장 연동·자동 검증을 완료했다. GUI DB툴(`gui`)의 보류는 유지한다. 아래 이전 날짜의 구현·검증 내용은 누적 기록이며 최신 결과는 위 두 항목과 프로젝트별 상태표를 따른다.
-- 다음 작업 : 2026-10-22 점검의 취약점 수정은 끝났다(각 프로젝트 PROGRESS.md 의 "2026-10-22 점검 취약점 수정 (완료)"). 그 뒤는 나머지 드라이버의 prepare/describe·cancel 공개 API, `pythonDriver` PY-4(TLS), `unixodbc` UO-1 이후 구현, winodbc WO-9 이후 구현이다. 미결은 위 손실 UDP 간헐 실패 조사다. 각 프로젝트의 PROGRESS.md 와 [통신 규약](rdbms/docs/protocol.md)을 따른다.
+- 다음 작업 : 2026-10-22 점검의 취약점 수정은 끝났다(각 프로젝트 PROGRESS.md 의 "2026-10-22 점검 취약점 수정 (완료)"). 그 뒤는 나머지 드라이버의 prepare/describe·cancel 공개 API, `pythonDriver` PY-4(TLS), `unixodbc` UO-1 이후 구현, winodbc WO-11(UDP) 이후 구현과 WO-8.7·WO-7.1 잔여 검증이다. 미결은 위 손실 UDP 간헐 실패 조사다. 각 프로젝트의 PROGRESS.md 와 [통신 규약](rdbms/docs/protocol.md)을 따른다.
 - 11단계 검증 : Windows의 Node.js 24.21.0 / TypeScript 6.0.3에서 `npm test` 888개 중 887개 통과, 1개 건너뜀(Windows에서 SIGTERM을 받을 수 없는 유닉스 전용 시험), 실패 0. bun 1.3.14에서는 통합 시험 87개를 시험 러너와 데몬 모두 bun으로 돌려 85개 통과, 2개 건너뜀(bun의 TLS 최소 버전 제약, SIGTERM)이다. 결함을 일부러 주입한 빌드에서 새 시험이 실패하는지 확인했다(모두 잡힘).
   당시 미확인 항목 중 Node.js 22, 실제 Java 6 TLSv1, 뷰 컬럼·인덱스 이름 생략은 이번 후속 작업에서 해소했다. 리눅스·macOS와 실제 터미널 앱의 탭 닫기는 미검증이다.
 - 2026-10-16 : 사용자 결정 3건을 반영하고 9단계(통신)를 완료했다. 프로토콜 명세, 세 접속 경로, 클라이언트, 정상 종료 순서와 제어 요청. 세부는 [rdbms/PROGRESS.md](rdbms/PROGRESS.md).
@@ -52,7 +52,7 @@
 | `jdbc8` | `org.duckdns.hjow.helloworlddb.jdbc8` | 13-1 ~ 13-5 | 13-1 ~ 13-5·새 API 완료. 기존 130·확장 50·소비자 6개 및 Linux DBeaver 확인 통과 | 선행 조건 충족 | [jdbc8/PROGRESS.md](jdbc8/PROGRESS.md) |
 | `jdbc6` | `org.duckdns.hjow.helloworlddb.jdbc6` | 14-1 ~ 14-5 | 14-1 ~ 14-5·prepare/describe·cancel 완료. Java 6·7·8·21·25 검증 | `rdbms`·`nodejsDriver` 완료, 사용자 작업 지시 (충족) | [jdbc6/PROGRESS.md](jdbc6/PROGRESS.md) |
 | `unixodbc` | C++ (패키지명 규칙 대상 아님) | UO-0 ~ UO-13 | UO-0 완료, UO-1 빌드 골격. ODBC 함수 미구현 | 사용자 작업 지시 (환경·계획까지) | [unixodbc/PROGRESS.md](unixodbc/PROGRESS.md) |
-| `winodbc` | C++ (패키지명 규칙 대상 아님) | WO-0 ~ WO-13 | WO-8까지 구현, WO-9 이후 일시 중지 | 사용자 재개 지시 | [winodbc/PROGRESS.md](winodbc/PROGRESS.md) |
+| `winodbc` | C++ (패키지명 규칙 대상 아님) | WO-0 ~ WO-13 | WO-10까지 구현·검증(카탈로그·기능 보고, TLS 포함). WO-8.7 실제 Manager 풀 검증·WO-7.1 공유 DESC 해제는 잔여, WO-11(UDP) 이후 미착수 | 사용자 작업 지시 (충족) | [winodbc/PROGRESS.md](winodbc/PROGRESS.md) |
 | `gui` | `org.duckdns.hjow.helloworlddb.gui` | 없음 | 보류 | 계획부터 다시 정한다 | [gui/PROGRESS.md](gui/PROGRESS.md) |
 
 ## 공통 인수인계 사항
@@ -112,6 +112,8 @@ Java 6·7은 사용자가 지정한 `C:\Program Files\Java\jdk1.6.0_45`·`C:\Pro
 JDBC의 자바 지원 범위·인터페이스 버전·프로젝트 이름은 2026-10-16 사용자 결정으로 확정했다. `jdbc6`는 자바 6~7용 JDBC 4.0과 자바 8 이상 실행 호환, `jdbc8`은 자바 8 이상용 JDBC 4.2이다. 2026-10-20 추가 지시로 jdbc6 14-5와 서버 확장 연동을 완료했고 jdbc8은 13-4 및 공통 통신 회귀까지 마쳤다. 공통 URL·접속 속성과 프로토콜을 공유하며 JDBC 계층은 각 Java API 기준으로 유지한다.
 
 ## 작업 이력
+
+- 2026-10-23 : 사용자 요청으로 `winodbc`의 10-22(WO-7·WO-8)·10-23(WO-9·WO-10) 작업을 점검했다. 전체 행렬은 수정 전후 모두 통과(CTest 68개·교차 4개·PE 4개·문서/환경 10개)였고 코드 결함 7건(TLS 송신 트레일러 길이, `SQLColumns`의 `TIMESTAMP(0)`, `SQLSpecialColumns` 범위, 카탈로그 일반 인자의 패턴 비교와 식별자 모드, `SQL_ASYNC_*` 정보 보고, 미지원 속성의 SQLSTATE)과 WO-9 필수 시험의 공백(복합 키·DESC 인덱스·특수 식별자·제한/뷰 전용 사용자·함수 보고 대조)을 찾아 고치고 시험을 추가했다. 커밋을 지시하던 winodbc 문서 문구를 AGENTS.md 지켜야 할 사항 3에 맞게 정정하고 위 현황 표를 WO-10 기준으로 갱신했다. 상세는 [winodbc/docs/verification.md](winodbc/docs/verification.md). 커밋·푸시는 하지 않았다.
 
 - 2026-10-22 : 사용자 요청으로 `unixodbc` 프로젝트 환경과 개발 계획을 만들었다. AGENTS.md·루트 PROGRESS.md·winodbc 계획·서버 프로토콜을 참고해 UO-0 ~ UO-13 단계와 API·타입·서버 의존성·설계·의존성·환경·검증 문서를 작성했다. CMake·CTest(dev/release/asan), `libhwdbodbc.so.0` 골격과 version script, ABI·환경 probe, 문서 계약 시험, 실제 `rdbms` 연기 시험을 만들었고 세 프리셋 각 4개(합계 12개)가 통과했다. root 권한이 없어 `.deps/`에 unixODBC 2.3.12와 CMake 4.4.4를 준비하는 스크립트를 넣었다. ODBC 함수는 아직 구현하지 않았다. 커밋·푸시는 하지 않았다.
 

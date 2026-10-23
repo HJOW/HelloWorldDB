@@ -40,8 +40,29 @@ bool wide_match(const std::wstring& value, const std::wstring& pattern, wchar_t 
 }
 } // namespace
 
+bool catalog_identifier_equals(const std::string& value, const std::string& argument) {
+    // ODBC 식별자 인자 규칙이다. 뒤쪽 공백은 무시하고, 큰따옴표로 감싼 식별자는 안쪽을 그대로(안의 ""는 ") 비교하며,
+    // 따옴표 없는 식별자는 서버처럼 대문자로 접어 비교한다. %와 _는 와일드카드가 아니라 문자 그대로이다.
+    std::size_t last = argument.size();
+    while (last > 0 && argument[last - 1] == ' ') --last;
+    const std::string text = argument.substr(0, last);
+    if (text.size() >= 2 && text.front() == '"' && text.back() == '"') {
+        std::string inner;
+        for (std::size_t i = 1; i + 1 < text.size(); ++i) {
+            inner += text[i];
+            if (text[i] == '"' && i + 2 < text.size() && text[i + 1] == '"') ++i;
+        }
+        return value == inner;
+    }
+    return value == upper_copy(text);
+}
+
+bool catalog_ordinary_match(const std::string& value, const std::string& argument, bool metadata_id) {
+    return metadata_id ? catalog_identifier_equals(value, argument) : value == argument;
+}
+
 bool catalog_match(const std::string& value, const std::string& pattern, bool metadata_id, char escape) {
-    if (metadata_id) return value == pattern;
+    if (metadata_id) return catalog_identifier_equals(value, pattern);
     if (pattern == "%" || pattern.empty()) return true;
     const auto wide_value = utf16(value);
     const auto wide_pattern = utf16(pattern);
@@ -218,6 +239,7 @@ ParsedDeclared parse_declared_type(const std::string& declared) {
     }
     if (result.base == "TIME" || result.base == "TIMESTAMP") {
         result.fractional = std::stoll(inside);
+        result.has_fractional = true;
         return result;
     }
     if (result.base == "FLOAT") {
@@ -308,13 +330,14 @@ CatalogTypeInfo catalog_type_info(const std::string& declared) {
     } else if (base == "TIMESTAMP") {
         if (parsed.with_time_zone) {
             info.sql_type = SQL_WVARCHAR; info.type_name = "TIMESTAMP WITH TIME ZONE";
-            const auto frac = parsed.fractional ? parsed.fractional : 6;
-            info.column_size = static_cast<SQLULEN>(19 + 1 + frac + 6);
+            // 서버는 항상 TIMESTAMP(p)로 적는다. 0은 명시한 값이며 기본값 6이 아니다.
+            const auto frac = parsed.has_fractional ? parsed.fractional : 6;
+            info.column_size = static_cast<SQLULEN>(19 + (frac ? 1 + frac : 0) + 6);
             info.buffer_length = static_cast<SQLLEN>(info.column_size * 2);
             info.decimal_digits = static_cast<SQLSMALLINT>(frac);
         } else {
             info.sql_type = SQL_TYPE_TIMESTAMP; info.type_name = "TIMESTAMP";
-            const auto frac = parsed.fractional ? parsed.fractional : 6;
+            const auto frac = parsed.has_fractional ? parsed.fractional : 6;
             info.column_size = static_cast<SQLULEN>(19 + (frac ? 1 + frac : 0));
             info.buffer_length = static_cast<SQLLEN>(sizeof(SQL_TIMESTAMP_STRUCT));
             info.decimal_digits = static_cast<SQLSMALLINT>(frac);
