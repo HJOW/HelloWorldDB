@@ -151,10 +151,16 @@ void open_connection(Connection& connection, Options& options) {
     const auto host = get_option(options, "SERVER", "localhost");
     const auto port = option_integer(options, "PORT", 7410, 1, 65535);
     const auto fetch_size = option_integer(options, "FETCHSIZE", 500, 1, 100000);
-    if (upper(get_option(options, "TRANSPORT", "TCP")) != "TCP") throw DriverError("HYC00", "Transport is not implemented yet.");
+    const auto transport = upper(get_option(options, "TRANSPORT", "TCP"));
     const bool ssl = option_boolean(options, "SSL", false);
-    static_cast<void>(option_boolean(options, "SSLVERIFY", true));
-    if (ssl || options.count("SSLCA")) throw DriverError("HYC00", "TLS transport is not implemented yet.");
+    const bool has_ca = options.count("SSLCA") != 0;
+    const bool verify = option_boolean(options, "SSLVERIFY", true);
+    // SSL은 TCP에만 적용된다. UDP 구간은 암호화하지 않는다.
+    if (transport != "TCP" && (ssl || has_ca)) throw DriverError("HYC00", "SSL applies to TCP only.");
+    if (transport != "TCP") throw DriverError("HYC00", "Transport is not implemented yet.");
+    if (has_ca && !ssl) throw DriverError("HY024", "SSLCA requires SSL=true.");
+    if (!ssl && !verify) throw DriverError("HY024", "SSLVERIFY=false requires SSL=true.");
+    if (has_ca && !verify) throw DriverError("HY024", "SSLCA and SSLVERIFY=false cannot be used together.");
     options.emplace("SERVER", host);
     options.emplace("PORT", std::to_string(port));
     options.emplace("FETCHSIZE", std::to_string(fetch_size));
@@ -166,8 +172,17 @@ void open_connection(Connection& connection, Options& options) {
     }
     const auto reconnect = std::make_shared<ReconnectState>(options);
     const auto deadline = connection.login_timeout ? std::chrono::steady_clock::now() + std::chrono::seconds(connection.login_timeout) : TransportDeadline::max();
-    auto session = std::make_shared<Session>(tcp_transport(host, static_cast<unsigned short>(port), connection.login_timeout,deadline));
-    session->login(options.at("UID"), options.at("PWD"), get_option(options, "TABLESPACE"), get_option(options, "TIMEZONE"), connection.login_timeout,deadline);
+    std::shared_ptr<Session> session;
+    if (ssl) {
+        TlsOptions tls;
+        tls.verify = verify;
+        tls.serverName = host;
+        if (has_ca) tls.caCertificates = tls_load_pem_certificates(options.at("SSLCA"));
+        session = std::make_shared<Session>(tls_transport(host, static_cast<unsigned short>(port), connection.login_timeout, deadline, std::move(tls)));
+    } else {
+        session = std::make_shared<Session>(tcp_transport(host, static_cast<unsigned short>(port), connection.login_timeout, deadline));
+    }
+    session->login(options.at("UID"), options.at("PWD"), get_option(options, "TABLESPACE"), get_option(options, "TIMEZONE"), connection.login_timeout, deadline);
     if (connection.autocommit == SQL_AUTOCOMMIT_OFF)
         session->request({{"type", "execute"}, {"sql", "SET AUTOCOMMIT OFF"}}, "result", connection.connection_timeout);
     connection.server_name = host;

@@ -1,5 +1,17 @@
 # 검증 기록과 후속 시험
 
+## VM-W11-CODEX — WO-10 TCP TLS
+
+2026-10-23, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다. 시험용 만료·시작 전 인증서는 `test/fixtures/tls/`의 자체 서명 인증서이며 서버 `server-a` 계열은 `rdbms/test/fixtures/tls/`를 참조한다.
+
+저장소 루트에서 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`을 실행했다. x64 Debug/Release·x86 Debug/Release 각각 **CTest 17개, 합계 68개 통과**이다(신규 `tls.options_ca_validation` 포함). 그 안의 Node 실제 서버/결함 주입은 구성당 32개(기존 24개 + TLS 8개), 총 128개이며 CTest 수에 중복 합산하지 않는다. 별도 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 검사 10개도 통과했다. 기본 행렬 실패·건너뜀은 0이며 85개 export·정적 CRT·직접 시험과 Manager 링크 분리를 확인했다.
+
+- **단위**: `tls_test.cpp`의 인증서 오류 분류·PEM 읽기·옵션 조합 오류, `connection_test.cpp`의 `SSLCA` 없는 `SSL`·검증 끄기 없는 `SSL` 조합의 `HY024`와 서버 없는 TLS 접속의 `08001`을 통과했다.
+- **가짜 서버 연결 수 세기**: 신뢰할 수 없음·호스트 불일치·만료·시작 전 인증서는 각 3회, 평문 서버·닫힌 포트는 각 1회를 확인했다. 원인 코드(`not trusted`·`does not match`·`expired`·`not yet valid`)와 `08001`/8007도 함께 확인했으며 3회 시도는 200 ms 이상 걸린다.
+- **실제 Manager → DLL → TLS 서버**: CA 지정 접속의 CRUD·분할 fetch·커밋/롤백·잠금 취소와 검증 끄기 접속을 통과했다. 기본 신뢰 실패·평문 서버는 재시도 없이 끝난다.
+
+상세 계약은 [TLS 전송](tls.md)에 있다. WO-8.7의 실제 Manager 풀 검증과 WO-7.1 공유 DESC의 별도 실패는 남아 있다. 전체 Core/ODBC 3.8 적합성을 선언하지 않는다.
+
 ## VM-W11-CODEX — WO-9 카탈로그·기능·속성 보고
 
 2026-10-23, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. [호스트 환경](environment.md)의 같은 설치 경로를 재조회했다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다.

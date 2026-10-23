@@ -2,14 +2,16 @@
 #include "hwdbodbc/text.hpp"
 #include <nlohmann/json.hpp>
 #include <atomic>
+#include <condition_variable>
+#include <chrono>
+#include <cstdint>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <set>
-#include <condition_variable>
-#include <chrono>
+#include <thread>
+#include <vector>
 
 namespace hwdbodbc {
 using Json = nlohmann::json;
@@ -28,6 +30,24 @@ public:
 };
 std::unique_ptr<Transport> tcp_transport(const std::string& host, unsigned short port, unsigned timeout_seconds,
     TransportDeadline deadline = TransportDeadline::max());
+
+// TLS(Schannel) 접속 설정이다. 검증은 기본으로 켠다.
+struct TlsOptions {
+    bool verify = true;
+    // SSLCA 파일에서 읽은 DER 인증서들이다. 비어 있으면 Windows 시스템 저장소를 신뢰한다.
+    std::vector<std::vector<std::uint8_t>> caCertificates;
+    // 접속 대상 호스트이다. 인증서 이름 검증과 SNI에 쓴다.
+    std::string serverName;
+};
+// Schannel로 TCP에 연결하고 TLS 핸드셰이크와 인증서 검증을 마친 전송을 돌려준다.
+// 인증서 오류이면 100 ms 뒤 새 연결로 최대 2회 다시 시도한다(연결 시도는 최대 3번).
+// 인증서 오류가 아닌 실패(연결 거부, 시간 초과, 평문 서버 등)는 바로 실패한다.
+std::unique_ptr<Transport> tls_transport(const std::string& host, unsigned short port, unsigned timeout_seconds,
+    TransportDeadline deadline, TlsOptions options);
+// Schannel 오류가 인증서 오류인지 본다. 재시도는 이 경우에만 한다.
+bool tls_is_certificate_error(long status) noexcept;
+// PEM 파일의 인증서들을 DER로 읽는다. 파일이 없거나 인증서가 없으면 HY024이다.
+std::vector<std::vector<std::uint8_t>> tls_load_pem_certificates(const std::string& path);
 
 class Scram {
     std::string nonce_;

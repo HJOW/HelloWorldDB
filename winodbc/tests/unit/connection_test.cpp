@@ -32,9 +32,22 @@ int main() {
         const auto call = [&](const wchar_t* value) {
             return SQLDriverConnectW(dbc, nullptr, reinterpret_cast<SQLWCHAR*>(const_cast<wchar_t*>(value)), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
         };
+        const auto state = [&] {
+            SQLCHAR code[6]{};
+            check(SQLGetDiagRec(SQL_HANDLE_DBC, dbc, 1, code, nullptr, nullptr, 0, nullptr) == SQL_SUCCESS, "connection diagnostic");
+            return std::string(reinterpret_cast<char*>(code));
+        };
         check(call(L"UID=SYSTEM;PWD=secret;Port=0;") == SQL_ERROR, "port validation before network");
         check(call(L"UID=SYSTEM;PWD=secret;Transport=UDP;") == SQL_ERROR, "unimplemented transport rejected");
-        check(call(L"UID=SYSTEM;PWD=secret;SSL=true;") == SQL_ERROR, "TLS cannot downgrade to TCP");
+        // SSL=true는 TLS로 접속하므로 서버가 없어도 HYC00이 아니라 08001이다.
+        check(call(L"UID=SYSTEM;PWD=secret;SSL=true;") == SQL_ERROR, "TLS without server fails");
+        check(state() == "08001", "TLS connection failure SQLSTATE");
+        check(call(L"UID=SYSTEM;PWD=secret;SSLCA=C:\\none.pem;") == SQL_ERROR, "SSLCA requires SSL=true");
+        check(state() == "HY024", "SSLCA without SSL SQLSTATE");
+        check(call(L"UID=SYSTEM;PWD=secret;SSLVERIFY=false;") == SQL_ERROR, "SSLVERIFY=false requires SSL=true");
+        check(state() == "HY024", "SSLVERIFY without SSL SQLSTATE");
+        check(call(L"UID=SYSTEM;PWD=secret;SSL=true;SSLCA=C:\\none.pem;SSLVERIFY=false;") == SQL_ERROR, "SSLCA with SSLVERIFY=false");
+        check(state() == "HY024", "SSLCA and no-verify SQLSTATE");
         check(call(L"UID=SYSTEM;") == SQL_ERROR, "no default password");
         SQLWCHAR catalog[4]{1,1,1,1}; SQLINTEGER length = -1;
         check(SQLGetConnectAttrW(dbc, SQL_ATTR_CURRENT_CATALOG, catalog, sizeof(catalog), &length) == SQL_SUCCESS && !catalog[0] && length == 0, "no catalog");

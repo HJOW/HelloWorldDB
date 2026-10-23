@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { pbkdf2Sync, createHmac, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
+import tls from 'node:tls';
 import dgram from 'node:dgram';
 import os from 'node:os';
 import path from 'node:path';
@@ -238,3 +239,168 @@ for (const scenario of ['nfkc', 'forged', 'nonce', 'iterations', 'version']) {
     if (scenario !== 'nfkc') assert.match(result.stderr, /STATE=08006/);
   });
 }
+
+// ---- TLS (WO-10): Schannel 전송, 인증서 검증, 재시도 ----
+const tlsProbe = process.env.HWDB_TLS_PROBE ?? path.join(project, 'build/x64/bin/Debug/hwdb_tls_probe.exe');
+const tlsDll = process.env.HWDB_ODBC_DLL ?? path.join(path.dirname(executable), 'hwdbodbc.dll');
+const rdbmsTlsDir = path.join(project, '..', 'rdbms', 'test', 'fixtures', 'tls');
+const winodbcTlsDir = path.join(project, 'test', 'fixtures', 'tls');
+
+const runTlsProbe = (port, mode, extra) => new Promise((resolve, reject) => {
+  const child = spawn(tlsProbe, [tlsDll, String(port), mode, extra], { windowsHide: true, timeout: 60000 });
+  let output = '';
+  child.stdout.on('data', (value) => { output += value; });
+  child.stderr.on('data', (value) => { output += value; });
+  child.on('error', reject);
+  child.on('close', (status) => resolve({ status, output }));
+});
+const tlsField = (output, key) => output.split(/\r?\n/).find((line) => line.startsWith(key + '='))?.slice(key.length + 1) ?? '';
+async function startTlsDaemon(t, certName, keyName) {
+  const port = await freeTcpUdpPort();
+  const parent = path.join(project, 'build/integration');
+  fs.mkdirSync(parent, { recursive: true });
+  const directory = fs.mkdtempSync(path.join(parent, 'tls-'));
+  fs.writeFileSync(path.join(directory, 'config.json'), JSON.stringify({
+    port,
+    udp: { enabled: false },
+    tcp: {
+      host: '0.0.0.0',
+      ssl: { certPath: path.join(rdbmsTlsDir, certName), keyPath: path.join(rdbmsTlsDir, keyName) },
+    },
+  }));
+  const server = new Server(loadConfig(directory).config, logger);
+  t.after(async () => {
+    await server.stop();
+    const resolved = fs.realpathSync(directory);
+    assert.ok(resolved.startsWith(fs.realpathSync(parent) + path.sep));
+    fs.rmSync(resolved, { recursive: true });
+  });
+  await server.start();
+  return port;
+}
+async function waitForCount(get, expected, timeoutMs = 5000) {
+  const started = Date.now();
+  for (;;) {
+    if (get() === expected) return;
+    assert.ok(Date.now() - started < timeoutMs, `TLS connection count did not reach ${expected}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+function trackSockets(server, t) {
+  const sockets = new Set();
+  let total = 0;
+  server.on('connection', (socket) => {
+    total++;
+    sockets.add(socket);
+    socket.on('error', () => {});
+    socket.on('close', () => sockets.delete(socket));
+  });
+  t.after(async () => {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  return () => total;
+}
+
+test('TLS: 신뢰할 수 없는 자체 서명 인증서는 3번 시도하고 08001로 실패한다', async (t) => {
+  const fake = tls.createServer({
+    cert: fs.readFileSync(path.join(rdbmsTlsDir, 'server-b.cert.pem')),
+    key: fs.readFileSync(path.join(rdbmsTlsDir, 'server-b.key.pem')),
+  }, (socket) => { socket.on('error', () => {}); });
+  fake.on('tlsClientError', () => {});
+  const accepted = trackSockets(fake, t);
+  const port = await listen(fake);
+  const started = Date.now();
+  const result = await runTlsProbe(port, 'quick', `SSL=true;SSLCA={${path.join(rdbmsTlsDir, 'server-a.cert.pem')}};`);
+  const elapsed = Date.now() - started;
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+  assert.equal(tlsField(result.output, 'NATIVE'), '8007', result.output);
+  assert.match(tlsField(result.output, 'MESSAGE'), /not trusted/, result.output);
+  await waitForCount(accepted, 3);
+  assert.ok(elapsed >= 150, `two 100 ms retries expected (elapsed ${elapsed} ms)`);
+});
+
+test('TLS: 호스트 이름이 맞지 않는 인증서는 3번 시도하고 08001로 실패한다', async (t) => {
+  const fake = tls.createServer({
+    cert: fs.readFileSync(path.join(rdbmsTlsDir, 'server-other-name.cert.pem')),
+    key: fs.readFileSync(path.join(rdbmsTlsDir, 'server-other-name.key.pem')),
+  }, (socket) => { socket.on('error', () => {}); });
+  fake.on('tlsClientError', () => {});
+  const accepted = trackSockets(fake, t);
+  const port = await listen(fake);
+  const result = await runTlsProbe(port, 'quick', `SSL=true;SSLCA={${path.join(rdbmsTlsDir, 'server-other-name.cert.pem')}};`);
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+  assert.equal(tlsField(result.output, 'NATIVE'), '8007', result.output);
+  assert.match(tlsField(result.output, 'MESSAGE'), /does not match/, result.output);
+  await waitForCount(accepted, 3);
+});
+
+test('TLS: 만료된 인증서는 3번 시도하고 08001로 실패한다', async (t) => {
+  const fake = tls.createServer({
+    cert: fs.readFileSync(path.join(winodbcTlsDir, 'server-expired.cert.pem')),
+    key: fs.readFileSync(path.join(winodbcTlsDir, 'server-expired.key.pem')),
+  }, (socket) => { socket.on('error', () => {}); });
+  fake.on('tlsClientError', () => {});
+  const accepted = trackSockets(fake, t);
+  const port = await listen(fake);
+  const result = await runTlsProbe(port, 'quick', `SSL=true;SSLCA={${path.join(winodbcTlsDir, 'server-expired.cert.pem')}};`);
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+  assert.equal(tlsField(result.output, 'NATIVE'), '8007', result.output);
+  assert.match(tlsField(result.output, 'MESSAGE'), /expired/, result.output);
+  await waitForCount(accepted, 3);
+});
+
+test('TLS: 시작 전 인증서는 3번 시도하고 08001로 실패한다', async (t) => {
+  const fake = tls.createServer({
+    cert: fs.readFileSync(path.join(winodbcTlsDir, 'server-future.cert.pem')),
+    key: fs.readFileSync(path.join(winodbcTlsDir, 'server-future.key.pem')),
+  }, (socket) => { socket.on('error', () => {}); });
+  fake.on('tlsClientError', () => {});
+  const accepted = trackSockets(fake, t);
+  const port = await listen(fake);
+  const result = await runTlsProbe(port, 'quick', `SSL=true;SSLCA={${path.join(winodbcTlsDir, 'server-future.cert.pem')}};`);
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+  assert.equal(tlsField(result.output, 'NATIVE'), '8007', result.output);
+  assert.match(tlsField(result.output, 'MESSAGE'), /not yet valid/, result.output);
+  await waitForCount(accepted, 3);
+});
+
+test('TLS: 평문 서버에는 재시도 없이 바로 실패한다', async (t) => {
+  const fake = net.createServer((socket) => {
+    socket.on('error', () => {});
+    socket.on('data', () => {});
+    socket.destroy();
+  });
+  const accepted = trackSockets(fake, t);
+  const port = await listen(fake);
+  const result = await runTlsProbe(port, 'quick', 'SSL=true;');
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+  assert.equal(tlsField(result.output, 'NATIVE'), '8007', result.output);
+  await waitForCount(accepted, 1);
+});
+
+test('TLS: 닫힌 포트는 재시도 없이 바로 실패한다', async (t) => {
+  const port = await freeTcpUdpPort();
+  const result = await runTlsProbe(port, 'quick', 'SSL=true;');
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), '08001', result.output);
+});
+
+test('TLS: CA를 지정하면 실제 서버에 접속·CRUD·fetch·트랜잭션·취소가 된다', async (t) => {
+  const port = await startTlsDaemon(t, 'server-a.cert.pem', 'server-a.key.pem');
+  const result = await runTlsProbe(port, 'functional', `SSL=true;SSLCA={${path.join(rdbmsTlsDir, 'server-a.cert.pem')}};FetchSize=3;`);
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /TLS functional PASS/, result.output);
+});
+
+test('TLS: 검증을 끄면 신뢰할 수 없는 인증서에도 첫 시도에 접속된다', async (t) => {
+  const port = await startTlsDaemon(t, 'server-b.cert.pem', 'server-b.key.pem');
+  const result = await runTlsProbe(port, 'quick', 'SSL=true;SSLVERIFY=false;');
+  assert.equal(result.status, 0, result.output);
+  assert.equal(tlsField(result.output, 'STATE'), 'SUCCESS', result.output);
+});
