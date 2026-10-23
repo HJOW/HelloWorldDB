@@ -63,3 +63,25 @@ EXPORTS
     SQLSetCursorNameW
     SQLSetStmtAttr
     SQLSetStmtAttrW
+    SQLTables
+    SQLTablesW
+    SQLColumns
+    SQLColumnsW
+    SQLStatistics
+    SQLStatisticsW
+    SQLSpecialColumns
+    SQLSpecialColumnsW
+    SQLPrimaryKeys
+    SQLPrimaryKeysW
+    SQLForeignKeys
+    SQLForeignKeysW
+    SQLTablePrivileges
+    SQLTablePrivilegesW
+    SQLColumnPrivileges
+    SQLColumnPrivilegesW
+    SQLProcedures
+    SQLProceduresW
+    SQLProcedureColumns
+    SQLProcedureColumnsW
+    SQLGetTypeInfo
+    SQLGetTypeInfoW

@@ -10,16 +10,17 @@
 | SQLConnect/W | 엄격한 문자열 입력, User/System DSN 로그인·명시 값 우선·원격 CONNECT 거부 | 설정 UI/등록 WO-12 |
 | SQLDriverConnect/W·SQLDisconnect | TCP·NOPROMPT·DSN 없는 로그인/종료, 엄격한 연결 문자열·암호 제거 | prompting·DSN·다른 전송 WO-10/11/12 |
 | SQLGet/SetConnectAttr/W | login/connection timeout·autocommit·metadata id·access mode·격리·dead·catalog 없음·quiet mode·재인증 reset | 실제 Manager 풀 재사용 WO-8/13 |
-| SQLGet/SetStmtAttr/W | 자동/명시 descriptor·공유/자동 IPD·전진/읽기 전용·최대 행·행/파라미터 배열/offset·상태/처리 수·query timeout | 전체 속성 감사 WO-9/13 |
+| SQLGet/SetStmtAttr/W | 자동/명시 descriptor·공유/자동 IPD·전진/읽기 전용·최대 행·행/파라미터 배열/offset·상태/처리 수·query timeout·metadata id | 전체 속성 감사 WO-13 |
 | SQLGet/SetDescField/W·GetDescRec/W·SetDescRec·CopyDesc | 역할별 필드·폭·이름·일관성 검사·복사·같은 바인딩 상태·교차 연결 잠금·NEED_DATA 변경 거부 | 여러 STMT 공유 상태의 Manager 해제 재현 WO-7/13 |
-| SQLExecDirect/W·NumResultCols·RowCount·DescribeCol/W·ColAttribute/W | 조회/DML·실행 전 메타데이터·실제 타입/정밀도·한글 이름·W 길이·영향 행 수 | 전체 정보 필드 감사 WO-9 |
+| SQLExecDirect/W·NumResultCols·RowCount·DescribeCol/W·ColAttribute/W | 조회/DML·실행 전 메타데이터·실제 타입/정밀도·한글 이름·W 길이·영향 행 수 | 카탈로그 IRD와 일치 WO-9 완료, 전체 감사 WO-13 |
 | SQLPrepare/W·Execute·NumParams·DescribeParam·BindParameter | 서버 준비/설명/실행/해제·UNKNOWN/힌트·INPUT 배열·실행 시 앱 버퍼 읽기 | 출력 파라미터 제외 |
 | SQLParamData·SQLPutData·SQLCancel | NEED_DATA token·분할 입력·NULL·예고 길이·배열 상태·로컬 입력/서버 실행 취소·늦은 취소 | 전체 동시성 인수 WO-13 |
 | SQLEndTran | DBC/ENV의 COMMIT/ROLLBACK·READ COMMITTED·DDL 자동 커밋·연결 종료 롤백 | 분산 트랜잭션 제외 |
 | SQLNativeSql/W | 날짜시간·함수·outer join·LIKE escape의 실행 없는 변환·NOSCAN | CALL/GUID escape 미지원 |
 | SQLBindCol·Fetch·FetchScroll(NEXT)·GetData | 열/packed 행 배열·앱 주소·NULL·정확한 38자리 소수/64비트·날짜시간·13개 INTERVAL·분할 | GetData는 rowset=1, BLOCK 미지원 |
-| SQLCloseCursor·FreeStmt·MoreResults·Get/SetCursorName/W | 서버 커서/준비 자원 정리·모든 FreeStmt 옵션·단일 결과 종료·자동/명시/인용 커서 이름 | positioned DML 미지원 |
-| SQLGetInfo/W·SQLGetFunctions | 제품명·기본 문자열 정보·실제 구현 함수의 단일/배열/ODBC3 비트맵 | 전체 정보/함수 감사 WO-9/13 |
+| SQLCloseCursor·FreeStmt·MoreResults·Get/SetCursorName/W | 서버 커서/준비 자원 정리·모든 FreeStmt 옵션·단일 결과 종료·자동/명시/인용 커서 이름·카탈로그 결과 MoreResults | positioned DML 미지원 |
+| SQLTables/W·Columns/W·Statistics/W·SpecialColumns/W·GetTypeInfo/W·PrimaryKeys/W·ForeignKeys/W·TablePrivileges/W·ColumnPrivileges/W·Procedures/W·ProcedureColumns/W | SYS_* 조회와 로컬 조합·스키마/카탈로그 없음·특별 호출·패턴/식별자·정렬·타입 매핑·빈 결과 규격 WO-9 완료 | 전체 적합성·범용 앱 WO-13 |
+| SQLGetInfo/W·SQLGetFunctions | 카탈로그·스키마·트랜잭션·커서·배열·최대 길이·함수 비트맵 등 WO-9 확장, OIC_CORE 보고 | 전체 정보/함수 감사 WO-13, 3.8 버전 보고 WO-13 |
 
 고정 비상 진단으로 bad_alloc→HY001, 예상 밖 예외→HY000을 처리한다. 정상 레코드는 가변 길이 목록을 사용한다. ENV 할당 자체의 실패는 진단 핸들이 없어 SQL_ERROR이다. [상태·잠금·문자열 구현](state-machines.md)과 [트랜잭션·취소·초기화](transactions-cancel-reset.md)를 따른다. SQL_DRIVER_ODBC_VER는 현재 `03.00`으로 유지하며, 3.8 앱의 Manager 경로에서 버전 경고가 붙을 수 있다. reset의 직접 DLL 시험은 실제 Manager 풀 재사용의 증거가 아니다. 속성 미지원은 성공으로 무시하지 않는다.
 

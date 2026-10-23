@@ -12,6 +12,7 @@ void run_descriptor_cases(SQLHDBC connection);
 void run_data_cases(SQLHDBC connection);
 void run_transaction_cases(SQLHDBC connection, SQLHENV environment, const std::wstring& connection_string);
 void run_prepare_cases(SQLHDBC connection, SQLHENV environment, const std::wstring& connection_string);
+void run_catalog_cases(SQLHDBC connection);
 
 void diagnostics(SQLHDBC connection) {
     SQLWCHAR state[6]{}, message[1024]{};
@@ -264,6 +265,7 @@ int wmain(int argc, wchar_t** argv) {
         run_descriptor_cases(connection);
         run_data_cases(connection);
         run_transaction_cases(connection,environment,input);
+        run_catalog_cases(connection);
         registration.exercise_data_sources(environment, argv[2]);
         check(SQLDisconnect(connection) == SQL_SUCCESS, "Manager disconnect");
         check(SQLFreeHandle(SQL_HANDLE_DBC, connection) == SQL_SUCCESS, "Manager DBC free");

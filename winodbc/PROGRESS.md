@@ -6,10 +6,10 @@ HelloWorldDB에 접속하는 **Windows 네이티브 ODBC 드라이버**를 개�
 
 ## 현재 상태
 
-- 최종 갱신: 2026-10-22.
-- 진행 단계: **WO-8까지 구현·검증한 변경을 문서화하고 커밋 후 목표 일시 중지**. 2026-10-22 사용자 지시로 WO-9 이후는 착수하지 않는다. WO-0 ~ WO-6 및 WO-7.2 ~ WO-7.7은 완료했고 WO-7 변경은 `11190b4`로 커밋했다. WO-8.1 ~ WO-8.6·WO-8.8은 네 구성에서 검증했다. WO-8.7의 reset 구현과 직접 DLL 시험은 통과했으나 실제 Manager 풀 재사용은 미검증이어서 체크하지 않았다. WO-7.1의 여러 STMT 공유 DESC 해제 재현과 전체 Core/3.8 적합성도 남아 있다.
-- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 60개**, 그 안의 실제 서버/결함 주입 **24개 × 4구성 = 96개**, 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. `build/native/summary.json`은 2026-10-22T00:36:10.4970455+00:00이며 export는 63개이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
-- 재개 시 작업: WO-8.7의 실제 Manager 풀 검증을 ODBC 3.8 보고·전체 적합성 감사와 함께 완료하고 WO-7.1의 외부 Manager 제약을 추적한다. 이후 WO-9 카탈로그부터 WO-13 인수까지 남아 있다. 현재는 사용자 요청으로 목표를 일시 중지하며 후속 구현을 진행하지 않는다. [트랜잭션·취소·초기화 규칙](docs/transactions-cancel-reset.md), [준비 규칙](docs/prepared-statements.md), [descriptor/배열/분할 입력 규칙](docs/descriptors-arrays.md)을 따른다.
+- 최종 갱신: 2026-10-23.
+- 진행 단계: **WO-9까지 구현·검증 완료**. WO-0 ~ WO-6 및 WO-7.2 ~ WO-7.7, WO-8.1 ~ WO-8.6·WO-8.8, WO-9.1 ~ WO-9.8은 완료했다. WO-8.7의 reset 구현과 직접 DLL 시험은 통과했으나 실제 Manager 풀 재사용은 미검증이어서 체크하지 않았다. WO-7.1의 여러 STMT 공유 DESC 해제 재현과 전체 Core/3.8 적합성도 남아 있다.
+- 이번 검증: VM-W11-CODEX / Windows 11 Pro x64 10.0.26300 / MSVC 19.44.35229.0 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0. x86/x64 Debug/Release **CTest 64개**(신규 catalog.helpers_types 1개 포함), 그 안의 실제 서버/결함 주입 **24개 × 4구성 = 96개**, 교차 비트 수 거부 4개·PE 4개·문서/환경 10개 통과, 기본 행렬 실패/건너뜀 0. `build/native/summary.json`은 2026-10-23T06:15:45.4370326+00:00이며 export는 85개이다. 별도 공유 DESC 해제 재현의 실패는 기본 통과 집계와 구분한다. Windows 11에서도 확인한 Manager 버전·해시·REA 분석 근거와 우회 방법은 [상세 기록](docs/descriptors-arrays.md)에 있다.
+- 다음 작업: WO-10 TLS부터 WO-13 인수까지 남아 있다. WO-8.7의 실제 Manager 풀 검증을 ODBC 3.8 보고·전체 적합성 감사와 함께 완료하고 WO-7.1의 외부 Manager 제약을 추적한다. [트랜잭션·취소·초기화 규칙](docs/transactions-cancel-reset.md), [준비 규칙](docs/prepared-statements.md), [descriptor/배열/분할 입력 규칙](docs/descriptors-arrays.md), [카탈로그·기능 보고 규칙](docs/catalog-info.md)을 따른다.
 - 서버 prepare/describe·cancel의 PD-1 ~ PD-5와 기존 드라이버 회귀는 완료되어 있으며, 규약은 [protocol.md 17절](../rdbms/docs/protocol.md#17-준비-문장과-취소-2026-10-20-확장-규약)에 확정했다. PD-6의 ODBC 시험은 WO-6·WO-8·WO-13의 후속이다.
 - 생성·변경 파일과 조회 결과는 `winodbc/` 안에 둔다. 루트 PROGRESS.md는 읽기 참조로 유지한다. **2026-10-22 현재 요청에 따라 WO 번호별로 검증 후 간결한 한 줄 메시지로 커밋하며, 이전 커밋 금지 지시보다 현재 요청을 우선한다. 푸시는 하지 않는다.**
 - TCP 저수준 앱과 별도로 Driver Manager → DLL → 실제 서버의 CRUD·타입·13개 INTERVAL·긴 Unicode·NULL·DSN·원격 CONNECT 거부·16개 서버 커서와 준비/설명/입력/반복 실행·권한 재검사·DDL 무효화·트랜잭션·잠금/CPU 실행 취소·시간 제한을 검증했다. reset은 직접 DLL과 실제 서버로 검증했다. 등록은 해당 프로세스의 HKLM/HKCU를 임시 영역으로 매핑한 격리 시험이며 실제 시스템 설치를 뜻하지 않는다. Manager 풀과 Core 완료는 후속이다.
@@ -254,14 +254,14 @@ DRIVER={HelloWorldDB ODBC Driver};Server=127.0.0.1;Port=7410;UID=SYSTEM;PWD=Hell
 
 ### WO-9. 카탈로그·기능·속성 보고
 
-- [ ] WO-9.1: SYSTEM.SYS_TABLESPACES/TABLES/COLUMNS/VIEWS/INDEXES/INDEX_COLUMNS/CONSTRAINTS/CONSTRAINT_COLUMNS 등을 조회하여 SQLTables/W·SQLColumns/W·SQLStatistics/W·SQLSpecialColumns/W·SQLGetTypeInfo/W를 제공한다.
-- [ ] WO-9.2: SQLPrimaryKeys/W·SQLForeignKeys/W와 필요한 권한/프로시저 목록도 지원표에 따라 추가한다. 저장 프로시저가 없다는 것은 올바른 컬럼 구조를 가진 빈 카탈로그 결과로 표현할 수 있으며 호출 실행 지원을 뜻하지 않는다.
-- [ ] WO-9.3: 테이블스페이스는 schema, catalog는 없음으로 표현한다. SQL_ALL_CATALOGS/SQL_ALL_SCHEMAS/SQL_ALL_TABLE_TYPES의 특별 호출과 SQL_ATTR_METADATA_ID의 패턴/식별자 차이를 처리한다. `%`, `_`, escape, null과 빈 문자열을 구분한다.
-- [ ] WO-9.4: 결과 컬럼 이름·순서·SQL 타입·정렬 규약을 Microsoft 함수별 문서와 맞춘다. SYS_COLUMNS에 없는 뷰 컬럼은 서버 describe로 얻는다. 권한 필터를 우회하거나 테이블 전체 데이터를 읽지 않는다.
-- [ ] WO-9.5: SQLGetInfo/W·SQLGetFunctions를 실제 지원표에서 생성하거나 같은 단일 정의를 사용한다. 함수 하나 조회·전체 함수 배열·ODBC3 비트맵 형태를 각각 시험한다.
-- [ ] WO-9.6: SQL_DRIVER_ODBC_VER, interface/SQL conformance, schema/catalog, 트랜잭션·커서·GetData·배열·최대 길이·비동기 미지원 등 반환값을 검증한다. Driver Manager가 담당하는 SQL_DM_VER/SQL_ODBC_VER와 드라이버 버전을 혼동하지 않는다.
-- [ ] WO-9.7: SQLGet/SetEnvAttr·ConnectAttr·StmtAttr의 기본값과 지원 값이 Core 요구를 충족하는지 감사한다. 미지원 값에 무조건 성공을 반환하지 말고 함수 규약의 HYC00/HY092/01S02 등을 사용한다.
-- [ ] WO-9.8: SQLMoreResults는 한 문장 규칙에 맞게 현재 결과를 마무리하고 추가 결과 없음(SQL_NO_DATA)을 반환하도록 구현한다. 남은 커서 해제·DML 뒤 호출·반복 호출·호출 순서 오류를 시험한다.
+- [x] WO-9.1: SYSTEM.SYS_TABLESPACES/TABLES/COLUMNS/VIEWS/INDEXES/INDEX_COLUMNS/CONSTRAINTS/CONSTRAINT_COLUMNS 등을 조회하여 SQLTables/W·SQLColumns/W·SQLStatistics/W·SQLSpecialColumns/W·SQLGetTypeInfo/W를 제공한다.
+- [x] WO-9.2: SQLPrimaryKeys/W·SQLForeignKeys/W와 필요한 권한/프로시저 목록도 지원표에 따라 추가한다. 저장 프로시저가 없다는 것은 올바른 컬럼 구조를 가진 빈 카탈로그 결과로 표현할 수 있으며 호출 실행 지원을 뜻하지 않는다.
+- [x] WO-9.3: 테이블스페이스는 schema, catalog는 없음으로 표현한다. SQL_ALL_CATALOGS/SQL_ALL_SCHEMAS/SQL_ALL_TABLE_TYPES의 특별 호출과 SQL_ATTR_METADATA_ID의 패턴/식별자 차이를 처리한다. `%`, `_`, escape, null과 빈 문자열을 구분한다.
+- [x] WO-9.4: 결과 컬럼 이름·순서·SQL 타입·정렬 규약을 Microsoft 함수별 문서와 맞춘다. SYS_COLUMNS에 없는 뷰 컬럼은 서버 describe로 얻는다. 권한 필터를 우회하거나 테이블 전체 데이터를 읽지 않는다.
+- [x] WO-9.5: SQLGetInfo/W·SQLGetFunctions를 실제 지원표에서 생성하거나 같은 단일 정의를 사용한다. 함수 하나 조회·전체 함수 배열·ODBC3 비트맵 형태를 각각 시험한다.
+- [x] WO-9.6: SQL_DRIVER_ODBC_VER, interface/SQL conformance, schema/catalog, 트랜잭션·커서·GetData·배열·최대 길이·비동기 미지원 등 반환값을 검증한다. Driver Manager가 담당하는 SQL_DM_VER/SQL_ODBC_VER와 드라이버 버전을 혼동하지 않는다.
+- [x] WO-9.7: SQLGet/SetEnvAttr·ConnectAttr·StmtAttr의 기본값과 지원 값이 Core 요구를 충족하는지 감사한다. 미지원 값에 무조건 성공을 반환하지 말고 함수 규약의 HYC00/HY092/01S02 등을 사용한다.
+- [x] WO-9.8: SQLMoreResults는 한 문장 규칙에 맞게 현재 결과를 마무리하고 추가 결과 없음(SQL_NO_DATA)을 반환하도록 구현한다. 남은 커서 해제·DML 뒤 호출·반복 호출·호출 순서 오류를 시험한다.
 
 필수 시험: DBA·제한 사용자·기본 tablespace 없는 사용자·뷰만 권한 있는 사용자, 복합 PK/FK·ASC/DESC 인덱스, 특수 식별자, 타입 인자 생략과 명시, 모든 SQLGetFunctions의 true 항목을 실제 호출하는 시험.
 
@@ -420,6 +420,8 @@ SQLMoreResults는 한 요청 한 문장 규칙에서 현재 결과를 닫고 더
 - 현재 DLL은 접속할 수 없는 시제품이며 Manager 자체의 ENV/진단 시험과 직접 DLL 시험을 분리했다. 설치·등록·DSN 변경·네트워크·ODBC Core 적합성·제품 최소 OS 시험은 하지 않았다. 다음 작업은 WO-2이다.
 
 ## 작업 이력
+
+- 2026-10-23: WO-9 카탈로그·기능 보고를 구현했다. SQLTables/Columns/Statistics/SpecialColumns/GetTypeInfo/PrimaryKeys/ForeignKeys/TablePrivileges/ColumnPrivileges/Procedures/ProcedureColumns의 22개 export를 추가해 총 85개가 되었다. SYSTEM SYS_* 조회와 로컬 결과 조합, 테이블스페이스=schema·카탈로그 없음, ALL_CATALOGS/SCHEMAS/TABLE_TYPES 특별 호출, METADATA_ID 식별자/패턴 구분, ODBC 컬럼 순서·타입·정렬, GetInfo 60여종·GetFunctions 단일/전체/비트맵, MoreResults 단일 결과 종료를 실제 Manager/서버로 검증했다. 단위 catalog.helpers_types와 Manager catalog/info/typeinfo/MoreResults 시험을 추가했다. 네 구성 CTest 64개(내부 Node 24개×4=96개), 교차 로드 4개·PE 4개·문서/환경 10개가 실패/건너뜀 없이 통과했다. Manager의 SQLStatistics 예약값 HY101과 NULL 인자 HY009 처리를 확인해 드라이버와 시험에 반영했다. WO-8.7 실제 풀 재사용과 WO-7.1 공유 DESC 해제는 미완료로 남겼다. 커밋·푸시는 하지 않았다.
 
 - 2026-10-22: WO-8의 SQLEndTran(DBC/ENV)·서버 SQLCancel·요청 ID/논리 작업 수명·로그인/연결/질의 제한·송신 정체 처리·재인증 reset을 구현했다. 네 구성 CTest 60개(내부 Node 96개), 교차 로드 4개·63개 export PE 검사 4개·문서/환경 10개가 실패/건너뜀 없이 통과했다. 실제 Manager/서버의 트랜잭션·잠금/CPU 취소와 직접 DLL/서버의 NULL 테이블스페이스·미커밋 롤백·암호 변경 reset 실패를 구분했다. WO-8.7의 실제 Manager 풀 시험과 WO-7.1은 미완료로 남겼다. 사용자 요청에 따라 WO-8 변경을 간결한 한 줄 메시지로 커밋한 뒤 전체 목표를 일시 중지하며 WO-9 이후는 착수하지 않는다.
 

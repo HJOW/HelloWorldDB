@@ -1,6 +1,6 @@
 # HelloWorldDB Windows ODBC
 
-Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, descriptor·배열·실행 시 분할 입력, fetch·바인딩·모든 DB 타입 getter, 트랜잭션·서버 취소·시간 제한·재인증 초기화**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함하며 초기화는 직접 DLL 호출로 검증했다. 실제 Manager 풀 재사용·TLS·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)에 남겨 두었다. 현재 사용자 요청에 따라 WO-8까지의 변경을 커밋한 뒤 목표를 일시 중지한다.
+Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRAM 접속, 직접/준비 SQL, descriptor·배열·실행 시 분할 입력, fetch·바인딩·모든 DB 타입 getter, 트랜잭션·서버 취소·시간 제한·재인증 초기화, 카탈로그·기능 보고**를 구현한 시제품이다. Driver Manager와 실제 서버를 거치는 x86/x64 시험을 포함하며 초기화는 직접 DLL 호출로 검증했다. 실제 Manager 풀 재사용·TLS·UDP·설치·Core 적합성과 여러 STMT에 공유된 descriptor의 Manager 해제 재현은 [PROGRESS.md](PROGRESS.md)에 남겨 두었다. WO-9까지의 변경은 검증했으며 커밋·푸시는 하지 않았다.
 
 - [개발 환경과 목표 앱](docs/environment.md)
 - [API·속성·descriptor·길이 단위 지원 계획](docs/api-support.md)
@@ -8,6 +8,7 @@ Windows 네이티브 ODBC 3.8 드라이버 프로젝트이다. 현재 **TCP/SCRA
 - [준비 문장·파라미터·SQL escape](docs/prepared-statements.md)
 - [Descriptor·배열과 남은 Manager 재현 사례](docs/descriptors-arrays.md)
 - [트랜잭션·취소·시간 제한·초기화](docs/transactions-cancel-reset.md)
+- [카탈로그·기능 보고](docs/catalog-info.md)
 - [서버 기능 협상과 진단 매핑](docs/server-dependencies.md)
 - [의존성과 배포 정책](docs/dependencies.md)
 - [검증 기록과 시험 ID](docs/verification.md)
@@ -32,7 +33,7 @@ DLL과 시험 EXE는 `build/<x86 또는 x64>/bin/<Debug 또는 Release>/`에 생
 
 `hwdb_dm_probe.exe`는 Manager 자체의 ENV를, `hwdb_dm_connection.exe`는 Manager → 드라이버 DLL → 실제 서버의 로그인·STMT/DESC·종료를 시험한다. 후자는 `RegOverridePredefKey`로 **시험 프로세스의 HKLM/HKCU를 고유한 HKCU 임시 키에 연결**하고 installer API로 등록/제거한다. 실제 시스템 드라이버와 기존 DSN을 수정하지 않으며, 관리자 권한의 시스템 설치 시험을 대신하지 않는다. Node.js는 격리된 서버를 구동하고 결함을 주입하는 시험 도우미이며 DLL은 Node.js·JVM·Python을 실행하지 않는다.
 
-SQLConnect/W는 User/System DSN을 읽고 SQLDriverConnect/W는 명시 속성 > DSN > 기본값으로 접속한다. DSN에는 비밀번호를 기본 저장하지 않는다. SQLExecDirect/W·SQLPrepare/W·SQLExecute·SQLNumParams·SQLDescribeParam·SQLBindParameter·SQLNativeSql/W와 결과 메타데이터·fetch·커서 수명을 제공한다. SQLGetInfo/W·SQLGetFunctions는 현재 구현한 기능만 보고하며 ODBC Core·3.8 완성은 광고하지 않는다. 전체 목표와 현재 범위는 [API 계약](docs/api-support.md)을 따른다.
+SQLConnect/W는 User/System DSN을 읽고 SQLDriverConnect/W는 명시 속성 > DSN > 기본값으로 접속한다. DSN에는 비밀번호를 기본 저장하지 않는다. SQLExecDirect/W·SQLPrepare/W·SQLExecute·SQLNumParams·SQLDescribeParam·SQLBindParameter·SQLNativeSql/W와 결과 메타데이터·fetch·커서 수명을 제공한다. SQLTables/Columns/Statistics/SpecialColumns/GetTypeInfo/PrimaryKeys/ForeignKeys/TablePrivileges 등 카탈로그와 SQLGetInfo/W·SQLGetFunctions는 [카탈로그·기능 보고](docs/catalog-info.md)와 [API 계약](docs/api-support.md)을 따른다. ODBC Core·3.8 완성은 WO-13 감사까지 광고하지 않는다. 전체 목표와 현재 범위는 [API 계약](docs/api-support.md)을 따른다.
 
 전체 스크립트는 환경 JSON을 `build/wo0/`, 빌드·CTest/JUnit·dumpbin·교차 로드·PE 검사와 `summary.json`을 `build/native/`에 남긴다. 실제 서버 config/data/log는 `build/integration/` 아래 고유 임시 디렉토리를 사용하고 정상 종료 후 제거한다. 시험은 설치된 `../rdbms/node_modules/typescript/`로 현재 서버 소스를 `build/server/`에 빌드한다. 기존 `../rdbms/dist/`와 서버 소스는 변경하지 않는다.
 

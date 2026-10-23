@@ -1,5 +1,17 @@
 # 검증 기록과 후속 시험
 
+## VM-W11-CODEX — WO-9 카탈로그·기능·속성 보고
+
+2026-10-23, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. [호스트 환경](environment.md)의 같은 설치 경로를 재조회했다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다.
+
+저장소 루트에서 `powershell -NoProfile -File winodbc/scripts/build-and-test.ps1`을 실행했다. x64 Debug/Release·x86 Debug/Release 각각 **CTest 16개, 합계 64개 통과**이다. 그 안의 Node 실제 서버/결함 주입은 구성당 24개, 총 96개이며 CTest 수에 중복 합산하지 않는다. 별도 교차 비트 수 거부 4개·PE 검사 4개·문서/환경 검사 10개도 통과했다. 기본 행렬 실패·건너뜀은 0이며 85개 export·정적 CRT·직접 시험과 Manager 링크 분리를 확인했다. 최종 `build/native/summary.json`의 status는 `passed`, capturedAt은 `2026-10-23T06:15:45.4370326+00:00`이다.
+
+- **단위**: `catalog_test.cpp`의 패턴·선언 해석·타입 정보를 통과했다.
+- **실제 Manager → DLL → 서버**: `catalog_cases.cpp`의 테이블 전체/종류/패턴·특별 ALL_SCHEMAS/TABLE_TYPES/CATALOGS·빈 카탈로그, 컬럼 18개·DECIMAL 정밀도·뷰·METADATA_ID 식별자, 통계 전체/유일·HY101 예약값, BEST_ROWID·ROWVER 빈 결과, PK/FK·권한·프로시저 빈 결과, GetTypeInfo 전체/단일·HY004, GetInfo/GetFunctions 단일/전체/비트맵·MoreResults 종료·HY010을 통과했다.
+- **Manager 검증 차이**: `SQLStatistics` 예약값 오류는 Manager가 `HY101`을 먼저 내며 드라이버 직접 값 `HY024`와 구분해 시험한다. 카탈로그 `NULL` 인자는 Manager가 `HY009`를 내므로 빈 문자열로 넘긴다.
+
+상세 계약은 [카탈로그·기능 보고](catalog-info.md)에 있다. WO-8.7의 실제 Manager 풀 검증과 WO-7.1 공유 DESC의 별도 실패는 남아 있다. 전체 Core/ODBC 3.8 적합성을 선언하지 않는다.
+
 ## VM-W11-CODEX — WO-8 트랜잭션·취소·시간 제한·초기화
 
 2026-10-22, Windows 11 Pro x64 10.0.26300 / Build Tools 2022 17.14.37710.0 / MSVC 19.44.35229.0·v143 / SDK 10.0.26100.0 / CMake·CTest 4.4.4 / Node.js 24.19.0이다. [호스트 환경](environment.md)의 같은 설치 경로를 재조회했다. 현재 서버 소스를 `winodbc/build/server/`에 빌드하여 시험했으며 rdbms 소스나 dist는 바꾸지 않았다.

@@ -18,6 +18,10 @@ const expectedExports = [
   'SQLSetStmtAttr', 'SQLSetStmtAttrW',
   'SQLPrepare', 'SQLPrepareW', 'SQLExecute', 'SQLNumParams', 'SQLDescribeParam', 'SQLBindParameter', 'SQLNativeSql', 'SQLNativeSqlW',
   'SQLGetDescField', 'SQLGetDescFieldW', 'SQLSetDescField', 'SQLSetDescFieldW', 'SQLGetDescRec', 'SQLGetDescRecW', 'SQLSetDescRec', 'SQLCopyDesc',
+  'SQLTables', 'SQLTablesW', 'SQLColumns', 'SQLColumnsW', 'SQLStatistics', 'SQLStatisticsW',
+  'SQLSpecialColumns', 'SQLSpecialColumnsW', 'SQLPrimaryKeys', 'SQLPrimaryKeysW', 'SQLForeignKeys', 'SQLForeignKeysW',
+  'SQLTablePrivileges', 'SQLTablePrivilegesW', 'SQLColumnPrivileges', 'SQLColumnPrivilegesW',
+  'SQLProcedures', 'SQLProceduresW', 'SQLProcedureColumns', 'SQLProcedureColumnsW', 'SQLGetTypeInfo', 'SQLGetTypeInfoW',
 ].sort();
 
 function readPe(filename) {
